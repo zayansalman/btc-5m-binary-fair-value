@@ -24,6 +24,9 @@ In scope:
 - Summarize the optional exported BTC Polymarket history CSV.
 - Present a concise systems scorecard covering scope, risk, feed discipline,
   auditability, and failure visibility.
+- Maintain a public engineering roadmap focused on market-data recording,
+  replay, order lifecycle simulation, risk/PnL, telemetry, and deterministic
+  tests.
 
 Out of scope:
 

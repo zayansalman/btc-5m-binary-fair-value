@@ -35,6 +35,8 @@ flowchart LR
 - Risk containment: paper mode only, bounded sizing, one open position, and
   force-close behavior on Stop.
 
+For planned maturity work, see `docs/ROADMAP.md`.
+
 ## Data Flow
 
 1. Dashboard calls Start.

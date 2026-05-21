@@ -39,6 +39,12 @@ paper trading to future execution/reconciliation work.
 - **Failure visibility:** feed, market, and loop errors surface in dashboard
   state and structured logs.
 
+## Roadmap
+
+The next buildout is tracked in `docs/ROADMAP.md`. Priority themes are market
+data recording, deterministic replay, paper order lifecycle states, risk/PnL
+metrics, feed-health telemetry, and network-free tests.
+
 ## Local Setup
 
 ```bash
@@ -83,6 +89,7 @@ BTC_HISTORY_CSV_PATH=./data/polymarket_history.csv
 - `btc_bot/controller.py` - Start/Stop control and kill-switch behavior.
 - `btc_bot/history.py` - optional BTC history CSV summary for sizing context.
 - `db.py` - SQLite schema for config, activity feed, ticks, and positions.
+- `docs/ROADMAP.md` - engineering roadmap for trading-system maturity.
 - `tools/demo_snapshot.py` - CLI snapshot for local operator review.
 
 ## Safety Boundaries
