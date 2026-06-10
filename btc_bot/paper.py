@@ -17,6 +17,7 @@ from typing import Any
 import httpx
 
 from config import (
+    BINANCE_API_BASE,
     BTC_CHAINLINK_STREAM_URL,
     BTC_MARKET_TIMEFRAME_MINUTES,
     BTC_PAPER_ENTRY_EDGE_MIN,
@@ -41,7 +42,7 @@ from btc_bot.strategy import (
 
 log = get_logger("btc_paper")
 
-BINANCE_API = "https://api.binance.com"
+BINANCE_API = BINANCE_API_BASE
 FIVE_MINUTES = BTC_MARKET_TIMEFRAME_MINUTES * 60
 STRATEGY_PARAMS = StrategyParams(
     min_trade_usd=BTC_PAPER_MIN_TRADE_USD,

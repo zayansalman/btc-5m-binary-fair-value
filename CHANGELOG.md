@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.2.1 — Runtime Blockers (2026-06-10)
+
+Fixes #19.
+
+- **main.py boot crash** — imported `DASHBOARD_PORT`, renamed to `DASHBOARD_SERVER_PORT` in the v0.2 dashboard migration. FastAPI entrypoint never started.
+- **Binance endpoint unreachable** — `api.binance.com` was hardcoded in 4 modules and times out on some networks. New `BINANCE_API_BASE` env var (default `https://data-api.binance.vision`, Binance's public market-data mirror with identical `/api/v3` routes) threaded through `btc_bot/paper.py`, `btc_bot/backtest.py`, `btc_5m_fv/backtest/conditional.py`, and `BinanceConnector`.
+- **Backtest resilience** — kline fetches in both backtest modules now retry 3× with backoff; a single transient SSL timeout no longer kills a 2,688-combination grid run.
+
 ## v0.2.0 — Full System Rebuild (2026-05-28)
 
 A complete architectural rebuild from monolithic demo to modular trading system. Every open GitHub issue has been addressed.

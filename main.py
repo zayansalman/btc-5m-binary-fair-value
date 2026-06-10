@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 
-from config import DASHBOARD_PORT, DB_PATH
+from config import DASHBOARD_SERVER_PORT, DB_PATH
 from db import init_db, notify
 from logging_setup import get_logger, setup_logging
 
@@ -47,11 +47,11 @@ def main() -> None:
 
     if HAS_NEW_DASHBOARD:
         import uvicorn
-        log.info("dashboard.start_fastapi", port=DASHBOARD_PORT)
+        log.info("dashboard.start_fastapi", port=DASHBOARD_SERVER_PORT)
         uvicorn.run(
             "btc_5m_fv.ops.dashboard.app:app",
             host="127.0.0.1",
-            port=DASHBOARD_PORT,
+            port=DASHBOARD_SERVER_PORT,
             log_level="info",
         )
     else:

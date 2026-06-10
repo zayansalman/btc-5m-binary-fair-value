@@ -5,6 +5,7 @@ Extracted and refactored from *btc_bot/paper.py* (lines 302-329).
 
 from __future__ import annotations
 
+import os
 import time
 from collections import deque
 from typing import Any
@@ -32,8 +33,12 @@ class BinanceConnector(AbstractPriceConnector):
     def __init__(
         self,
         client: httpx.AsyncClient,
-        api_base: str = "https://api.binance.com",
+        api_base: str | None = None,
     ) -> None:
+        if api_base is None:
+            api_base = os.getenv(
+                "BINANCE_API_BASE", "https://data-api.binance.vision"
+            )
         self._client = client
         self._api_base = api_base.rstrip("/")
         self._request_timestamps: deque[float] = deque(

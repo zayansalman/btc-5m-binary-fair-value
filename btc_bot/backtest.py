@@ -4,6 +4,7 @@ from __future__ import annotations
 import csv
 import json
 import re
+import time
 import urllib.parse
 import urllib.request
 from bisect import bisect_right
@@ -14,6 +15,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from config import (
+    BINANCE_API_BASE,
     BTC_HISTORY_CSV_PATH,
     BTC_PAPER_ENTRY_EDGE_MIN,
     BTC_PAPER_ENTRY_MIN_REMAINING_SECONDS,
@@ -28,8 +30,24 @@ from btc_bot.strategy import (
     sigma_per_second,
 )
 
-BINANCE_API = "https://api.binance.com"
+BINANCE_API = BINANCE_API_BASE
 EASTERN = ZoneInfo("America/New_York")
+
+
+def _fetch_klines(params: str, attempts: int = 3) -> list[Any]:
+    """Fetch klines with bounded retry; one transient timeout must not kill a grid run."""
+    last_error: OSError | None = None
+    for attempt in range(attempts):
+        try:
+            with urllib.request.urlopen(
+                f"{BINANCE_API}/api/v3/klines?{params}", timeout=15
+            ) as r:
+                return json.loads(r.read())
+        except OSError as exc:
+            last_error = exc
+            time.sleep(2 * (attempt + 1))
+    raise last_error
+
 MARKET_RE = re.compile(
     r"Bitcoin Up or Down - (?P<month>[A-Za-z]+) (?P<day>\d{1,2}), "
     r"(?P<start>\d{1,2}:\d{2}(?:AM|PM))-(?P<end>\d{1,2}:\d{2}(?:AM|PM)) ET"
@@ -150,8 +168,7 @@ class BinanceWindowCache:
                 "limit": 1000,
             }
         )
-        with urllib.request.urlopen(f"{BINANCE_API}/api/v3/klines?{params}", timeout=15) as r:
-            rows = json.loads(r.read())
+        rows = _fetch_klines(params)
         closes = {int(row[0] // 1000): float(row[4]) for row in rows if len(row) > 4}
         path.write_text(json.dumps(closes, sort_keys=True), encoding="utf-8")
         self._memory[key] = closes
