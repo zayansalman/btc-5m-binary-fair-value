@@ -5,8 +5,9 @@ implementation. All visual design is preserved via extracted CSS.
 
 Endpoints:
     GET  /              — Main dashboard page (HTML)
-    POST /api/start     — Start the paper bot
-    POST /api/stop      — Stop the paper bot
+    POST /api/start     — Start the trading bot (paper by default; LIVE when
+                          BTC_BOT_MODE=live and the boot gates pass)
+    POST /api/stop      — Stop the trading bot (live mode flattens first)
     GET  /api/data      — Full dashboard data as JSON
     GET  /api/stream    — Server-Sent Events for live updates
 """
@@ -38,7 +39,12 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from config import (  # type: ignore[import-untyped]
+    BTC_BOT_MODE,
     BTC_CHAINLINK_STREAM_URL,
+    BTC_LIVE_BANKROLL_CAP_USD,
+    BTC_LIVE_DAILY_LOSS_HALT_USD,
+    BTC_LIVE_MAX_TRADE_USD,
+    KILL_SWITCH_PATH,
     BTC_HISTORY_CSV_PATH,
     BTC_PAPER_ENTRY_EDGE_MIN,
     BTC_PAPER_MAX_TRADE_USD,
@@ -57,6 +63,13 @@ from db import connect, init_db  # type: ignore[import-untyped]
 from logging_setup import get_logger  # type: ignore[import-untyped]
 
 log = get_logger("dashboard")
+
+_IS_LIVE = BTC_BOT_MODE == "live"
+_MODE_BANNER = (
+    "LIVE — orders are real. Risk-gated CLOB orders are placed on Polymarket."
+    if _IS_LIVE
+    else "Paper — no live orders are placed in this mode."
+)
 
 # Lazily import btc_bot modules (may not be available in test environments)
 try:
@@ -190,9 +203,9 @@ async def _get_status_safe() -> Any:
     # Mock status for testing / when btc_bot is not available
     class _MockStatus:
         state = "stopped"
-        mode = "paper"
+        mode = BTC_BOT_MODE
         updated_at = None
-        detail = "BTC 5-minute paper mode is ready. No live orders are placed by this build."
+        detail = f"BTC 5-minute bot is ready. Mode: {_MODE_BANNER}"
     return _MockStatus()
 
 
@@ -285,8 +298,16 @@ async def _status_markdown() -> str:
         f"<li>Risk: <strong>{paper.risk_state}</strong></li>\n"
         "</ul>\n"
         f"<p>{escape(status.detail)}</p>\n"
-        "<p><em>Start runs the paper loop only. Stop prevents new entries immediately "
-        "and force-closes any open simulated position.</em></p>"
+        + (
+            "<p><em><strong>LIVE — orders are real.</strong> Start places risk-gated "
+            "orders on the Polymarket CLOB. Stop cancels resting orders and "
+            f"flattens the open position. Kill switch: <code>{escape(str(KILL_SWITCH_PATH))}</code>."
+            "</em></p>"
+            if _IS_LIVE
+            else "<p><em>Start runs the paper loop only — no live orders in paper mode. "
+            "Stop prevents new entries immediately and force-closes any open "
+            "simulated position.</em></p>"
+        )
     )
 
 
@@ -363,9 +384,17 @@ def _brief_html() -> str:
         "discipline: market discovery, feed labeling, confidence-based sizing, "
         "one-position risk control, structured event logs, and a dashboard kill "
         "switch.</p>\n"
-        "<p>This build does not sign or submit live orders. The active workflow is simple: "
-        "<strong>Start</strong> begins simulated BTC 5m trading, and <strong>Stop</strong> halts new entries "
-        "and closes any open simulated position.</p>"
+        + (
+            "<p><strong>Mode: LIVE — orders are real.</strong> Start places risk-gated "
+            "limit orders on the Polymarket CLOB (per-trade cap "
+            f"${BTC_LIVE_MAX_TRADE_USD:.2f}, daily loss halt ${BTC_LIVE_DAILY_LOSS_HALT_USD:.2f}, "
+            f"bankroll cap ${BTC_LIVE_BANKROLL_CAP_USD:.2f}); Stop cancels and flattens. "
+            f"Kill switch file: <code>{escape(str(KILL_SWITCH_PATH))}</code>.</p>"
+            if _IS_LIVE
+            else "<p>Mode: paper — this mode does not sign or submit live orders. The active "
+            "workflow is simple: <strong>Start</strong> begins simulated BTC 5m trading, and "
+            "<strong>Stop</strong> halts new entries and closes any open simulated position.</p>"
+        )
     )
 
 
@@ -396,8 +425,16 @@ def _settings_html() -> str:
         f"<li>Time exit: <strong>{BTC_PAPER_TIME_EXIT_SECONDS}s</strong>.</li>\n"
         f"<li>Settlement-aware reference target: {BTC_CHAINLINK_STREAM_URL}</li>\n"
         "</ul>\n"
-        "<p>Required local env vars are optional for paper mode except path overrides. "
-        "No private key is used by this build.</p>"
+        + (
+            "<p><strong>Mode: LIVE — orders are real.</strong> Live limits: per-trade cap "
+            f"<strong>${BTC_LIVE_MAX_TRADE_USD:.2f}</strong>, daily loss halt "
+            f"<strong>${BTC_LIVE_DAILY_LOSS_HALT_USD:.2f}</strong>, session bankroll cap "
+            f"<strong>${BTC_LIVE_BANKROLL_CAP_USD:.2f}</strong>, max 1 open position, "
+            f"kill switch <code>{escape(str(KILL_SWITCH_PATH))}</code>.</p>"
+            if _IS_LIVE
+            else "<p>Required local env vars are optional for paper mode except path overrides. "
+            "No private key is used in paper mode.</p>"
+        )
     )
 
 
@@ -508,7 +545,8 @@ async def dashboard(request: Request) -> Any:
 
 @app.post("/api/start")
 async def api_start() -> dict[str, str]:
-    """Start the paper bot."""
+    """Start the trading bot — paper by default, LIVE (real orders) when
+    BTC_BOT_MODE=live and every boot gate passes."""
     try:
         if _BTC_BOT_AVAILABLE:
             status = await request_start()
@@ -521,7 +559,8 @@ async def api_start() -> dict[str, str]:
 
 @app.post("/api/stop")
 async def api_stop() -> dict[str, str]:
-    """Stop the paper bot."""
+    """Stop the trading bot. In live mode this waits for the runner to cancel
+    resting orders and flatten open positions before reporting stopped."""
     try:
         if _BTC_BOT_AVAILABLE:
             status = await request_stop()

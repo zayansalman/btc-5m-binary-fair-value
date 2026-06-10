@@ -1,5 +1,52 @@
 # Changelog
 
+## v0.3.0 — Live Execution Mode (2026-06-10)
+
+Closes #20. Adds an opt-in live trading mode that routes the existing signal path through Polymarket's CLOB via `py-clob-client`. **Paper remains the default**; nothing changes unless the operator explicitly flips every gate.
+
+### Live executor (`btc_5m_fv/execution/live.py`)
+- `LiveExecutor` wraps the synchronous `ClobClient` behind an async API (all network calls via `asyncio.to_thread`)
+- `start()` derives + sets CLOB API creds (`create_or_derive_api_creds` / `set_api_creds`) and verifies reachability before any trading
+- Entries: GTC limit BUY at best ask (book best ask, gamma price fallback); price rounded to the market tick size, size rounded **down** to the CLOB 2-decimal share granularity, Polymarket minimum order size enforced from the order book (default 5 shares)
+- Exits: GTC limit SELL at best bid for the **matched** entry size (`get_order` → `size_matched`), so the bot never sells shares that never filled; any resting entry remainder is cancelled before the sell
+- Cancel-on-roll: unfilled entry orders are cancelled on `WINDOW_ROLL` and `BAND_REENTRY` exits (matched size is captured post-cancel so fills landing mid-cancel still get flattened)
+
+### Hard risk limits (enforced in code BEFORE every order)
+- Per-trade cap: `BTC_LIVE_MAX_TRADE_USD` (default $3)
+- Max 1 open live position/order
+- Daily realized-loss halt: `BTC_LIVE_DAILY_LOSS_HALT_USD` (default $10, UTC day) — **persisted in SQLite and reloaded at boot**, so Stop/Start or a restart cannot reset it within the day
+- Daily bankroll cap on summed buy notionals: `BTC_LIVE_BANKROLL_CAP_USD` (default $30/UTC day, persisted); the unfilled remainder of a cancelled entry is credited back
+- Entry slippage guard: `BTC_LIVE_MAX_ENTRY_SLIPPAGE` (default 0.02) blocks buys when the live ask has gapped above the signal price that produced the edge
+- Kill switch: the file `data/KILL` blocks all NEW entries and cancels resting orders, checked every tick plus immediately before each entry POST (TOCTOU guard); it re-arms when the file is deleted. Exits stay allowed under kill — flattening only reduces exposure
+- Realized PnL feeds the loss halt from CONFIRMED exit fills (actual matched size at the executed order's limit price), never from paper-price estimates at submission time
+
+### Exit lifecycle & stop safety
+- Exit SELLs never rest: the order is awaited up to `BTC_LIVE_EXIT_FILL_TIMEOUT_SECONDS` (default 10s) and cancelled if unfilled, so no stale GTC exit can sit in a 5-minute book into resolution; partial fills are accounted per tranche and only the remainder is retried
+- A failed/blocked/unfilled live exit **keeps the ledger row OPEN** and is retried on the next tick — the ledger can never claim flat while real tokens remain on the exchange
+- Cancels are verified against the DELETE response body (`canceled` list) with a terminal-status re-check; on cancel failure the order id stays tracked for retry instead of being forgotten
+- Live entries write the ledger row BEFORE the order is submitted (failed submits delete it), so a DB failure after submit can never leave a real position unmanaged
+- Stop: the controller sets the stop flag and **waits for the runner thread** to cancel resting orders and flatten through the executor on its own event loop — single-threaded executor ownership, no stop race, no paper-closing of live positions; unflattenable rows are reported for manual action
+
+### Boot gating & reconciliation
+- Live mode REFUSES to start unless `POLYMARKET_PRIVATE_KEY` is set AND `BTC_LIVE_CONFIRM=YES_I_UNDERSTAND` — checked on the dashboard `/api/start` path and again at loop start; it never silently falls back to paper
+- Boot also REFUSES when: `POLYMARKET_FUNDER` is empty with signature type 1/2 (such orders are signed with the EOA as maker and rejected by the CLOB), the signature type is unknown, or any risk-limit env var failed to parse (no silent fallback to looser defaults)
+- Boot reconciliation: `start()` cancels ALL resting CLOB orders on the account and re-adopts any open ledger position from the order journal (exchange-confirmed fill size); paper artifacts / never-filled rows are closed as `RECONCILED_*`; unreconcilable state refuses boot instead of trading on top of unknown exposure
+- Wallet config: `POLYMARKET_FUNDER` (proxy wallet), `POLYMARKET_SIGNATURE_TYPE` (0 EOA / 1 email / 2 browser, default 1)
+- The private key is never logged and never journaled
+
+### Audit trail
+- New SQLite table `btc_live_orders` journals every order/cancel attempt — including risk-gate BLOCKED attempts that never reach the network
+- Engine ledger (`btc_paper_positions`) mirrors live fills (executor price/size), notifications use `btc_live_entry` / `btc_live_exit` events
+
+### Dashboard & docs
+- Status/brief/settings copy is mode-aware: "LIVE — orders are real" vs paper; stale "no live orders are placed by this build" claims removed
+- `.env.example` documents all new vars (key/funder ship empty); `docs/OPERATIONS_RUNBOOK.md` gains a "Going live" section with launch steps, risk limits, and kill-switch drill
+
+### Tests
+- 70 new unit tests with a fully mocked `ClobClient` (boot refusal incl. funder/signature/parse-error gates, order construction/rounding/min-size, slippage guard, all risk gates incl. restart persistence, kill switch incl. re-arm and TOCTOU, exit timeout/partial-fill lifecycle, boot reconciliation, failed-exit-keeps-row-open wiring, paper-default invariance, dashboard copy)
+- `py-clob-client` pinned in `requirements.txt` and `pyproject.toml`
+- **395 total, all passing**
+
 ## v0.2.2 — Deterministic Test Fills (2026-06-10)
 
 Fixes #24.

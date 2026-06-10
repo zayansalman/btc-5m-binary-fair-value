@@ -79,6 +79,27 @@ CREATE INDEX IF NOT EXISTS idx_btc_paper_positions_state
   ON btc_paper_positions(state);
 CREATE INDEX IF NOT EXISTS idx_btc_paper_positions_opened
   ON btc_paper_positions(opened_at DESC);
+
+CREATE TABLE IF NOT EXISTS btc_live_orders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_at TEXT NOT NULL,
+  window_slug TEXT,
+  token_id TEXT,
+  intent TEXT NOT NULL,
+  side TEXT NOT NULL,
+  price REAL,
+  size REAL,
+  notional_usd REAL,
+  order_type TEXT,
+  status TEXT NOT NULL,
+  clob_order_id TEXT,
+  error TEXT,
+  details_json TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_btc_live_orders_created
+  ON btc_live_orders(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_btc_live_orders_status
+  ON btc_live_orders(status);
 """
 
 BTC_POSITION_COLUMN_MIGRATIONS = {
@@ -148,6 +169,50 @@ async def set_config(key: str, value: str | None) -> None:
               updated_at = excluded.updated_at
             """,
             (key, value, utc_now_iso()),
+        )
+        await db.commit()
+
+
+async def journal_live_order(
+    *,
+    intent: str,
+    side: str,
+    status: str,
+    window_slug: str | None = None,
+    token_id: str | None = None,
+    price: float | None = None,
+    size: float | None = None,
+    notional_usd: float | None = None,
+    order_type: str | None = None,
+    clob_order_id: str | None = None,
+    error: str | None = None,
+    details: dict[str, Any] | None = None,
+) -> None:
+    """Append one live order/fill/cancel attempt to the btc_live_orders journal."""
+    payload = json.dumps(details or {}, sort_keys=True, default=str)
+    async with connect() as db:
+        await db.execute(
+            """
+            INSERT INTO btc_live_orders(
+              created_at, window_slug, token_id, intent, side, price, size,
+              notional_usd, order_type, status, clob_order_id, error, details_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                utc_now_iso(),
+                window_slug,
+                token_id,
+                intent,
+                side,
+                price,
+                size,
+                notional_usd,
+                order_type,
+                status,
+                clob_order_id,
+                error,
+                payload,
+            ),
         )
         await db.commit()
 

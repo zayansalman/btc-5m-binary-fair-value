@@ -1,8 +1,12 @@
-"""BTC 5-minute paper trader.
+"""BTC 5-minute trading engine (paper by default, live opt-in).
 
-This module deliberately does not place live orders. It discovers the current
-Polymarket BTC 5m market, computes a simple volatility-band fair probability
-from BTC spot, and records simulated entries/exits in SQLite.
+It discovers the current Polymarket BTC 5m market, computes a simple
+volatility-band fair probability from BTC spot, and records entries/exits in
+SQLite. In paper mode (the default) no real orders are ever placed. When
+``BTC_BOT_MODE=live`` AND the live boot gate passes (private key +
+``BTC_LIVE_CONFIRM=YES_I_UNDERSTAND``), entries/exits are ALSO routed through
+:class:`btc_5m_fv.execution.live.LiveExecutor`, which places real risk-gated
+orders on the Polymarket CLOB.
 """
 from __future__ import annotations
 
@@ -31,8 +35,10 @@ from config import (
     BTC_PAPER_TIME_EXIT_SECONDS,
     POLYMARKET_GAMMA_API,
 )
+import config as _config
 from db import connect, notify, set_config
 from logging_setup import get_logger
+from btc_5m_fv.execution.live import LiveExecutor, build_live_executor
 from btc_bot.strategy import (
     StrategyParams,
     fair_up_probability,
@@ -41,6 +47,9 @@ from btc_bot.strategy import (
 )
 
 log = get_logger("btc_paper")
+
+# Live executor for the current run loop. None means pure paper mode.
+_live_executor: LiveExecutor | None = None
 
 BINANCE_API = BINANCE_API_BASE
 FIVE_MINUTES = BTC_MARKET_TIMEFRAME_MINUTES * 60
@@ -71,6 +80,8 @@ class PaperSnapshot:
     notional_usd: float
     reason: str
     feed_source: str
+    up_token_id: str = ""
+    down_token_id: str = ""
 
 
 @dataclass
@@ -97,12 +108,44 @@ class PaperSummary:
 
 
 async def run_paper_loop(stop_event: threading.Event) -> None:
-    """Run until Stop is pressed or the process exits."""
+    """Run until Stop is pressed or the process exits.
+
+    Mode comes from ``BTC_BOT_MODE``: ``paper`` (default) journals simulated
+    trades only; ``live`` ALSO routes entries/exits through the risk-gated
+    LiveExecutor. Live boot refusal stops the loop — it never silently falls
+    back to paper.
+    """
+    global _live_executor
+    mode = _config.BTC_BOT_MODE
+    if mode == "live":
+        try:
+            executor = build_live_executor()
+            await executor.start()
+        except Exception as e:  # noqa: BLE001 — includes LiveBootRefused
+            error = f"{type(e).__name__}: {e!s}"
+            await set_config("btc_bot.state", "stopped")
+            await set_config("btc_bot.mode", "live")
+            await _set_detail(
+                f"LIVE mode refused to start: {error} "
+                "The bot did NOT fall back to paper mode and is not running."
+            )
+            await notify("btc_live_boot_refused", f"Live mode boot refused: {error}")
+            log.error("live_loop.boot_refused", error=error)
+            return
+        _live_executor = executor
+
     await set_config("btc_bot.state", "running")
-    await set_config("btc_bot.mode", "paper")
-    await _set_detail("BTC paper loop running. No real orders will be placed.")
-    await notify("btc_paper_started", "BTC paper bot started")
-    log.info("paper_loop.started")
+    await set_config("btc_bot.mode", mode)
+    if mode == "live":
+        await _set_detail(
+            "BTC LIVE loop running — orders are REAL. "
+            f"Kill switch: touch {_config.KILL_SWITCH_PATH} to halt and cancel."
+        )
+        await notify("btc_live_started", "BTC LIVE bot started — orders are real")
+    else:
+        await _set_detail("BTC paper loop running. No real orders will be placed.")
+        await notify("btc_paper_started", "BTC paper bot started")
+    log.info("paper_loop.started", mode=mode)
 
     try:
         while not stop_event.is_set():
@@ -112,27 +155,50 @@ async def run_paper_loop(stop_event: threading.Event) -> None:
             except Exception as e:  # noqa: BLE001
                 error = f"{type(e).__name__}: {e!s}"
                 log.warning("paper_loop.tick_failed", error=error)
-                await _set_detail(f"BTC paper loop tick failed: {error}")
+                await _set_detail(f"BTC {mode} loop tick failed: {error}")
             await _sleep_interruptible(stop_event, float(BTC_PAPER_TICK_SECONDS))
     finally:
+        if _live_executor is not None:
+            # Flatten BEFORE dropping the executor: this thread owns it, so
+            # Stop can never paper-close a live position (which would strand
+            # real tokens on the exchange with a ledger that says flat).
+            try:
+                await _live_executor.cancel_open(reason="LOOP_STOP")
+            except Exception as e:  # noqa: BLE001
+                log.warning("live_loop.stop_cancel_failed", error=str(e))
+            try:
+                await force_close_open_positions("STOP_REQUEST")
+            except Exception as e:  # noqa: BLE001
+                log.warning("live_loop.stop_flatten_failed", error=str(e))
+            _live_executor = None
         await set_config("btc_bot.state", "stopped")
-        await _set_detail("BTC paper loop stopped. No new paper entries will be opened.")
-        await notify("btc_paper_stopped", "BTC paper bot stopped")
-        log.info("paper_loop.stopped")
+        await _set_detail(f"BTC {mode} loop stopped. No new entries will be opened.")
+        await notify("btc_paper_stopped", f"BTC {mode} bot stopped")
+        log.info("paper_loop.stopped", mode=mode)
 
 
 async def paper_tick_once() -> PaperSnapshot:
-    """One paper trading tick. Useful for tests and dashboard-driven smoke checks."""
+    """One trading tick. Useful for tests and dashboard-driven smoke checks."""
+    kill_active = False
+    if _live_executor is not None:
+        # Kill switch is checked every tick BEFORE any order can be placed.
+        kill_active = await _live_executor.enforce_kill_switch()
     async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
         snapshot = await _build_snapshot(client)
     await _log_tick(snapshot)
     await _close_due_positions(snapshot)
-    await _maybe_open_position(snapshot)
+    if not kill_active:
+        await _maybe_open_position(snapshot)
     return snapshot
 
 
 async def force_close_open_positions(exit_reason: str = "STOP_REQUEST") -> int:
-    """Close all open paper positions at the latest available paper price."""
+    """Close all open positions; returns how many actually closed.
+
+    In live mode a position only counts as closed when the executor confirmed
+    the flatten — failed live exits keep their ledger rows OPEN so they are
+    retried (or escalated to the operator) instead of stranding real tokens.
+    """
     async with connect() as db:
         async with db.execute(
             "SELECT * FROM btc_paper_positions WHERE state = 'open' ORDER BY opened_at"
@@ -142,14 +208,25 @@ async def force_close_open_positions(exit_reason: str = "STOP_REQUEST") -> int:
         return 0
     async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
         snapshot = await _build_snapshot(client)
+    closed = 0
     for pos in positions:
-        await _close_position(
+        if await _close_position(
             pos,
             snapshot,
             _current_price_for_side(snapshot, pos["side"]),
             exit_reason,
-        )
-    return len(positions)
+        ):
+            closed += 1
+    return closed
+
+
+async def count_open_positions() -> int:
+    """Number of open rows in the position ledger."""
+    async with connect() as db:
+        async with db.execute(
+            "SELECT COUNT(*) AS n FROM btc_paper_positions WHERE state = 'open'"
+        ) as cur:
+            return int((await cur.fetchone())["n"])
 
 
 async def load_paper_summary() -> PaperSummary:
@@ -243,6 +320,7 @@ async def _build_snapshot(client: httpx.AsyncClient) -> PaperSnapshot:
     reference = await _fetch_reference_price(client, start_ts)
     sigma = sigma_per_second(closes)
     up_price, down_price = _outcome_prices(market)
+    up_token_id, down_token_id = _outcome_token_ids(market)
     fair_up = fair_up_probability(spot, reference, sigma, remaining)
     edge = fair_up - up_price
     side, confidence, notional, reason = signal_from_edge(
@@ -270,6 +348,8 @@ async def _build_snapshot(client: httpx.AsyncClient) -> PaperSnapshot:
         notional_usd=notional,
         reason=reason,
         feed_source=f"binance_public_fallback; chainlink_target={BTC_CHAINLINK_STREAM_URL}",
+        up_token_id=up_token_id,
+        down_token_id=down_token_id,
     )
 
 
@@ -344,6 +424,28 @@ def _outcome_prices(market: dict[str, Any]) -> tuple[float, float]:
     return float(prices[up_idx]), float(prices[down_idx])
 
 
+def _outcome_token_ids(market: dict[str, Any]) -> tuple[str, str]:
+    """(up_token_id, down_token_id) from the gamma market's clobTokenIds.
+
+    The clobTokenIds list is aligned with the outcomes list. Returns empty
+    strings when unavailable — live entries are then blocked, never guessed.
+    """
+    token_ids = _json_list(market.get("clobTokenIds"))
+    if len(token_ids) != 2:
+        return "", ""
+    outcomes = _json_list(market.get("outcomes"))
+    up_idx = 0
+    if len(outcomes) == 2:
+        labels = [str(x).lower() for x in outcomes]
+        if "up" in labels:
+            up_idx = labels.index("up")
+    return str(token_ids[up_idx]), str(token_ids[1 - up_idx])
+
+
+def _token_id_for_side(snapshot: PaperSnapshot, side: str) -> str:
+    return snapshot.up_token_id if side == "Up" else snapshot.down_token_id
+
+
 def _json_list(value: Any) -> list[Any]:
     if isinstance(value, list):
         return value
@@ -405,13 +507,63 @@ async def _maybe_open_position(snapshot: PaperSnapshot) -> None:
         ) as cur:
             if (await cur.fetchone())["n"]:
                 return
-        entry_price = (
-            snapshot.market_up_price
-            if snapshot.signal_side == "Up"
-            else snapshot.market_down_price
+    entry_price = (
+        snapshot.market_up_price
+        if snapshot.signal_side == "Up"
+        else snapshot.market_down_price
+    )
+    notional = snapshot.notional_usd
+    shares = notional / entry_price
+
+    executor = _live_executor
+    if executor is not None:
+        # Live mode: the ledger row is written BEFORE the real order goes
+        # out. Every failure mode of this ordering is benign: a failed
+        # submit deletes the row (or, if even that write fails, the row is
+        # later closed as a confirmed zero-fill), whereas submitting first
+        # could leave a REAL position with no ledger row — unmanaged by
+        # every exit path.
+        position_id = await _insert_position_row(
+            snapshot, entry_price, notional, shares
         )
-        shares = snapshot.notional_usd / entry_price
-        await db.execute(
+        result = await executor.submit_entry(
+            token_id=_token_id_for_side(snapshot, snapshot.signal_side),
+            side_price=entry_price,
+            notional_usd=notional,
+            window_slug=snapshot.window_slug,
+        )
+        if not result.ok:
+            # Blocked/error — journaled in btc_live_orders. Remove the
+            # provisional row so the ledger mirrors live intent.
+            await _delete_position_row(position_id)
+            return
+        entry_price = result.price or entry_price
+        notional = result.notional_usd or notional
+        shares = result.size or (notional / entry_price)
+        await _update_position_terms(position_id, entry_price, notional, shares)
+    else:
+        await _insert_position_row(snapshot, entry_price, notional, shares)
+    label = "LIVE" if executor is not None else "Paper"
+    await notify(
+        "btc_live_entry" if executor is not None else "btc_paper_entry",
+        f"{label} BUY {snapshot.signal_side} ${notional:.2f} @ {entry_price:.3f}",
+        {"window_slug": snapshot.window_slug, "confidence": snapshot.confidence},
+    )
+    log.info(
+        "paper_position.opened",
+        mode="live" if executor is not None else "paper",
+        window_slug=snapshot.window_slug,
+        side=snapshot.signal_side,
+        notional=notional,
+        entry_price=entry_price,
+    )
+
+
+async def _insert_position_row(
+    snapshot: PaperSnapshot, entry_price: float, notional: float, shares: float
+) -> int:
+    async with connect() as db:
+        cur = await db.execute(
             """
             INSERT INTO btc_paper_positions(
               opened_at, window_slug, market_question, side, state, entry_price,
@@ -425,7 +577,7 @@ async def _maybe_open_position(snapshot: PaperSnapshot) -> None:
                 snapshot.market_question,
                 snapshot.signal_side,
                 entry_price,
-                snapshot.notional_usd,
+                notional,
                 shares,
                 snapshot.spot_price,
                 snapshot.confidence,
@@ -434,19 +586,30 @@ async def _maybe_open_position(snapshot: PaperSnapshot) -> None:
                 snapshot.feed_source,
             ),
         )
+        position_id = int(cur.lastrowid or 0)
         await db.commit()
-    await notify(
-        "btc_paper_entry",
-        f"Paper BUY {snapshot.signal_side} ${snapshot.notional_usd:.0f} @ {entry_price:.3f}",
-        {"window_slug": snapshot.window_slug, "confidence": snapshot.confidence},
-    )
-    log.info(
-        "paper_position.opened",
-        window_slug=snapshot.window_slug,
-        side=snapshot.signal_side,
-        notional=snapshot.notional_usd,
-        entry_price=entry_price,
-    )
+    return position_id
+
+
+async def _delete_position_row(position_id: int) -> None:
+    async with connect() as db:
+        await db.execute(
+            "DELETE FROM btc_paper_positions WHERE position_id = ?", (position_id,)
+        )
+        await db.commit()
+
+
+async def _update_position_terms(
+    position_id: int, entry_price: float, notional: float, shares: float
+) -> None:
+    """Overwrite a provisional row with the terms the executor actually used."""
+    async with connect() as db:
+        await db.execute(
+            "UPDATE btc_paper_positions SET entry_price = ?, notional_usd = ?, "
+            "shares = ? WHERE position_id = ?",
+            (entry_price, notional, shares, position_id),
+        )
+        await db.commit()
 
 
 async def _close_due_positions(snapshot: PaperSnapshot) -> None:
@@ -466,8 +629,63 @@ async def _close_due_positions(snapshot: PaperSnapshot) -> None:
 
 async def _close_position(
     pos: dict[str, Any], snapshot: PaperSnapshot, exit_price: float, reason: str
-) -> None:
-    pnl = float(pos["shares"]) * (exit_price - float(pos["entry_price"]))
+) -> bool:
+    """Close one position; returns True when the ledger row was closed.
+
+    Live mode only closes the row when the executor CONFIRMED the flatten
+    (or confirmed the entry never filled). A blocked/failed/unfilled live
+    exit keeps the row open so it is retried on the next tick — the ledger
+    must never claim flat while real tokens remain on the exchange. Realized
+    PnL for the daily loss halt is recorded inside the executor on confirmed
+    fills, never here from paper prices.
+    """
+    executor = _live_executor
+    entry_price = float(pos["entry_price"])
+    prior_pnl = float(pos["realized_pnl_usd"] or 0.0)
+    if executor is not None:
+        # Window roll / band re-entry must first cancel any unfilled resting
+        # entry order before flattening whatever did fill.
+        if reason in ("WINDOW_ROLL", "BAND_REENTRY"):
+            await executor.cancel_open(reason=reason)
+        exit_result = await executor.submit_exit(
+            side_price=exit_price,
+            size=float(pos["shares"]),
+            window_slug=pos["window_slug"],
+        )
+        if not exit_result.ok and exit_result.status != "SKIPPED":
+            # BLOCKED / ERROR / UNFILLED: real tokens may still be held.
+            # Record any partial fill into the row, keep it OPEN, and retry.
+            tranche_size = exit_result.size or 0.0
+            if tranche_size > 0:
+                tranche_price = (
+                    exit_result.price if exit_result.price is not None else exit_price
+                )
+                prior_pnl += tranche_size * (tranche_price - entry_price)
+                async with connect() as db:
+                    await db.execute(
+                        "UPDATE btc_paper_positions SET realized_pnl_usd = ? "
+                        "WHERE position_id = ?",
+                        (prior_pnl, pos["position_id"]),
+                    )
+                    await db.commit()
+            log.warning(
+                "live_exit.failed_position_kept_open",
+                position_id=pos["position_id"],
+                window_slug=pos["window_slug"],
+                status=exit_result.status,
+                reason=exit_result.reason,
+            )
+            return False
+        if exit_result.status == "SKIPPED":
+            # Confirmed: the entry never filled, so nothing real existed.
+            pnl = prior_pnl
+        else:
+            sold = exit_result.size or 0.0
+            if exit_result.price is not None:
+                exit_price = exit_result.price
+            pnl = prior_pnl + sold * (exit_price - entry_price)
+    else:
+        pnl = float(pos["shares"]) * (exit_price - entry_price)
     async with connect() as db:
         await db.execute(
             """
@@ -487,18 +705,20 @@ async def _close_position(
         )
         await db.commit()
     await notify(
-        "btc_paper_exit",
-        f"Paper EXIT {pos['side']} ${pnl:+.2f} ({reason})",
+        "btc_live_exit" if executor is not None else "btc_paper_exit",
+        f"{'LIVE' if executor is not None else 'Paper'} EXIT {pos['side']} ${pnl:+.2f} ({reason})",
         {"window_slug": pos["window_slug"], "position_id": pos["position_id"]},
     )
     log.info(
         "paper_position.closed",
+        mode="live" if executor is not None else "paper",
         position_id=pos["position_id"],
         window_slug=pos["window_slug"],
         side=pos["side"],
         pnl=round(pnl, 4),
         exit_reason=reason,
     )
+    return True
 
 
 def _current_price_for_side(snapshot: PaperSnapshot, side: str) -> float:
@@ -531,8 +751,14 @@ async def _set_detail(detail: str) -> None:
 
 def _detail_from_snapshot(snapshot: PaperSnapshot) -> str:
     side = snapshot.signal_side or "SKIP"
-    return (
-        "BTC paper loop running. No real orders are placed.\n\n"
+    if _live_executor is not None:
+        header = (
+            "BTC LIVE loop running — orders are REAL. "
+            f"Kill switch: touch {_config.KILL_SWITCH_PATH}.\n\n"
+        )
+    else:
+        header = "BTC paper loop running. No real orders are placed.\n\n"
+    return header + (
         f"Window: {snapshot.window_slug} ({snapshot.remaining_seconds}s left)\n"
         f"Spot: ${snapshot.spot_price:,.2f} vs ref ${snapshot.reference_price:,.2f}\n"
         f"Polymarket Up: {snapshot.market_up_price:.3f}; fair Up: {snapshot.fair_up_prob:.3f}; "
