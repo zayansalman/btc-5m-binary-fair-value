@@ -37,6 +37,9 @@ DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 DASHBOARD_SERVER_NAME = os.getenv("DASHBOARD_SERVER_NAME", "127.0.0.1")
 DASHBOARD_SERVER_PORT = int(os.getenv("DASHBOARD_SERVER_PORT", "7860"))
 
+# Market-data mirror of the spot API: api.binance.com is unreachable from some
+# networks, while data-api.binance.vision serves the same /api/v3 endpoints.
+BINANCE_API_BASE = os.getenv("BINANCE_API_BASE", "https://data-api.binance.vision")
 POLYMARKET_GAMMA_API = "https://gamma-api.polymarket.com"
 BTC_CHAINLINK_STREAM_URL = "https://data.chain.link/streams/btc-usd-cexprice-streams"
 BTC_MARKET_TIMEFRAME_MINUTES = 5
