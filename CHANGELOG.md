@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.2.2 — Deterministic Test Fills (2026-06-10)
+
+Fixes #24.
+
+- **Flaky paper-execution tests** — `PaperExecutionManager._determine_fill()` rolled module-level unseeded `random.random()` per order (1% PARTIAL_FILL, 0.1% REJECTED), so FILLED-assuming unit tests failed in ~30-40% of full-suite runs. The RNG is now injectable via a new `rng: random.Random | None` constructor param (default unchanged: fresh unseeded `random.Random()`); test fixtures pin a deterministic always-fill RNG. Partial-fill/reject paths keep their dedicated tests. Verified 20/20 consecutive green runs of `tests/unit/test_paper_execution.py`.
+
 ## v0.2.1 — Runtime Blockers (2026-06-10)
 
 Fixes #19.

@@ -28,11 +28,26 @@ from btc_5m_fv.execution.paper import PaperExecutionManager
 # ---------------------------------------------------------------------------
 
 
+class _AlwaysFillRNG(random.Random):
+    """Deterministic RNG: always rolls high so every order fully fills.
+
+    Pins the fill simulation in PaperExecutionManager — without this, the
+    1% PARTIAL_FILL / 0.1% REJECTED rolls make FILLED-assuming tests flaky.
+    PARTIAL_FILL/REJECTED paths are covered explicitly by monkey-patching
+    _determine_fill in their dedicated tests.
+    """
+
+    def random(self) -> float:
+        return 0.999
+
+
 @pytest_asyncio.fixture
 async def em(tmp_path: Path) -> PaperExecutionManager:
     """An initialised PaperExecutionManager backed by a temp SQLite file."""
     db_path = tmp_path / "test_execution.db"
-    manager = PaperExecutionManager(str(db_path), latency_sim_ms=0.0)
+    manager = PaperExecutionManager(
+        str(db_path), latency_sim_ms=0.0, rng=_AlwaysFillRNG()
+    )
     await manager.init()
     yield manager
     await manager.close()
@@ -42,7 +57,9 @@ async def em(tmp_path: Path) -> PaperExecutionManager:
 async def em_with_latency(tmp_path: Path) -> PaperExecutionManager:
     """PaperExecutionManager with 10 ms simulated latency."""
     db_path = tmp_path / "test_latency.db"
-    manager = PaperExecutionManager(str(db_path), latency_sim_ms=10.0)
+    manager = PaperExecutionManager(
+        str(db_path), latency_sim_ms=10.0, rng=_AlwaysFillRNG()
+    )
     await manager.init()
     yield manager
     await manager.close()
