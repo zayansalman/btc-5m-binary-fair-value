@@ -1,0 +1,838 @@
+"""Unit tests for the live Polymarket CLOB executor (issue #20).
+
+Every test mocks ClobClient — nothing here ever touches the network.
+Covers: boot refusal gates, order construction (tick/size rounding, minimum
+order size), per-trade cap, bankroll cap, daily loss halt, kill switch,
+cancel-on-roll, and paper-mode defaults.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
+import pytest
+import pytest_asyncio
+
+import config as _config
+import db as _db
+from btc_5m_fv.execution.live import (
+    CONFIRM_PHRASE,
+    LiveBootRefused,
+    LiveExecutor,
+    LiveOrderResult,
+    _round_price_to_tick,
+    _round_size_down,
+    assert_live_boot_allowed,
+    build_live_executor,
+)
+
+UP_TOKEN = "1234567890"
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest_asyncio.fixture
+async def journal_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Point the SQLite journal at a throwaway DB."""
+    monkeypatch.setattr(_db, "DB_PATH", tmp_path / "test_live.db")
+    await _db.init_db()
+    return _db
+
+
+def _level(price: str, size: str = "100") -> SimpleNamespace:
+    return SimpleNamespace(price=price, size=size)
+
+
+def _mock_book(
+    best_ask: str = "0.57",
+    best_bid: str = "0.55",
+    tick_size: str = "0.01",
+    min_order_size: str = "5",
+) -> SimpleNamespace:
+    # py-clob-client books list levels worst -> best (best is LAST).
+    return SimpleNamespace(
+        asks=[_level("0.99"), _level(best_ask)],
+        bids=[_level("0.01"), _level(best_bid)],
+        tick_size=tick_size,
+        min_order_size=min_order_size,
+    )
+
+
+def _mock_client(book: SimpleNamespace | None = None) -> MagicMock:
+    client = MagicMock()
+    client.get_order_book.return_value = book or _mock_book()
+    client.create_and_post_order.return_value = {
+        "success": True,
+        "errorMsg": "",
+        "orderID": "0xORDER1",
+        "status": "live",
+    }
+    # Cancel responses confirm whichever order id was asked for.
+    client.cancel.side_effect = lambda oid: {"canceled": [oid], "not_canceled": {}}
+    client.cancel_all.return_value = {"canceled": [], "not_canceled": {}}
+    client.get_order.return_value = {"size_matched": "5.26", "price": "0.57"}
+    client.create_or_derive_api_creds.return_value = SimpleNamespace(
+        api_key="k", api_secret="s", api_passphrase="p"
+    )
+    client.get_ok.return_value = "OK"
+    return client
+
+
+def _executor(
+    client: MagicMock,
+    tmp_path: Path,
+    *,
+    max_trade: float = 3.0,
+    daily_halt: float = 10.0,
+    bankroll: float = 30.0,
+    slippage: float = 0.5,
+    exit_timeout: float = 5.0,
+) -> LiveExecutor:
+    return LiveExecutor(
+        private_key="0x" + "1" * 64,
+        funder="0xFUNDER",
+        signature_type=1,
+        max_trade_usd=max_trade,
+        daily_loss_halt_usd=daily_halt,
+        bankroll_cap_usd=bankroll,
+        max_entry_slippage=slippage,
+        exit_fill_timeout_seconds=exit_timeout,
+        kill_switch_path=tmp_path / "KILL",
+        client=client,
+    )
+
+
+async def _journal_rows(journal_db) -> list[dict]:
+    async with journal_db.connect() as conn:
+        async with conn.execute(
+            "SELECT * FROM btc_live_orders ORDER BY id"
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+# ---------------------------------------------------------------------------
+# Boot refusal gates
+# ---------------------------------------------------------------------------
+
+
+def test_boot_refused_without_private_key() -> None:
+    with pytest.raises(LiveBootRefused, match="POLYMARKET_PRIVATE_KEY"):
+        assert_live_boot_allowed(private_key="", confirm=CONFIRM_PHRASE, funder="0xF")
+
+
+def test_boot_refused_without_confirm_phrase() -> None:
+    with pytest.raises(LiveBootRefused, match="BTC_LIVE_CONFIRM"):
+        assert_live_boot_allowed(private_key="0xabc", confirm="", funder="0xF")
+
+
+def test_boot_refused_with_wrong_confirm_phrase() -> None:
+    with pytest.raises(LiveBootRefused):
+        assert_live_boot_allowed(
+            private_key="0xabc", confirm="yes_i_understand", funder="0xF"
+        )
+
+
+def test_boot_refused_with_neither_gate() -> None:
+    with pytest.raises(LiveBootRefused, match="PRIVATE_KEY.*and.*CONFIRM"):
+        assert_live_boot_allowed(private_key="", confirm="", funder="0xF")
+
+
+def test_boot_allowed_with_key_and_exact_phrase() -> None:
+    assert_live_boot_allowed(
+        private_key="0xabc", confirm="YES_I_UNDERSTAND", funder="0xF"
+    )
+
+
+def test_boot_refused_without_funder_for_proxy_signature_types() -> None:
+    # Signature types 1/2 sign as a proxy wallet; without a funder the order
+    # maker falls back to the EOA address and the CLOB rejects every order.
+    for sig in (1, 2):
+        with pytest.raises(LiveBootRefused, match="POLYMARKET_FUNDER"):
+            assert_live_boot_allowed(
+                private_key="0xabc", confirm=CONFIRM_PHRASE,
+                funder="", signature_type=sig,
+            )
+
+
+def test_boot_allowed_without_funder_for_eoa() -> None:
+    assert_live_boot_allowed(
+        private_key="0xabc", confirm=CONFIRM_PHRASE, funder="", signature_type=0
+    )
+
+
+def test_boot_refused_with_unknown_signature_type() -> None:
+    with pytest.raises(LiveBootRefused, match="SIGNATURE_TYPE"):
+        assert_live_boot_allowed(
+            private_key="0xabc", confirm=CONFIRM_PHRASE,
+            funder="0xF", signature_type=7,
+        )
+
+
+def test_boot_refused_on_malformed_risk_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A typo'd risk limit must refuse live boot, never trade on the silent
+    # looser default.
+    monkeypatch.setattr(
+        _config, "CONFIG_PARSE_ERRORS",
+        ["BTC_LIVE_MAX_TRADE_USD='O.50' is not a valid number"],
+    )
+    with pytest.raises(LiveBootRefused, match="invalid env value"):
+        assert_live_boot_allowed(
+            private_key="0xabc", confirm=CONFIRM_PHRASE, funder="0xF"
+        )
+
+
+def test_boot_gate_reads_config_at_call_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_config, "POLYMARKET_PRIVATE_KEY", "")
+    monkeypatch.setattr(_config, "BTC_LIVE_CONFIRM", "")
+    monkeypatch.setattr(_config, "POLYMARKET_FUNDER", "")
+    with pytest.raises(LiveBootRefused):
+        build_live_executor()
+    monkeypatch.setattr(_config, "POLYMARKET_PRIVATE_KEY", "0xabc")
+    monkeypatch.setattr(_config, "BTC_LIVE_CONFIRM", CONFIRM_PHRASE)
+    monkeypatch.setattr(_config, "POLYMARKET_FUNDER", "0xFUNDER")
+    executor = build_live_executor()
+    assert isinstance(executor, LiveExecutor)
+
+
+def test_paper_mode_is_default_in_config() -> None:
+    # Paper stays the default; live is opt-in only.
+    assert _config.BTC_BOT_MODE == "paper"
+
+
+# ---------------------------------------------------------------------------
+# Rounding helpers
+# ---------------------------------------------------------------------------
+
+
+def test_price_rounds_to_cent_tick() -> None:
+    assert _round_price_to_tick(0.5678, 0.01) == 0.57
+    assert _round_price_to_tick(0.554, 0.01) == 0.55
+
+
+def test_price_clamped_inside_tick_bounds() -> None:
+    assert _round_price_to_tick(0.0001, 0.01) == 0.01
+    assert _round_price_to_tick(0.9999, 0.01) == 0.99
+
+
+def test_size_rounds_down_to_two_decimals() -> None:
+    assert _round_size_down(5.2631578) == 5.26
+    assert _round_size_down(5.999999) == 5.99
+
+
+# ---------------------------------------------------------------------------
+# Order construction
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_entry_places_gtc_buy_at_best_ask(journal_db, tmp_path: Path) -> None:
+    client = _mock_client()
+    executor = _executor(client, tmp_path)
+
+    result = await executor.submit_entry(UP_TOKEN, 0.58, 3.0, window_slug="w1")
+
+    assert result.ok and result.status == "SUBMITTED"
+    assert result.order_id == "0xORDER1"
+    args = client.create_and_post_order.call_args.args[0]
+    assert args.token_id == UP_TOKEN
+    assert args.side == "BUY"
+    assert args.price == 0.57  # best ask from the book, not the gamma price
+    assert args.size == 5.26  # floor(3.0 / 0.57, 2dp)
+    rows = await _journal_rows(journal_db)
+    assert len(rows) == 1
+    assert rows[0]["status"] == "SUBMITTED"
+    assert rows[0]["intent"] == "ENTRY"
+    assert rows[0]["order_type"] == "GTC"
+    assert rows[0]["clob_order_id"] == "0xORDER1"
+
+
+@pytest.mark.asyncio
+async def test_entry_falls_back_to_signal_price_without_book(
+    journal_db, tmp_path: Path
+) -> None:
+    client = _mock_client()
+    client.get_order_book.side_effect = RuntimeError("book down")
+    executor = _executor(client, tmp_path)
+
+    result = await executor.submit_entry(UP_TOKEN, 0.555, 3.0)
+
+    assert result.ok
+    args = client.create_and_post_order.call_args.args[0]
+    assert args.price == 0.56  # side_price rounded to default 0.01 tick
+
+
+@pytest.mark.asyncio
+async def test_entry_blocked_below_min_order_size(journal_db, tmp_path: Path) -> None:
+    # $3 at 0.70 = 4.28 shares < Polymarket minimum of 5 shares.
+    client = _mock_client(_mock_book(best_ask="0.70"))
+    executor = _executor(client, tmp_path)
+
+    result = await executor.submit_entry(UP_TOKEN, 0.70, 3.0)
+
+    assert not result.ok and result.status == "BLOCKED"
+    assert "minimum" in result.reason
+    client.create_and_post_order.assert_not_called()
+    rows = await _journal_rows(journal_db)
+    assert rows[0]["status"] == "BLOCKED"
+
+
+@pytest.mark.asyncio
+async def test_entry_blocked_without_token_id(journal_db, tmp_path: Path) -> None:
+    executor = _executor(_mock_client(), tmp_path)
+    result = await executor.submit_entry("", 0.57, 3.0)
+    assert not result.ok and result.status == "BLOCKED"
+    assert "token id" in result.reason
+
+
+@pytest.mark.asyncio
+async def test_exit_places_gtc_sell_at_best_bid(journal_db, tmp_path: Path) -> None:
+    client = _mock_client()
+    executor = _executor(client, tmp_path)
+    await executor.submit_entry(UP_TOKEN, 0.57, 3.0, window_slug="w1")
+    client.create_and_post_order.return_value = {
+        "success": True,
+        "orderID": "0xORDER2",
+    }
+
+    result = await executor.submit_exit(side_price=0.56, size=5.26, window_slug="w1")
+
+    assert result.ok
+    args = client.create_and_post_order.call_args.args[0]
+    assert args.side == "SELL"
+    assert args.token_id == UP_TOKEN  # remembered from the entry
+    assert args.price == 0.55  # best bid
+    assert args.size == 5.26  # matched size from get_order
+    # Entry fully flattened: a new entry is allowed again.
+    assert executor.entry_block_reason(3.0) is None
+
+
+@pytest.mark.asyncio
+async def test_exit_skipped_when_entry_never_filled(journal_db, tmp_path: Path) -> None:
+    client = _mock_client()
+    client.get_order.return_value = {"size_matched": "0"}
+    executor = _executor(client, tmp_path)
+    await executor.submit_entry(UP_TOKEN, 0.57, 3.0)
+    client.create_and_post_order.reset_mock()
+
+    result = await executor.submit_exit(side_price=0.55)
+
+    assert not result.ok and result.status == "SKIPPED"
+    client.create_and_post_order.assert_not_called()
+    # Resting unfilled entry was cancelled as part of the flatten.
+    client.cancel.assert_called_once_with("0xORDER1")
+
+
+# ---------------------------------------------------------------------------
+# Risk gates
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_per_trade_cap_blocks_entry(journal_db, tmp_path: Path) -> None:
+    client = _mock_client()
+    executor = _executor(client, tmp_path, max_trade=3.0)
+
+    result = await executor.submit_entry(UP_TOKEN, 0.57, 3.01)
+
+    assert not result.ok and result.status == "BLOCKED"
+    assert "per-trade cap" in result.reason
+    client.create_and_post_order.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_one_open_position_max(journal_db, tmp_path: Path) -> None:
+    client = _mock_client()
+    executor = _executor(client, tmp_path)
+    first = await executor.submit_entry(UP_TOKEN, 0.57, 3.0)
+    assert first.ok
+
+    second = await executor.submit_entry(UP_TOKEN, 0.57, 3.0)
+
+    assert not second.ok and second.status == "BLOCKED"
+    assert "max 1" in second.reason
+    assert client.create_and_post_order.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_bankroll_cap_blocks_session_overspend(journal_db, tmp_path: Path) -> None:
+    client = _mock_client()
+    executor = _executor(client, tmp_path, bankroll=5.0)
+    # First buy consumes ~$3 of the $5 session bankroll.
+    first = await executor.submit_entry(UP_TOKEN, 0.57, 3.0)
+    assert first.ok
+    await executor.submit_exit(side_price=0.55)  # flatten so position gate passes
+
+    second = await executor.submit_entry(UP_TOKEN, 0.57, 3.0)
+
+    assert not second.ok and second.status == "BLOCKED"
+    assert "bankroll cap" in second.reason
+
+
+@pytest.mark.asyncio
+async def test_daily_loss_halt_blocks_entries(journal_db, tmp_path: Path) -> None:
+    client = _mock_client()
+    executor = _executor(client, tmp_path, daily_halt=10.0)
+    await executor.record_realized_pnl(-4.0)
+    assert executor.entry_block_reason(3.0) is None  # not yet at the halt
+
+    await executor.record_realized_pnl(-6.5)  # cumulative -10.50
+
+    result = await executor.submit_entry(UP_TOKEN, 0.57, 3.0)
+    assert not result.ok and result.status == "BLOCKED"
+    assert "daily loss halt" in result.reason
+    client.create_and_post_order.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_daily_risk_counters_survive_restart(journal_db, tmp_path: Path) -> None:
+    """Stop/Start (a brand-new executor) must NOT reset the daily loss halt
+    or grant a fresh bankroll — the counters are persisted in SQLite."""
+    first = _executor(_mock_client(), tmp_path, daily_halt=10.0)
+    await first.start()
+    await first.record_realized_pnl(-10.5)  # trips the halt
+    entry = await first.submit_entry(UP_TOKEN, 0.57, 3.0)
+    assert entry.status == "BLOCKED" and "daily loss halt" in entry.reason
+
+    # "It stopped, restart it": a fresh executor over the same DB.
+    second = _executor(_mock_client(), tmp_path, daily_halt=10.0)
+    await second.start()
+
+    assert second.daily_realized_pnl == pytest.approx(-10.5)
+    result = await second.submit_entry(UP_TOKEN, 0.57, 3.0)
+    assert not result.ok and "daily loss halt" in result.reason
+
+
+@pytest.mark.asyncio
+async def test_daily_buy_notional_survives_restart(journal_db, tmp_path: Path) -> None:
+    client = _mock_client()
+    first = _executor(client, tmp_path, bankroll=5.0)
+    await first.start()
+    assert (await first.submit_entry(UP_TOKEN, 0.57, 3.0)).ok
+    await first.submit_exit(side_price=0.55)  # flatten
+
+    second = _executor(_mock_client(), tmp_path, bankroll=5.0)
+    await second.start()
+
+    assert second.daily_buy_notional == pytest.approx(0.57 * 5.26)
+    result = await second.submit_entry(UP_TOKEN, 0.57, 3.0)
+    assert not result.ok and "bankroll cap" in result.reason
+
+
+@pytest.mark.asyncio
+async def test_exit_fill_feeds_daily_loss_tracker(journal_db, tmp_path: Path) -> None:
+    """Realized PnL reaches the halt tracker from CONFIRMED exit fills inside
+    the executor — not from paper-price guesses at submission time."""
+    client = _mock_client()
+    executor = _executor(client, tmp_path)
+    await executor.submit_entry(UP_TOKEN, 0.57, 3.0)
+
+    result = await executor.submit_exit(side_price=0.55)
+
+    assert result.ok
+    assert executor.daily_realized_pnl == pytest.approx(5.26 * (0.55 - 0.57))
+
+
+# ---------------------------------------------------------------------------
+# Kill switch
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_blocks_entries_but_allows_exits(
+    journal_db, tmp_path: Path
+) -> None:
+    """Kill = no NEW risk. Flattening an open position only reduces exposure,
+    so exits stay allowed while the kill file exists."""
+    client = _mock_client()
+    executor = _executor(client, tmp_path)
+    first = await executor.submit_entry(UP_TOKEN, 0.57, 3.0)
+    assert first.ok
+    (tmp_path / "KILL").touch()
+
+    entry = await executor.submit_entry(UP_TOKEN, 0.57, 3.0)
+    exit_ = await executor.submit_exit(side_price=0.55)
+
+    assert entry.status == "BLOCKED" and "KILL" in entry.reason
+    assert exit_.ok  # the flatten went through under kill
+    sell = client.create_and_post_order.call_args.args[0]
+    assert sell.side == "SELL"
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_blocks_entry_appearing_after_gate(
+    journal_db, tmp_path: Path
+) -> None:
+    """TOCTOU guard: a kill file created between the risk gate and the order
+    POST must still stop the entry."""
+    client = _mock_client()
+
+    def _touch_kill_then_book(token_id):
+        (tmp_path / "KILL").touch()
+        return _mock_book()
+
+    client.get_order_book.side_effect = _touch_kill_then_book
+    executor = _executor(client, tmp_path)
+
+    result = await executor.submit_entry(UP_TOKEN, 0.57, 3.0)
+
+    assert not result.ok and result.status == "BLOCKED"
+    client.create_and_post_order.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_cancels_open_orders_once(journal_db, tmp_path: Path) -> None:
+    client = _mock_client()
+    executor = _executor(client, tmp_path)
+    await executor.submit_entry(UP_TOKEN, 0.57, 3.0)
+    (tmp_path / "KILL").touch()
+
+    assert await executor.enforce_kill_switch() is True
+    assert await executor.enforce_kill_switch() is True  # still active
+
+    client.cancel.assert_called_once_with("0xORDER1")  # cancelled exactly once
+    rows = await _journal_rows(journal_db)
+    assert any(r["intent"] == "CANCEL" and r["status"] == "CANCELLED" for r in rows)
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_rearms_after_file_removed(journal_db, tmp_path: Path) -> None:
+    """Delete-to-re-arm must really re-arm: a SECOND kill must cancel the
+    orders resting at that moment, not just block entries."""
+    client = _mock_client()
+    executor = _executor(client, tmp_path)
+    await executor.submit_entry(UP_TOKEN, 0.57, 3.0)
+    (tmp_path / "KILL").touch()
+    assert await executor.enforce_kill_switch() is True  # first kill cancels
+
+    (tmp_path / "KILL").unlink()
+    assert await executor.enforce_kill_switch() is False  # re-armed
+
+    # New position with a resting entry order, then kill again.
+    await executor.submit_exit(side_price=0.55)
+    second = await executor.submit_entry(UP_TOKEN, 0.57, 3.0)
+    assert second.ok
+    (tmp_path / "KILL").touch()
+    assert await executor.enforce_kill_switch() is True
+
+    cancelled_ids = [c.args[0] for c in client.cancel.call_args_list]
+    assert cancelled_ids.count("0xORDER1") >= 2  # second kill cancelled again
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_inactive_without_file(journal_db, tmp_path: Path) -> None:
+    executor = _executor(_mock_client(), tmp_path)
+    assert executor.kill_switch_active() is False
+    assert await executor.enforce_kill_switch() is False
+
+
+# ---------------------------------------------------------------------------
+# Cancel on roll
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_cancel_open_cancels_and_journal(journal_db, tmp_path: Path) -> None:
+    client = _mock_client()
+    executor = _executor(client, tmp_path)
+    await executor.submit_entry(UP_TOKEN, 0.57, 3.0, window_slug="w1")
+
+    cancelled = await executor.cancel_open(reason="WINDOW_ROLL")
+
+    assert cancelled == ["0xORDER1"]
+    client.cancel.assert_called_once_with("0xORDER1")
+    rows = await _journal_rows(journal_db)
+    cancel_rows = [r for r in rows if r["intent"] == "CANCEL"]
+    assert cancel_rows and cancel_rows[0]["status"] == "CANCELLED"
+    assert "WINDOW_ROLL" in cancel_rows[0]["details_json"]
+
+
+@pytest.mark.asyncio
+async def test_cancel_open_noop_without_order(journal_db, tmp_path: Path) -> None:
+    client = _mock_client()
+    executor = _executor(client, tmp_path)
+    assert await executor.cancel_open() == []
+    client.cancel.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_exit_after_cancel_sells_filled_portion(journal_db, tmp_path: Path) -> None:
+    """Partial fill then roll: cancel remembers the matched size for the exit."""
+    client = _mock_client()
+    client.get_order.return_value = {"size_matched": "2.5"}
+    executor = _executor(client, tmp_path)
+    await executor.submit_entry(UP_TOKEN, 0.57, 3.0)
+    await executor.cancel_open(reason="WINDOW_ROLL")
+    client.create_and_post_order.reset_mock()
+    client.create_and_post_order.return_value = {"success": True, "orderID": "0xORDER2"}
+
+    result = await executor.submit_exit(side_price=0.55)
+
+    assert result.ok
+    args = client.create_and_post_order.call_args.args[0]
+    assert args.side == "SELL"
+    assert args.size == 2.5
+
+
+# ---------------------------------------------------------------------------
+# Exit lifecycle: no stale SELL may ever rest into resolution
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_exit_timeout_cancels_resting_sell(journal_db, tmp_path: Path) -> None:
+    """An exit SELL that does not fill within the bound is cancelled — it may
+    not rest in the book of a 5-minute market — and the position stays
+    tracked so the next tick retries."""
+    client = _mock_client()
+    orders = {
+        "0xENTRY": {"size_matched": "5.26", "price": "0.57"},
+        "0xSELL": {"size_matched": "0", "price": "0.55", "status": "live"},
+    }
+    client.get_order.side_effect = lambda oid: orders[oid]
+    client.create_and_post_order.return_value = {"success": True, "orderID": "0xENTRY"}
+    executor = _executor(client, tmp_path, exit_timeout=0.0)
+    await executor.submit_entry(UP_TOKEN, 0.57, 3.0)
+    client.create_and_post_order.return_value = {"success": True, "orderID": "0xSELL"}
+
+    result = await executor.submit_exit(side_price=0.55)
+
+    assert not result.ok and result.status == "UNFILLED"
+    cancelled = [c.args[0] for c in client.cancel.call_args_list]
+    assert "0xSELL" in cancelled  # the unfilled SELL was cancelled
+    # Position must still be tracked (max-1 gate holds, retry possible).
+    assert executor.entry_block_reason(3.0) is not None
+    # Nothing was recorded as realized — the sell never filled.
+    assert executor.daily_realized_pnl == pytest.approx(0.0)
+
+
+@pytest.mark.asyncio
+async def test_exit_partial_fill_then_timeout_records_only_fill(
+    journal_db, tmp_path: Path
+) -> None:
+    client = _mock_client()
+    orders = {
+        "0xENTRY": {"size_matched": "5.26", "price": "0.57"},
+        "0xSELL": {"size_matched": "2.0", "price": "0.55", "status": "live"},
+    }
+    client.get_order.side_effect = lambda oid: orders[oid]
+    client.create_and_post_order.return_value = {"success": True, "orderID": "0xENTRY"}
+    executor = _executor(client, tmp_path, exit_timeout=0.0)
+    await executor.submit_entry(UP_TOKEN, 0.57, 3.0)
+    client.create_and_post_order.return_value = {"success": True, "orderID": "0xSELL"}
+
+    result = await executor.submit_exit(side_price=0.55)
+
+    assert not result.ok and result.status == "UNFILLED"
+    assert result.size == pytest.approx(2.0)  # the confirmed partial fill
+    assert executor.daily_realized_pnl == pytest.approx(2.0 * (0.55 - 0.57))
+    # Retry sells only the remainder, never the already-sold shares.
+    orders["0xSELL2"] = {"size_matched": "3.26", "price": "0.55"}
+    client.create_and_post_order.return_value = {"success": True, "orderID": "0xSELL2"}
+    retry = await executor.submit_exit(side_price=0.55)
+    assert retry.ok
+    args = client.create_and_post_order.call_args.args[0]
+    assert args.size == pytest.approx(3.26)
+    assert executor.entry_block_reason(3.0) is None  # flat again
+
+
+# ---------------------------------------------------------------------------
+# Entry slippage guard
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_entry_blocked_when_ask_gaps_above_signal(
+    journal_db, tmp_path: Path
+) -> None:
+    client = _mock_client(_mock_book(best_ask="0.90"))
+    executor = _executor(client, tmp_path, slippage=0.02)
+
+    result = await executor.submit_entry(UP_TOKEN, 0.57, 3.0)
+
+    assert not result.ok and result.status == "BLOCKED"
+    assert "slippage" in result.reason
+    client.create_and_post_order.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Boot reconciliation
+# ---------------------------------------------------------------------------
+
+
+async def _seed_open_position(journal_db, window_slug: str = "w-prev") -> int:
+    async with journal_db.connect() as conn:
+        cur = await conn.execute(
+            "INSERT INTO btc_paper_positions("
+            "opened_at, window_slug, side, state, entry_price, notional_usd, shares"
+            ") VALUES (?, ?, 'Up', 'open', 0.57, 3.0, 5.26)",
+            ("2026-06-10T11:00:00+00:00", window_slug),
+        )
+        position_id = int(cur.lastrowid)
+        await conn.commit()
+    return position_id
+
+
+@pytest.mark.asyncio
+async def test_boot_cancels_all_resting_orders(journal_db, tmp_path: Path) -> None:
+    client = _mock_client()
+    executor = _executor(client, tmp_path)
+
+    await executor.start()
+
+    client.cancel_all.assert_called_once()
+    rows = await _journal_rows(journal_db)
+    assert any(r["intent"] == "CANCEL_ALL" for r in rows)
+
+
+@pytest.mark.asyncio
+async def test_boot_refused_when_cancel_all_fails(journal_db, tmp_path: Path) -> None:
+    client = _mock_client()
+    client.cancel_all.side_effect = RuntimeError("CLOB down")
+    executor = _executor(client, tmp_path)
+
+    with pytest.raises(LiveBootRefused, match="cancel resting orders"):
+        await executor.start()
+
+
+@pytest.mark.asyncio
+async def test_boot_adopts_open_position_from_journal(
+    journal_db, tmp_path: Path
+) -> None:
+    """A restart with an open live position must re-adopt it (so the normal
+    exit path flattens it) instead of paper-closing it with fictional PnL."""
+    await _seed_open_position(journal_db, window_slug="w-prev")
+    await journal_db.journal_live_order(
+        intent="ENTRY", side="BUY", status="SUBMITTED", window_slug="w-prev",
+        token_id=UP_TOKEN, price=0.57, size=5.26, clob_order_id="0xOLD",
+    )
+    client = _mock_client()
+    client.get_order.return_value = {"size_matched": "5.26", "price": "0.57"}
+    executor = _executor(client, tmp_path)
+
+    await executor.start()
+
+    # The adopted position holds the max-1 gate...
+    assert executor.entry_block_reason(3.0) == (
+        "an open live position/order already exists (max 1)"
+    )
+    # ...and the normal exit path can flatten it.
+    client.create_and_post_order.return_value = {"success": True, "orderID": "0xSELL"}
+    result = await executor.submit_exit(side_price=0.55, window_slug="w-prev")
+    assert result.ok
+    args = client.create_and_post_order.call_args.args[0]
+    assert args.side == "SELL" and args.token_id == UP_TOKEN
+    assert args.size == pytest.approx(5.26)
+
+
+@pytest.mark.asyncio
+async def test_boot_closes_open_row_without_live_trace(
+    journal_db, tmp_path: Path
+) -> None:
+    """An open ledger row with NO live order journaled behind it is a paper
+    artifact — closed harmlessly at boot, never adopted or traded against."""
+    position_id = await _seed_open_position(journal_db, window_slug="w-paper")
+    executor = _executor(_mock_client(), tmp_path)
+
+    await executor.start()
+
+    async with journal_db.connect() as conn:
+        async with conn.execute(
+            "SELECT state, exit_reason FROM btc_paper_positions WHERE position_id = ?",
+            (position_id,),
+        ) as cur:
+            row = dict(await cur.fetchone())
+    assert row["state"] == "closed"
+    assert row["exit_reason"] == "RECONCILED_NO_LIVE_TRACE"
+    assert executor.entry_block_reason(3.0) is None
+
+
+@pytest.mark.asyncio
+async def test_boot_closes_open_row_when_entry_never_filled(
+    journal_db, tmp_path: Path
+) -> None:
+    position_id = await _seed_open_position(journal_db, window_slug="w-prev")
+    await journal_db.journal_live_order(
+        intent="ENTRY", side="BUY", status="SUBMITTED", window_slug="w-prev",
+        token_id=UP_TOKEN, price=0.57, size=5.26, clob_order_id="0xOLD",
+    )
+    client = _mock_client()
+    client.get_order.return_value = {"size_matched": "0"}
+    executor = _executor(client, tmp_path)
+
+    await executor.start()
+
+    async with journal_db.connect() as conn:
+        async with conn.execute(
+            "SELECT state, exit_reason FROM btc_paper_positions WHERE position_id = ?",
+            (position_id,),
+        ) as cur:
+            row = dict(await cur.fetchone())
+    assert row["state"] == "closed"
+    assert row["exit_reason"] == "RECONCILED_UNFILLED"
+    assert executor.entry_block_reason(3.0) is None
+
+
+# ---------------------------------------------------------------------------
+# Error paths / journaling
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_order_rejection_is_journaled_as_error(journal_db, tmp_path: Path) -> None:
+    client = _mock_client()
+    client.create_and_post_order.return_value = {
+        "success": False,
+        "errorMsg": "not enough balance",
+    }
+    executor = _executor(client, tmp_path)
+
+    result = await executor.submit_entry(UP_TOKEN, 0.57, 3.0)
+
+    assert not result.ok and result.status == "ERROR"
+    assert "not enough balance" in result.reason
+    rows = await _journal_rows(journal_db)
+    assert rows[0]["status"] == "ERROR"
+    # A failed entry must not lock the one-position gate.
+    assert executor.entry_block_reason(3.0) is None
+
+
+@pytest.mark.asyncio
+async def test_order_exception_is_journaled_as_error(journal_db, tmp_path: Path) -> None:
+    client = _mock_client()
+    client.create_and_post_order.side_effect = RuntimeError("CLOB 503")
+    executor = _executor(client, tmp_path)
+
+    result = await executor.submit_entry(UP_TOKEN, 0.57, 3.0)
+
+    assert not result.ok and result.status == "ERROR"
+    rows = await _journal_rows(journal_db)
+    assert rows[0]["status"] == "ERROR" and "CLOB 503" in rows[0]["error"]
+
+
+@pytest.mark.asyncio
+async def test_start_derives_and_sets_api_creds(journal_db, tmp_path: Path) -> None:
+    client = _mock_client()
+    executor = _executor(client, tmp_path)
+
+    await executor.start()
+
+    client.create_or_derive_api_creds.assert_called_once()
+    client.set_api_creds.assert_called_once()
+    client.get_ok.assert_called_once()
+
+
+def test_executor_requires_key_without_injected_client() -> None:
+    with pytest.raises(LiveBootRefused):
+        LiveExecutor(private_key="", client=None)
+
+
+def test_private_key_never_in_result(tmp_path: Path) -> None:
+    executor = _executor(_mock_client(), tmp_path)
+    result = LiveOrderResult(ok=True, status="SUBMITTED")
+    assert "1111" not in repr(result)
+    assert executor._private_key.startswith("0x")  # held privately only

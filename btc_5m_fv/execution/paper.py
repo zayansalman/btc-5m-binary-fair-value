@@ -128,6 +128,10 @@ class PaperExecutionManager(AbstractExecutionManager):
     latency_sim_ms:
         Simulated latency in milliseconds between order submission
         and acknowledgement (default 0.0 = no latency).
+    rng:
+        Random source for fill simulation (partial-fill / reject rolls).
+        Pass a seeded or deterministic ``random.Random`` for reproducible
+        fills in tests; defaults to a fresh unseeded ``random.Random()``.
     """
 
     def __init__(
@@ -139,6 +143,7 @@ class PaperExecutionManager(AbstractExecutionManager):
         stop_return: float = _DEFAULT_STOP_RETURN,
         time_exit_seconds: int = _DEFAULT_TIME_EXIT_SECONDS,
         entry_edge_min: float = _DEFAULT_ENTRY_EDGE_MIN,
+        rng: random.Random | None = None,
     ) -> None:
         self._db_path: Optional[str] = None
         self._db: Optional[aiosqlite.Connection] = None
@@ -150,6 +155,7 @@ class PaperExecutionManager(AbstractExecutionManager):
             self._db = db_pool_or_path
             self._owns_db = False
 
+        self._rng = rng if rng is not None else random.Random()
         self.max_open_positions = max_open_positions
         self.latency_sim_ms = latency_sim_ms
         self.target_return = target_return
@@ -381,11 +387,11 @@ class PaperExecutionManager(AbstractExecutionManager):
         # Default: full fill
         # Rare (1%): partial fill
         # Very rare (0.1%): no-fill (rejected)
-        roll = random.random()
+        roll = self._rng.random()
         if roll < 0.001:
             return OrderState.REJECTED, 0.0
         if roll < 0.01:
-            partial = round(signal.notional_usd * random.uniform(0.1, 0.5), 2)
+            partial = round(signal.notional_usd * self._rng.uniform(0.1, 0.5), 2)
             return OrderState.PARTIAL_FILL, partial
         return OrderState.FILLED, signal.notional_usd
 
