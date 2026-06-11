@@ -38,6 +38,7 @@ import httpx
 
 from config import (
     BINANCE_API_BASE,
+    BTC_EXIT_STYLE,
     BTC_MARKET_TIMEFRAME_MINUTES,
     BTC_PAPER_ENTRY_EDGE_MIN,
     BTC_PAPER_ENTRY_MIN_REMAINING_SECONDS,
@@ -342,15 +343,16 @@ async def load_paper_summary() -> PaperSummary:
         ) as cur:
             open_row = await cur.fetchone()
         async with db.execute(
-            # Re-baseline (issue #22): rows without quote_source='clob' were
-            # priced/filled off stale Gamma quotes and are excluded from all
-            # performance KPIs. They remain in the table as an audit trail.
+            # Re-baseline (issues #22/#28): KPIs aggregate only honest-quote
+            # rows of the ACTIVE trade shape; other rows stay as audit trail.
             "SELECT COUNT(*) AS n, COALESCE(SUM(realized_pnl_usd), 0) AS pnl, "
             "COALESCE(SUM(notional_usd), 0) AS notional, "
             "SUM(CASE WHEN realized_pnl_usd > 0 THEN 1 ELSE 0 END) AS wins, "
             "AVG(realized_pnl_usd) AS avg_pnl, "
             "AVG(strftime('%s', closed_at) - strftime('%s', opened_at)) AS avg_hold "
-            "FROM btc_paper_positions WHERE state = 'closed' AND quote_source = 'clob'"
+            "FROM btc_paper_positions WHERE state = 'closed' "
+            "AND quote_source = 'clob' AND strategy_style = ?",
+            (BTC_EXIT_STYLE,),
         ) as cur:
             closed = await cur.fetchone()
         async with db.execute(
@@ -793,6 +795,16 @@ async def _maybe_open_position(snapshot: PaperSnapshot) -> None:
         ) as cur:
             if (await cur.fetchone())["n"]:
                 return
+        if BTC_EXIT_STYLE == "settle":
+            # One entry per window, ever (issue #28): re-entering the same
+            # window after an exit pays the spread again for the same signal
+            # — the churn that lost the scalp-style soak.
+            async with db.execute(
+                "SELECT COUNT(*) AS n FROM btc_paper_positions WHERE window_slug = ?",
+                (snapshot.window_slug,),
+            ) as cur:
+                if (await cur.fetchone())["n"]:
+                    return
     # Honest paper fill (issue #22): a BUY fills at the side's best ASK,
     # capped by the top-of-book size. No ask means no executable entry.
     entry_price = (
@@ -884,8 +896,8 @@ async def _insert_position_row(
             INSERT INTO btc_paper_positions(
               opened_at, window_slug, market_question, side, state, entry_price,
               notional_usd, shares, opened_spot, confidence, edge, entry_reason,
-              feed_source, quote_source
-            ) VALUES (?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              feed_source, quote_source, strategy_style
+            ) VALUES (?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 snapshot.created_at,
@@ -901,6 +913,7 @@ async def _insert_position_row(
                 snapshot.reason,
                 snapshot.feed_source,
                 snapshot.quote_source,
+                BTC_EXIT_STYLE,
             ),
         )
         position_id = int(cur.lastrowid or 0)
@@ -974,7 +987,7 @@ async def _close_rolled_position(
     (pricing the OLD position off the NEW window's quote) was fiction.
     While settlement is not yet readable the row is held and retried.
     """
-    if _live_executor is not None:
+    if _live_executor is not None and BTC_EXIT_STYLE != "settle":
         advisory = _current_price_for_side(snapshot, pos["side"])
         if advisory is None:
             advisory = float(pos["entry_price"])
@@ -987,7 +1000,17 @@ async def _close_rolled_position(
             window_slug=pos["window_slug"],
         )
         return False
-    return await _close_position(pos, snapshot, 1.0 if won else 0.0, "WINDOW_ROLL")
+    if _live_executor is not None:
+        # Settle-style live: no exit order — register the resolution with the
+        # executor (PnL into the daily halt, slot freed; winning tokens await
+        # operator redemption per the runbook). A failed registration keeps
+        # the row open and retries next tick.
+        result = await _live_executor.record_settlement(won, pos["window_slug"])
+        if not result.ok and result.status != "SKIPPED":
+            return False
+    return await _close_position(
+        pos, snapshot, 1.0 if won else 0.0, "WINDOW_ROLL", settled=True
+    )
 
 
 async def _settle_position_outcome(
@@ -1024,7 +1047,11 @@ def _window_start_from_slug(slug: str) -> int | None:
 
 
 async def _close_position(
-    pos: dict[str, Any], snapshot: PaperSnapshot, exit_price: float, reason: str
+    pos: dict[str, Any],
+    snapshot: PaperSnapshot,
+    exit_price: float,
+    reason: str,
+    settled: bool = False,
 ) -> bool:
     """Close one position; returns True when the ledger row was closed.
 
@@ -1034,11 +1061,15 @@ async def _close_position(
     must never claim flat while real tokens remain on the exchange. Realized
     PnL for the daily loss halt is recorded inside the executor on confirmed
     fills, never here from paper prices.
+
+    ``settled=True`` means the market resolved and the executor (if any)
+    already registered the outcome via ``record_settlement`` — no exit order
+    is placed and the row closes at the settlement payout.
     """
     executor = _live_executor
     entry_price = float(pos["entry_price"])
     prior_pnl = float(pos["realized_pnl_usd"] or 0.0)
-    if executor is not None:
+    if executor is not None and not settled:
         # Window roll / band re-entry must first cancel any unfilled resting
         # entry order before flattening whatever did fill.
         if reason in ("WINDOW_ROLL", "BAND_REENTRY"):
@@ -1128,6 +1159,11 @@ def _current_price_for_side(snapshot: PaperSnapshot, side: str) -> float | None:
 
 
 def _exit_reason(snapshot: PaperSnapshot, pos: dict[str, Any], exit_price: float) -> str | None:
+    if BTC_EXIT_STYLE == "settle":
+        # Hold to resolution: the only exits are WINDOW_ROLL settlement
+        # (handled in _close_rolled_position) and operator stop. Intra-window
+        # marks against the bid are noise, not realized outcomes.
+        return None
     if pos["window_slug"] != snapshot.window_slug:
         return "WINDOW_ROLL"
     entry_price = float(pos["entry_price"])

@@ -85,6 +85,12 @@ BTC_PRINT_GRANULARITY_USD = _env_float("BTC_PRINT_GRANULARITY_USD", 0.01)
 # Polymarket CLOB and only boots when POLYMARKET_PRIVATE_KEY is set AND
 # BTC_LIVE_CONFIRM=YES_I_UNDERSTAND. The private key is never logged.
 BTC_BOT_MODE = _env_choice("BTC_BOT_MODE", "paper", {"paper", "live"})
+# Trade shape. 'settle' (default): max one entry per window, hold to
+# resolution — the shape the April backtest validated (+31% ROI); the spread
+# is paid once at entry. 'scalp': legacy intra-window TARGET/STOP/BAND exits —
+# soaked -$7.87 in 70 minutes under honest fills (median hold 8s, paying the
+# spread every round trip); kept only for experiments.
+BTC_EXIT_STYLE = _env_choice("BTC_EXIT_STYLE", "settle", {"settle", "scalp"})
 
 # --- Live trading (Polymarket CLOB) ---------------------------------------
 POLYMARKET_CLOB_API = os.getenv("POLYMARKET_CLOB_API", "https://clob.polymarket.com")
