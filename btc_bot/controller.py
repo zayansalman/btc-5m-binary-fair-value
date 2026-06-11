@@ -67,11 +67,17 @@ async def get_status() -> BtcBotStatus:
     updated_at = await get_config("btc_bot.updated_at")
     detail = await get_config("btc_bot.detail", _default_detail())
 
+    # State derives from the actual runner thread, not the stored row alone
+    # (issue #23): a display that can read STOPPED while the loop places
+    # orders makes the operator's kill decision unreliable — and vice versa.
     if state == "running" and not _is_runner_alive():
         state = "stopped"
         detail = "BTC bot loop is not running in this process. Press Start to restart."
         await set_config("btc_bot.state", state)
         await set_config("btc_bot.detail", detail)
+    elif state != "running" and _is_runner_alive():
+        state = "running"
+        await set_config("btc_bot.state", state)
 
     return BtcBotStatus(
         state=state or "stopped",

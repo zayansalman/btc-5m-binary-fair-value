@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.3.1 — Data Integrity: CLOB Quotes + Settlement Feed (2026-06-11)
+
+Fixes #21, #22, #23. The signal path now prices, fills, and settles against the same data the market actually uses.
+
+### Executable quotes (#22)
+- Signal edge is computed against the CLOB best ask per outcome token (`signal_from_executable_edges`); Gamma `outcomePrices` are journaled (`gamma_up_price`) only to quantify their staleness, never used for pricing
+- Honest paper fills: BUY at best ask, SELL at best bid, capped by top-of-book size; empty/crossed books skip with a journaled reason
+- Window-rolled paper positions settle at the actual Chainlink resolution (1.0/0.0 via the settlement endpoint) instead of pricing the old position off the new window's book
+- Tick journal gains top-of-book columns (both sides) + `quote_source`; performance KPIs exclude pre-fix rows (re-baseline — old rows stay as audit trail)
+
+### Settlement-aligned Chainlink feed (#21)
+- New `ChainlinkSettlementConnector` (REST): window reference open with provisional-revision stabilization, fast settlement via `open(N+1) == close(N)`, cache-busting, full Chrome-fingerprint WAF headers
+- New `ChainlinkWsFeed` (WS): live 1s prints from `ws-live-data.polymarket.com` (byte-exact compact subscribe filters, literal-PING keepalive, reconnect with backoff, 429-aware), feeding spot + sigma
+- REST spot poll fallback: `openPrice` of a window starting seconds ago IS the near-live settlement print — the engine survives WS outages/rate limits without mixing sources
+- Binance demoted to volatility-shape fallback and backtest tooling — its LEVELS never touch the model (measured Chainlink−Binance basis ≈ −$50.7, std $3.8)
+- Tie rule: fair value now includes the discrete tie mass P(close == open), which resolves Up — `fair_up > 0.5` when price pins the reference
+- A degraded settlement feed blocks new entries and suppresses fair-value-based exits (BAND_REENTRY); time/target/stop exits still run
+
+### Dashboard state (#23)
+- Controller state derives from the actual runner thread in both directions: never STOPPED while ticking, never RUNNING while dead
+
 ## v0.3.0 — Live Execution Mode (2026-06-10)
 
 Closes #20. Adds an opt-in live trading mode that routes the existing signal path through Polymarket's CLOB via `py-clob-client`. **Paper remains the default**; nothing changes unless the operator explicitly flips every gate.

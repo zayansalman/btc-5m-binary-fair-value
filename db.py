@@ -47,7 +47,17 @@ CREATE TABLE IF NOT EXISTS btc_paper_ticks (
   confidence REAL,
   notional_usd REAL,
   reason TEXT,
-  feed_source TEXT
+  feed_source TEXT,
+  up_best_bid REAL,
+  up_best_ask REAL,
+  up_bid_size REAL,
+  up_ask_size REAL,
+  down_best_bid REAL,
+  down_best_ask REAL,
+  down_bid_size REAL,
+  down_ask_size REAL,
+  quote_source TEXT,
+  gamma_up_price REAL
 );
 CREATE INDEX IF NOT EXISTS idx_btc_paper_ticks_created
   ON btc_paper_ticks(created_at DESC);
@@ -73,7 +83,8 @@ CREATE TABLE IF NOT EXISTS btc_paper_positions (
   entry_reason TEXT,
   exit_reason TEXT,
   realized_pnl_usd REAL,
-  feed_source TEXT
+  feed_source TEXT,
+  quote_source TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_btc_paper_positions_state
   ON btc_paper_positions(state);
@@ -114,6 +125,25 @@ BTC_POSITION_COLUMN_MIGRATIONS = {
     "exit_reason": "TEXT",
     "realized_pnl_usd": "REAL",
     "feed_source": "TEXT",
+    # 'clob' since v0.3.1; NULL rows predate executable CLOB quotes (issue #22)
+    # and are excluded from all KPI aggregates (re-baseline).
+    "quote_source": "TEXT",
+}
+
+# Issue #22: executable top-of-book quotes journaled per tick. Rows without
+# quote_source were priced off stale Gamma outcomePrices and are excluded
+# from dashboard KPIs and the paper summary.
+BTC_TICK_COLUMN_MIGRATIONS = {
+    "up_best_bid": "REAL",
+    "up_best_ask": "REAL",
+    "up_bid_size": "REAL",
+    "up_ask_size": "REAL",
+    "down_best_bid": "REAL",
+    "down_best_ask": "REAL",
+    "down_bid_size": "REAL",
+    "down_ask_size": "REAL",
+    "quote_source": "TEXT",
+    "gamma_up_price": "REAL",
 }
 
 
@@ -136,6 +166,7 @@ async def init_db() -> None:
         await db.execute("PRAGMA journal_mode=WAL")
         await db.executescript(SCHEMA)
         await _migrate_columns(db, "btc_paper_positions", BTC_POSITION_COLUMN_MIGRATIONS)
+        await _migrate_columns(db, "btc_paper_ticks", BTC_TICK_COLUMN_MIGRATIONS)
         await db.commit()
 
 

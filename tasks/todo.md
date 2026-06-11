@@ -37,3 +37,15 @@ Adversarial review (3 reviewers, 22 findings: 4 critical / 8 major / 10 minor)
 - **Misc** — entry slippage guard, ledger-before-submit ordering for entries,
   cancel response verification + post-cancel matched capture + bankroll
   credit-back, py-clob-client pinned, dashboard docstrings made mode-aware.
+
+## Data-integrity build (#21/#22/#23) — 2026-06-11
+- [x] CLOB executable quotes in signal path + honest fills (agent impl, hand-finished)
+- [x] Chainlink settlement connector (REST + WS) + REST spot-poll fallback (hand-added after WS 429)
+- [x] Tie-rule fair value; degraded-feed entry/exit gating
+- [x] WS feed lifecycle wired into run loop (was missing — agent died mid-build)
+- [x] KPI re-baseline: pre-clob rows excluded (hand-added)
+- [x] Dashboard state derived from runner thread both directions (#23)
+- [x] 16 new tests; full suite green
+Review: workflow died on spend limit mid-implement; gaps found and closed by hand:
+feed never started, KPI quarantine missing, degraded ticks journaled phantom edge,
+WS 429 needed longer backoff + REST spot fallback (verified live end-to-end).
