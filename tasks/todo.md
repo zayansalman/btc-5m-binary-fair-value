@@ -49,3 +49,35 @@ Adversarial review (3 reviewers, 22 findings: 4 critical / 8 major / 10 minor)
 Review: workflow died on spend limit mid-implement; gaps found and closed by hand:
 feed never started, KPI quarantine missing, degraded ticks journaled phantom edge,
 WS 429 needed longer backoff + REST spot fallback (verified live end-to-end).
+
+## Execution plan — soak to live gate (2026-06-11, issues #25-#27)
+
+Soak started 2026-06-11 05:28Z on the honest baseline (clob quotes, chainlink
+settlement feed, spread-paying fills). KPIs count only quote_source='clob' rows.
+
+### Phase 1 — let it soak (no action)
+- [ ] 4-6h runtime, target 100+ closed clob-baseline trades
+
+### Phase 2 — quality review (#25)
+- [ ] PnL/win/drawdown by exit reason and entry-time bucket
+- [ ] Churn analysis; spec per-window cooldown if confirmed (#27)
+- [ ] Fill-realism haircut on expectancy (top-of-book persistence)
+- [ ] Gamma-vs-CLOB staleness stats (post-mortem of #22)
+
+### Phase 3 — stability + ops (#26)
+- [ ] Tick-gap/crash audit; WS 429 recovery check (rest_poll -> chainlink_ws)
+- [ ] CI green on develop (websockets, py-clob-client deps)
+- [ ] Kill-switch drill in paper mode
+
+### Phase 4 — live gate (operator decision)
+- [ ] Present haircut-adjusted expectancy verdict
+- [ ] If GO: operator sets POLYMARKET_PRIVATE_KEY, POLYMARKET_FUNDER,
+      BTC_LIVE_CONFIRM=YES_I_UNDERSTAND, BTC_BOT_MODE=live and presses Start
+      (runbook: docs/OPERATIONS_RUNBOOK.md "Going live"). Caps: $3/trade,
+      1 position, -$10/day halt, $30 ceiling, kill switch data/KILL
+- [ ] If NO-GO: iterate on cooldown/thresholds or stop — the $30 stays
+
+### Backlog (non-blocking)
+- [ ] Backtest harness on Chainlink data instead of Binance
+- [ ] develop -> main merge (requires explicit operator approval)
+- [ ] Evaluate beta polymarket-client SDK migration (wallet-flow risk noted)
