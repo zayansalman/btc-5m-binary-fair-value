@@ -1,12 +1,28 @@
 """BTC 5-minute trading engine (paper by default, live opt-in).
 
-It discovers the current Polymarket BTC 5m market, computes a simple
-volatility-band fair probability from BTC spot, and records entries/exits in
-SQLite. In paper mode (the default) no real orders are ever placed. When
-``BTC_BOT_MODE=live`` AND the live boot gate passes (private key +
+It discovers the current Polymarket BTC 5m market, prices it against the
+SETTLEMENT feed (Polymarket's Chainlink BTC/USD stream — reference open via
+the crypto-price REST API, live spot + sigma via the ws-live-data WebSocket,
+issue #21), quotes the EXECUTABLE market from the CLOB order book for both
+outcome tokens (issue #22), and records entries/exits in SQLite. In paper
+mode (the default) no real orders are ever placed. When ``BTC_BOT_MODE=live``
+AND the live boot gate passes (private key +
 ``BTC_LIVE_CONFIRM=YES_I_UNDERSTAND``), entries/exits are ALSO routed through
 :class:`btc_5m_fv.execution.live.LiveExecutor`, which places real risk-gated
 orders on the Polymarket CLOB.
+
+Data-source discipline (three sources, zero level-mixing):
+
+* Chainlink (REST + WS) — reference open, live spot, sigma. Settlement truth.
+* CLOB order book — executable best bid/ask/size per outcome token. The only
+  prices the strategy trades against; paper BUYs fill at best ask, SELLs at
+  best bid. Gamma ``outcomePrices`` are journaled (``gamma_up_price``) purely
+  to quantify their staleness and are never used for pricing.
+* Binance — volatility-shape fallback only (returns, never levels).
+
+If the Chainlink feed is unavailable (WS stale AND no usable reference) the
+engine opens NO new entries and journals ``skip: settlement feed degraded``;
+existing positions still exit on book prices / time / window roll.
 """
 from __future__ import annotations
 
@@ -22,7 +38,6 @@ import httpx
 
 from config import (
     BINANCE_API_BASE,
-    BTC_CHAINLINK_STREAM_URL,
     BTC_MARKET_TIMEFRAME_MINUTES,
     BTC_PAPER_ENTRY_EDGE_MIN,
     BTC_PAPER_ENTRY_MIN_REMAINING_SECONDS,
@@ -33,23 +48,44 @@ from config import (
     BTC_PAPER_TARGET_RETURN,
     BTC_PAPER_TICK_SECONDS,
     BTC_PAPER_TIME_EXIT_SECONDS,
+    POLYMARKET_CLOB_API,
+    POLYMARKET_CRYPTO_PRICE_API,
     POLYMARKET_GAMMA_API,
+    POLYMARKET_LIVE_DATA_WS,
+    BTC_CHAINLINK_STALE_SECONDS,
+    BTC_PRINT_GRANULARITY_USD,
 )
 import config as _config
 from db import connect, notify, set_config
 from logging_setup import get_logger
+from btc_5m_fv.connectors.chainlink_settlement import (
+    ChainlinkSettlementConnector,
+    ChainlinkWsFeed,
+)
 from btc_5m_fv.execution.live import LiveExecutor, build_live_executor
 from btc_bot.strategy import (
     StrategyParams,
     fair_up_probability,
     sigma_per_second,
-    signal_from_edge,
+    signal_from_executable_edges,
 )
 
 log = get_logger("btc_paper")
 
 # Live executor for the current run loop. None means pure paper mode.
 _live_executor: LiveExecutor | None = None
+
+# Settlement-aligned Chainlink WS feed for the current run loop (issue #21).
+# None / stale means NO new entries (the tick journals why).
+_chainlink_feed: ChainlinkWsFeed | None = None
+
+# Reference open print per window_start_ts. The open is immutable once the
+# provisional revision settles, so one stabilized REST read per window.
+_reference_cache: dict[int, float] = {}
+
+# Minimum points in the WS 1s series before it is trusted for sigma;
+# below this the engine falls back to Binance return SHAPE (never levels).
+_MIN_CHAINLINK_SIGMA_POINTS = 30
 
 BINANCE_API = BINANCE_API_BASE
 FIVE_MINUTES = BTC_MARKET_TIMEFRAME_MINUTES * 60
@@ -62,6 +98,32 @@ STRATEGY_PARAMS = StrategyParams(
 )
 
 
+@dataclass(frozen=True)
+class BookTop:
+    """Top of one outcome token's CLOB book (best level = LAST array element)."""
+
+    best_bid: float | None = None
+    best_ask: float | None = None
+    bid_size: float | None = None
+    ask_size: float | None = None
+
+    @property
+    def crossed(self) -> bool:
+        return (
+            self.best_bid is not None
+            and self.best_ask is not None
+            and self.best_bid > self.best_ask
+        )
+
+    @property
+    def buyable(self) -> bool:
+        """An entry BUY needs an ask, on a book that is not crossed."""
+        return self.best_ask is not None and not self.crossed
+
+
+EMPTY_BOOK = BookTop()
+
+
 @dataclass
 class PaperSnapshot:
     created_at: str
@@ -71,8 +133,10 @@ class PaperSnapshot:
     spot_price: float
     reference_price: float
     sigma_per_second: float
-    market_up_price: float
-    market_down_price: float
+    # Executable prices: best ASK per side from the CLOB book (what a BUY
+    # actually pays). None when that side has no ask this tick.
+    market_up_price: float | None
+    market_down_price: float | None
     fair_up_prob: float
     edge: float
     signal_side: str | None
@@ -82,6 +146,25 @@ class PaperSnapshot:
     feed_source: str
     up_token_id: str = ""
     down_token_id: str = ""
+    # CLOB top-of-book for both outcome tokens (issue #22).
+    up_best_bid: float | None = None
+    up_best_ask: float | None = None
+    up_bid_size: float | None = None
+    up_ask_size: float | None = None
+    down_best_bid: float | None = None
+    down_best_ask: float | None = None
+    down_bid_size: float | None = None
+    down_ask_size: float | None = None
+    quote_source: str = "clob"
+    # Gamma outcomePrices Up — journaled ONLY to quantify staleness vs the book.
+    gamma_up_price: float | None = None
+    # True when the Chainlink settlement feed could not price this tick;
+    # entries are blocked and fair-value-based exits are suppressed.
+    feed_degraded: bool = False
+
+    @property
+    def has_executable_quote(self) -> bool:
+        return self.up_best_ask is not None or self.down_best_ask is not None
 
 
 @dataclass
@@ -115,7 +198,7 @@ async def run_paper_loop(stop_event: threading.Event) -> None:
     LiveExecutor. Live boot refusal stops the loop — it never silently falls
     back to paper.
     """
-    global _live_executor
+    global _live_executor, _chainlink_feed
     mode = _config.BTC_BOT_MODE
     if mode == "live":
         try:
@@ -133,6 +216,16 @@ async def run_paper_loop(stop_event: threading.Event) -> None:
             log.error("live_loop.boot_refused", error=error)
             return
         _live_executor = executor
+
+    # Settlement-aligned live spot (issue #21): the WS feed task lives and
+    # dies with this loop. Until its first print arrives, ticks journal
+    # "settlement feed degraded" and open no entries — by design.
+    feed = ChainlinkWsFeed(
+        url=POLYMARKET_LIVE_DATA_WS,
+        stale_after_s=BTC_CHAINLINK_STALE_SECONDS,
+    )
+    feed_task = asyncio.create_task(feed.run())
+    _chainlink_feed = feed
 
     await set_config("btc_bot.state", "running")
     await set_config("btc_bot.mode", mode)
@@ -171,6 +264,13 @@ async def run_paper_loop(stop_event: threading.Event) -> None:
             except Exception as e:  # noqa: BLE001
                 log.warning("live_loop.stop_flatten_failed", error=str(e))
             _live_executor = None
+        _chainlink_feed = None
+        feed.stop()
+        feed_task.cancel()
+        try:
+            await feed_task
+        except (asyncio.CancelledError, Exception):  # noqa: BLE001
+            pass
         await set_config("btc_bot.state", "stopped")
         await _set_detail(f"BTC {mode} loop stopped. No new entries will be opened.")
         await notify("btc_paper_stopped", f"BTC {mode} bot stopped")
@@ -185,10 +285,10 @@ async def paper_tick_once() -> PaperSnapshot:
         kill_active = await _live_executor.enforce_kill_switch()
     async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
         snapshot = await _build_snapshot(client)
-    await _log_tick(snapshot)
-    await _close_due_positions(snapshot)
-    if not kill_active:
-        await _maybe_open_position(snapshot)
+        await _log_tick(snapshot)
+        await _close_due_positions(snapshot, client)
+        if not kill_active:
+            await _maybe_open_position(snapshot)
     return snapshot
 
 
@@ -242,12 +342,15 @@ async def load_paper_summary() -> PaperSummary:
         ) as cur:
             open_row = await cur.fetchone()
         async with db.execute(
+            # Re-baseline (issue #22): rows without quote_source='clob' were
+            # priced/filled off stale Gamma quotes and are excluded from all
+            # performance KPIs. They remain in the table as an audit trail.
             "SELECT COUNT(*) AS n, COALESCE(SUM(realized_pnl_usd), 0) AS pnl, "
             "COALESCE(SUM(notional_usd), 0) AS notional, "
             "SUM(CASE WHEN realized_pnl_usd > 0 THEN 1 ELSE 0 END) AS wins, "
             "AVG(realized_pnl_usd) AS avg_pnl, "
             "AVG(strftime('%s', closed_at) - strftime('%s', opened_at)) AS avg_hold "
-            "FROM btc_paper_positions WHERE state = 'closed'"
+            "FROM btc_paper_positions WHERE state = 'closed' AND quote_source = 'clob'"
         ) as cur:
             closed = await cur.fetchone()
         async with db.execute(
@@ -308,49 +411,235 @@ def _risk_state(open_positions: int, last_tick_at: str | None) -> str:
     return "OK"
 
 
+def _now() -> int:
+    """Wall clock in unix seconds — module-level so tests can pin time."""
+    return int(time.time())
+
+
 async def _build_snapshot(client: httpx.AsyncClient) -> PaperSnapshot:
-    now = int(time.time())
+    now = _now()
     market = await _fetch_current_market(client, now)
     start_ts = int(market["window_start_ts"])
     slug = str(market["slug"])
     question = str(market.get("question") or slug)
     remaining = max(0, start_ts + FIVE_MINUTES - now)
 
-    spot, closes = await _fetch_spot_and_recent_closes(client)
-    reference = await _fetch_reference_price(client, start_ts)
-    sigma = sigma_per_second(closes)
-    up_price, down_price = _outcome_prices(market)
+    # Gamma is used for market DISCOVERY only. Its outcomePrices are
+    # journaled to quantify staleness, never used for pricing (issue #22).
+    gamma_up_price, _gamma_down_price = _outcome_prices(market)
     up_token_id, down_token_id = _outcome_token_ids(market)
-    fair_up = fair_up_probability(spot, reference, sigma, remaining)
-    edge = fair_up - up_price
-    side, confidence, notional, reason = signal_from_edge(
-        edge,
-        remaining,
-        up_price,
-        down_price,
-        STRATEGY_PARAMS,
-    )
+
+    # Executable quotes: CLOB top-of-book for both outcome tokens.
+    up_book = await _fetch_clob_book(client, up_token_id)
+    down_book = await _fetch_clob_book(client, down_token_id)
+
+    # Settlement feed: spot from the Chainlink WS series (REST print poll as
+    # fallback — same stream, same levels), reference open from the
+    # crypto-price REST API (cached per window).
+    spot, chainlink_closes = _chainlink_spot_and_closes()
+    spot_source = "chainlink_ws" if spot is not None else "unavailable"
+    if spot is None:
+        rest_print = await _rest_spot_fallback(client, slug)
+        if rest_print is not None:
+            spot = rest_print[1]
+            spot_source = "chainlink_rest_poll"
+    reference = await _get_window_reference(client, slug, start_ts)
+
+    sigma, vol_source = await _sigma_with_fallback(client, chainlink_closes)
+
+    degraded_reason: str | None = None
+    if spot is None:
+        degraded_reason = "chainlink spot unavailable (WS stale and REST poll failed)"
+    elif reference is None:
+        degraded_reason = "chainlink reference unavailable (REST)"
+
+    if degraded_reason is None:
+        fair_up = fair_up_probability(
+            spot, reference, sigma, remaining, print_granularity=BTC_PRINT_GRANULARITY_USD
+        )
+    else:
+        fair_up = 0.5
+
+    # Edge against the EXECUTABLE price: a BUY of side X pays X's best ask.
+    # A degraded feed pins fair_up at 0.5, so any "edge" against a lopsided
+    # book would be an artifact — journal no edge at all in that state.
+    if degraded_reason is None:
+        edge_up = fair_up - up_book.best_ask if up_book.buyable else None
+        edge_down = (1.0 - fair_up) - down_book.best_ask if down_book.buyable else None
+    else:
+        edge_up = edge_down = None
+
+    if degraded_reason is not None:
+        side, confidence, notional = None, 0.0, 0.0
+        reason = f"skip: settlement feed degraded ({degraded_reason})"
+    else:
+        side, confidence, notional, reason = signal_from_executable_edges(
+            edge_up,
+            edge_down,
+            remaining,
+            up_book.best_ask,
+            down_book.best_ask,
+            STRATEGY_PARAMS,
+        )
+        if side is None and edge_up is None and edge_down is None:
+            reason = (
+                "skip: book empty or crossed "
+                f"(up ask={up_book.best_ask} crossed={up_book.crossed}; "
+                f"down ask={down_book.best_ask} crossed={down_book.crossed})"
+            )
+
+    candidate_edges = [e for e in (edge_up, edge_down) if e is not None]
+    edge = max(candidate_edges) if candidate_edges else 0.0
 
     return PaperSnapshot(
         created_at=datetime.now(UTC).isoformat(timespec="seconds"),
         window_slug=slug,
         market_question=question,
         remaining_seconds=remaining,
-        spot_price=spot,
-        reference_price=reference,
+        spot_price=spot if spot is not None else 0.0,
+        reference_price=reference if reference is not None else 0.0,
         sigma_per_second=sigma,
-        market_up_price=up_price,
-        market_down_price=down_price,
+        market_up_price=up_book.best_ask,
+        market_down_price=down_book.best_ask,
         fair_up_prob=fair_up,
         edge=edge,
         signal_side=side,
         confidence=confidence,
         notional_usd=notional,
         reason=reason,
-        feed_source=f"binance_public_fallback; chainlink_target={BTC_CHAINLINK_STREAM_URL}",
+        feed_source=(
+            f"spot={spot_source};"
+            f"ref={'chainlink_rest' if reference is not None else 'unavailable'};"
+            f"vol={vol_source};quotes=clob"
+        ),
         up_token_id=up_token_id,
         down_token_id=down_token_id,
+        up_best_bid=up_book.best_bid,
+        up_best_ask=up_book.best_ask,
+        up_bid_size=up_book.bid_size,
+        up_ask_size=up_book.ask_size,
+        down_best_bid=down_book.best_bid,
+        down_best_ask=down_book.best_ask,
+        down_bid_size=down_book.bid_size,
+        down_ask_size=down_book.ask_size,
+        quote_source="clob",
+        gamma_up_price=gamma_up_price,
+        feed_degraded=degraded_reason is not None,
     )
+
+
+def _chainlink_spot_and_closes() -> tuple[float | None, list[float]]:
+    """Latest Chainlink WS print and 1s series; (None, []) when stale/absent."""
+    feed = _chainlink_feed
+    if feed is None or not feed.is_fresh():
+        return None, []
+    latest = feed.latest()
+    if latest is None:
+        return None, []
+    return latest[1], feed.recent_closes()
+
+
+async def _rest_spot_fallback(
+    client: httpx.AsyncClient, slug: str
+) -> tuple[float, float] | None:
+    """Near-live settlement print via REST when the WS feed is stale/down."""
+    connector = _make_settlement_connector(client, slug)
+    try:
+        return await connector.get_recent_print()
+    except Exception as e:  # noqa: BLE001
+        log.warning("chainlink_spot.rest_fallback_failed", error=str(e))
+        return None
+
+
+async def _sigma_with_fallback(
+    client: httpx.AsyncClient, chainlink_closes: list[float]
+) -> tuple[float, str]:
+    """Sigma from the Chainlink 1s series; Binance return SHAPE as fallback.
+
+    Binance levels are never compared with Chainlink levels (measured basis
+    ~ -$50.7, std $3.8) — log-returns are basis-free, so the fallback only
+    borrows the volatility shape.
+    """
+    if len(chainlink_closes) >= _MIN_CHAINLINK_SIGMA_POINTS:
+        return sigma_per_second(chainlink_closes), "chainlink_ws"
+    try:
+        _, closes = await _fetch_spot_and_recent_closes(client)
+        return sigma_per_second(closes), "binance_shape_fallback"
+    except Exception as e:  # noqa: BLE001
+        log.warning("sigma_fallback.binance_failed", error=str(e))
+        return sigma_per_second([]), "floor"
+
+
+def _make_settlement_connector(
+    client: httpx.AsyncClient, slug: str
+) -> ChainlinkSettlementConnector:
+    """Factory for the REST settlement connector — patchable in tests."""
+    return ChainlinkSettlementConnector(
+        client,
+        api_base=POLYMARKET_CRYPTO_PRICE_API,
+        referer_slug=slug,
+    )
+
+
+async def _get_window_reference(
+    client: httpx.AsyncClient, slug: str, start_ts: int
+) -> float | None:
+    """Stabilized Chainlink open print for the window, cached per window."""
+    cached = _reference_cache.get(start_ts)
+    if cached is not None:
+        return cached
+    connector = _make_settlement_connector(client, slug)
+    try:
+        reference = await connector.get_reference_price(start_ts)
+    except Exception as e:  # noqa: BLE001
+        log.warning("chainlink_reference.fetch_failed", window_start_ts=start_ts, error=str(e))
+        return None
+    _reference_cache[start_ts] = reference
+    # Prune anything older than an hour so the cache cannot grow unbounded.
+    for ts in [ts for ts in _reference_cache if ts < start_ts - 3600]:
+        _reference_cache.pop(ts, None)
+    return reference
+
+
+async def _fetch_clob_book(client: httpx.AsyncClient, token_id: str) -> BookTop:
+    """Top-of-book for one outcome token from the public CLOB /book endpoint.
+
+    CLOB books list levels worst-to-best, so the best level is the LAST
+    element of each array (same convention as the live executor's
+    ``_book_context``). Returns an empty book on any error — an empty book
+    blocks entries, never crashes the tick.
+    """
+    if not token_id:
+        return EMPTY_BOOK
+    try:
+        r = await client.get(
+            f"{POLYMARKET_CLOB_API}/book", params={"token_id": token_id}
+        )
+        r.raise_for_status()
+        data = r.json()
+    except Exception as e:  # noqa: BLE001
+        log.warning("clob_book.fetch_failed", token_id=token_id[:16], error=str(e))
+        return EMPTY_BOOK
+    if not isinstance(data, dict):
+        return EMPTY_BOOK
+    best_bid, bid_size = _best_level(data.get("bids"))
+    best_ask, ask_size = _best_level(data.get("asks"))
+    return BookTop(
+        best_bid=best_bid, best_ask=best_ask, bid_size=bid_size, ask_size=ask_size
+    )
+
+
+def _best_level(levels: Any) -> tuple[float | None, float | None]:
+    """(price, size) of the best level — the LAST element of a CLOB array."""
+    if not isinstance(levels, list) or not levels:
+        return None, None
+    best = levels[-1]
+    if not isinstance(best, dict):
+        return None, None
+    try:
+        return float(best["price"]), float(best["size"])
+    except (KeyError, TypeError, ValueError):
+        return None, None
 
 
 async def _fetch_current_market(client: httpx.AsyncClient, now: int) -> dict[str, Any]:
@@ -391,23 +680,6 @@ async def _fetch_spot_and_recent_closes(client: httpx.AsyncClient) -> tuple[floa
     if not closes:
         raise RuntimeError("Binance returned no BTC closes.")
     return closes[-1], closes
-
-
-async def _fetch_reference_price(client: httpx.AsyncClient, window_start_ts: int) -> float:
-    r = await client.get(
-        f"{BINANCE_API}/api/v3/klines",
-        params={
-            "symbol": "BTCUSDT",
-            "interval": "1s",
-            "startTime": window_start_ts * 1000,
-            "limit": 1,
-        },
-    )
-    r.raise_for_status()
-    rows = r.json()
-    if not rows:
-        raise RuntimeError("Binance returned no BTC window reference candle.")
-    return float(rows[0][4])
 
 
 def _outcome_prices(market: dict[str, Any]) -> tuple[float, float]:
@@ -473,8 +745,12 @@ async def _log_tick(snapshot: PaperSnapshot) -> None:
               created_at, window_slug, market_question, remaining_seconds,
               spot_price, reference_price, sigma_per_second, market_up_price,
               market_down_price, fair_up_prob, edge, signal_side, confidence,
-              notional_usd, feed_source, reason
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              notional_usd, feed_source, reason,
+              up_best_bid, up_best_ask, up_bid_size, up_ask_size,
+              down_best_bid, down_best_ask, down_bid_size, down_ask_size,
+              quote_source, gamma_up_price
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 snapshot.created_at,
@@ -493,6 +769,16 @@ async def _log_tick(snapshot: PaperSnapshot) -> None:
                 snapshot.notional_usd,
                 snapshot.feed_source,
                 snapshot.reason,
+                snapshot.up_best_bid,
+                snapshot.up_best_ask,
+                snapshot.up_bid_size,
+                snapshot.up_ask_size,
+                snapshot.down_best_bid,
+                snapshot.down_best_ask,
+                snapshot.down_bid_size,
+                snapshot.down_ask_size,
+                snapshot.quote_source,
+                snapshot.gamma_up_price,
             ),
         )
         await db.commit()
@@ -507,13 +793,43 @@ async def _maybe_open_position(snapshot: PaperSnapshot) -> None:
         ) as cur:
             if (await cur.fetchone())["n"]:
                 return
+    # Honest paper fill (issue #22): a BUY fills at the side's best ASK,
+    # capped by the top-of-book size. No ask means no executable entry.
     entry_price = (
         snapshot.market_up_price
         if snapshot.signal_side == "Up"
         else snapshot.market_down_price
     )
+    if entry_price is None or entry_price <= 0:
+        log.info(
+            "paper_entry.skipped_no_ask",
+            window_slug=snapshot.window_slug,
+            side=snapshot.signal_side,
+        )
+        return
+    top_size = (
+        snapshot.up_ask_size if snapshot.signal_side == "Up" else snapshot.down_ask_size
+    )
     notional = snapshot.notional_usd
     shares = notional / entry_price
+    if top_size is not None:
+        if top_size <= 0:
+            log.info(
+                "paper_entry.skipped_empty_top_of_book",
+                window_slug=snapshot.window_slug,
+                side=snapshot.signal_side,
+            )
+            return
+        if shares > top_size:
+            shares = top_size
+            notional = shares * entry_price
+            log.info(
+                "paper_entry.size_capped_to_top_of_book",
+                window_slug=snapshot.window_slug,
+                side=snapshot.signal_side,
+                shares=round(shares, 4),
+                notional=round(notional, 4),
+            )
 
     executor = _live_executor
     if executor is not None:
@@ -568,8 +884,8 @@ async def _insert_position_row(
             INSERT INTO btc_paper_positions(
               opened_at, window_slug, market_question, side, state, entry_price,
               notional_usd, shares, opened_spot, confidence, edge, entry_reason,
-              feed_source
-            ) VALUES (?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?)
+              feed_source, quote_source
+            ) VALUES (?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 snapshot.created_at,
@@ -584,6 +900,7 @@ async def _insert_position_row(
                 snapshot.edge,
                 snapshot.reason,
                 snapshot.feed_source,
+                snapshot.quote_source,
             ),
         )
         position_id = int(cur.lastrowid or 0)
@@ -612,7 +929,9 @@ async def _update_position_terms(
         await db.commit()
 
 
-async def _close_due_positions(snapshot: PaperSnapshot) -> None:
+async def _close_due_positions(
+    snapshot: PaperSnapshot, client: httpx.AsyncClient
+) -> None:
     async with connect() as db:
         async with db.execute(
             "SELECT * FROM btc_paper_positions WHERE state = 'open' ORDER BY opened_at"
@@ -620,11 +939,88 @@ async def _close_due_positions(snapshot: PaperSnapshot) -> None:
             positions = [dict(r) for r in await cur.fetchall()]
 
     for pos in positions:
+        if pos["window_slug"] != snapshot.window_slug:
+            await _close_rolled_position(pos, snapshot, client)
+            continue
+        # Honest paper exit (issue #22): a SELL receives the side's best BID.
+        # No bid means no executable exit — hold and retry next tick.
         exit_price = _current_price_for_side(snapshot, pos["side"])
+        if exit_price is None:
+            log.info(
+                "paper_exit.held_no_bid",
+                position_id=pos["position_id"],
+                window_slug=pos["window_slug"],
+                side=pos["side"],
+            )
+            continue
         reason = _exit_reason(snapshot, pos, exit_price)
         if reason is None:
             continue
         await _close_position(pos, snapshot, exit_price, reason)
+
+
+async def _close_rolled_position(
+    pos: dict[str, Any], snapshot: PaperSnapshot, client: httpx.AsyncClient
+) -> bool:
+    """Close a position whose 5-minute window has rolled.
+
+    Live mode keeps the established path: the executor cancels any resting
+    entry and flattens at the REAL book; the price passed here is advisory.
+
+    Paper mode: the old window has resolved (or is resolving), so the only
+    honest exit value is the SETTLEMENT payout — 1.0 when the held side won
+    (Chainlink close >= open resolves Up), else 0.0 — read from the same
+    crypto-price endpoint that defines resolution. The pre-fix behavior
+    (pricing the OLD position off the NEW window's quote) was fiction.
+    While settlement is not yet readable the row is held and retried.
+    """
+    if _live_executor is not None:
+        advisory = _current_price_for_side(snapshot, pos["side"])
+        if advisory is None:
+            advisory = float(pos["entry_price"])
+        return await _close_position(pos, snapshot, advisory, "WINDOW_ROLL")
+    won = await _settle_position_outcome(pos, client)
+    if won is None:
+        log.info(
+            "paper_exit.window_roll_awaiting_settlement",
+            position_id=pos["position_id"],
+            window_slug=pos["window_slug"],
+        )
+        return False
+    return await _close_position(pos, snapshot, 1.0 if won else 0.0, "WINDOW_ROLL")
+
+
+async def _settle_position_outcome(
+    pos: dict[str, Any], client: httpx.AsyncClient
+) -> bool | None:
+    """True/False when the held side won/lost; None while not yet settleable."""
+    start_ts = _window_start_from_slug(pos["window_slug"])
+    if start_ts is None:
+        log.warning(
+            "paper_exit.unparseable_window_slug", window_slug=pos["window_slug"]
+        )
+        return None
+    connector = _make_settlement_connector(client, pos["window_slug"])
+    try:
+        up_won = await connector.settle_window(start_ts)
+    except Exception as e:  # noqa: BLE001
+        log.warning(
+            "paper_exit.settlement_read_failed",
+            window_slug=pos["window_slug"],
+            error=str(e),
+        )
+        return None
+    if up_won is None:
+        return None
+    return up_won if pos["side"] == "Up" else (not up_won)
+
+
+def _window_start_from_slug(slug: str) -> int | None:
+    """Unix start ts from a btc-updown-5m-<ts> slug, or None."""
+    try:
+        return int(str(slug).rsplit("-", 1)[-1])
+    except (TypeError, ValueError):
+        return None
 
 
 async def _close_position(
@@ -721,8 +1117,14 @@ async def _close_position(
     return True
 
 
-def _current_price_for_side(snapshot: PaperSnapshot, side: str) -> float:
-    return snapshot.market_up_price if side == "Up" else snapshot.market_down_price
+def _current_price_for_side(snapshot: PaperSnapshot, side: str) -> float | None:
+    """EXECUTABLE exit price: the held side's best BID (what a SELL receives).
+
+    Selling at the bid (after buying at the ask) is what makes the paper
+    fill model pay the spread like a real taker. None when the book shows
+    no bid this tick.
+    """
+    return snapshot.up_best_bid if side == "Up" else snapshot.down_best_bid
 
 
 def _exit_reason(snapshot: PaperSnapshot, pos: dict[str, Any], exit_price: float) -> str | None:
@@ -738,7 +1140,14 @@ def _exit_reason(snapshot: PaperSnapshot, pos: dict[str, Any], exit_price: float
         return "TARGET"
     if pnl <= notional * BTC_PAPER_STOP_RETURN:
         return "STOP"
-    if abs(snapshot.edge) < BTC_PAPER_ENTRY_EDGE_MIN / 2:
+    # Fair-value-based exit only when fair value is trustworthy this tick:
+    # a degraded settlement feed or an unquotable book pins edge near zero,
+    # which must not masquerade as "the edge genuinely collapsed".
+    if (
+        not snapshot.feed_degraded
+        and snapshot.has_executable_quote
+        and abs(snapshot.edge) < BTC_PAPER_ENTRY_EDGE_MIN / 2
+    ):
         return "BAND_REENTRY"
     return None
 

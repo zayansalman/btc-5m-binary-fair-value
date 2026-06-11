@@ -63,6 +63,24 @@ POLYMARKET_GAMMA_API = "https://gamma-api.polymarket.com"
 BTC_CHAINLINK_STREAM_URL = "https://data.chain.link/streams/btc-usd-cexprice-streams"
 BTC_MARKET_TIMEFRAME_MINUTES = 5
 
+# --- Settlement-aligned Chainlink feed (issue #21) --------------------------
+# Polymarket resolves BTC 5m markets on its Chainlink BTC/USD stream, NOT on
+# Binance (measured basis: Chainlink ~ $50.7 BELOW Binance, std $3.8). The
+# reference open, live spot, and sigma all come from these two endpoints;
+# Binance remains only as a volatility-shape fallback and for backtest tooling.
+POLYMARKET_CRYPTO_PRICE_API = os.getenv(
+    "POLYMARKET_CRYPTO_PRICE_API", "https://polymarket.com/api/crypto/crypto-price"
+)
+POLYMARKET_LIVE_DATA_WS = os.getenv(
+    "POLYMARKET_LIVE_DATA_WS", "wss://ws-live-data.polymarket.com"
+)
+# Seconds after which the latest Chainlink WS print is considered stale; a
+# stale/absent settlement feed blocks NEW entries (exits still run).
+BTC_CHAINLINK_STALE_SECONDS = _env_float("BTC_CHAINLINK_STALE_SECONDS", 15.0)
+# Observed Chainlink print granularity (~2 decimal places at $61k). Used to
+# estimate the discrete tie mass P(close == open), which resolves Up.
+BTC_PRINT_GRANULARITY_USD = _env_float("BTC_PRINT_GRANULARITY_USD", 0.01)
+
 # Execution target. Paper is the default; live places REAL orders on the
 # Polymarket CLOB and only boots when POLYMARKET_PRIVATE_KEY is set AND
 # BTC_LIVE_CONFIRM=YES_I_UNDERSTAND. The private key is never logged.
