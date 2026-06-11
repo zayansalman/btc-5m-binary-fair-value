@@ -151,15 +151,31 @@ Drill this once before going live so you know it works.
 - A position whose live exit fails (no bid, CLOB error, unfilled sell) is
   **left OPEN in the ledger** — it is never paper-closed — and the Stop
   status tells you how many rows need manual flattening on Polymarket.
-- The strategy always exits before window resolution (TIME exit at 45s), so
-  there is no redemption path; if the process dies mid-position, just restart
-  the bot — boot reconciliation cancels stale orders and re-adopts the
-  position — or flatten manually in the Polymarket UI and close the row:
+- If the process dies mid-position, just restart the bot — boot
+  reconciliation cancels stale orders and re-adopts the position — or flatten
+  manually in the Polymarket UI and close the row:
 
   ```bash
   sqlite3 data/btc_5m_binary_fair_value.db \
     "UPDATE btc_paper_positions SET state='closed', exit_reason='MANUAL' WHERE state='open'"
   ```
+
+### Settlement and redemption (BTC_EXIT_STYLE=settle, the default)
+
+Settle-style positions ride to window resolution and never place exit
+orders. The engine reads the Chainlink settlement (Up iff close ≥ open),
+books the 1.00/0.00 outcome into the ledger and the daily-loss halt, and
+frees the position slot.
+
+- **Winning tokens are NOT auto-redeemed.** The USDC sits in resolved
+  positions until you redeem them on Polymarket (portfolio → Claim). Redeem
+  every few hours during live sessions so the bankroll keeps cycling — with
+  a $30 bankroll and $1–5 entries, roughly 6–10 unredeemed wins will starve
+  new entries.
+- Losing tokens expire worthless; nothing to do.
+- Legacy scalp behavior (intra-window TARGET/STOP/BAND exits, always flat
+  before resolution) is available with `BTC_EXIT_STYLE=scalp` — note it
+  soaked **negative** under honest fills and exists for experiments only.
 
 ### Live audit trail
 

@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.3.2 — Settle-Style Strategy Profile (2026-06-11)
+
+Fixes #28, closes #27. First honest-baseline soak (135 trades / 70 min) showed the legacy scalp shape is structurally negative under real fills: -$7.87, median hold 8s, up to 17 entries per window, 65 STOPs (-$55) vs 48 TARGETs (+$44) — it pays the spread every few ticks and stops out on noise. The +31% April backtest used the opposite shape.
+
+- New `BTC_EXIT_STYLE`: **`settle` (default)** — max one entry per window (kills churn by construction), no TARGET/STOP/BAND/TIME exits; positions ride to resolution and close at the Chainlink-settled 1.00/0.00. `scalp` keeps the legacy behavior for experiments.
+- Live mode: `LiveExecutor.record_settlement(won, window_slug)` registers the resolution outcome (PnL into the persisted daily-loss halt, journal `SETTLEMENT` row, slot freed) without placing an exit order; any resting entry remainder is cancelled. Winning tokens await operator redemption — runbook section added.
+- Positions journal `strategy_style`; KPIs aggregate only the active style (third baseline reset; prior rows remain as audit trail).
+- 7 new tests (style gating, one-entry-per-window, settlement win/loss accounting, no-exit-order bypass).
+
 ## v0.3.1 — Data Integrity: CLOB Quotes + Settlement Feed (2026-06-11)
 
 Fixes #21, #22, #23. The signal path now prices, fills, and settles against the same data the market actually uses.

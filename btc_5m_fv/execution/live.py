@@ -477,6 +477,50 @@ class LiveExecutor:
         self._daily_realized_pnl += pnl_usd
         await self._persist_risk_state()
 
+    async def record_settlement(self, won: bool, window_slug: str) -> LiveOrderResult:
+        """Register a resolution outcome for the held position without selling.
+
+        Settle-style positions ride to resolution: winning tokens redeem at
+        $1.00 (redemption is an operator action — see the runbook), losing
+        tokens expire worthless. PnL feeds the daily-loss halt exactly like
+        an exit fill, and the position slot frees for the next window.
+        """
+        if not self._position_open:
+            return LiveOrderResult(
+                ok=False, status="SKIPPED", reason="no live position tracked"
+            )
+        if self._entry_order_id is not None:
+            # The market has resolved; any resting entry remainder is dead.
+            # Cancel it so boot reconciliation never re-adopts a ghost order.
+            await self.cancel_open(reason="SETTLEMENT")
+        matched = await self._matched_entry_size()
+        held = _round_size_down(max(0.0, matched - self._entry_sold_size))
+        entry_price = self._entry_price or 0.0
+        payout = 1.0 if won else 0.0
+        pnl = round(held * (payout - entry_price), 4)
+        if held > 0:
+            await self.record_realized_pnl(pnl)
+        await journal_live_order(
+            intent="SETTLEMENT",
+            side=SELL,
+            status="SETTLED",
+            window_slug=window_slug,
+            token_id=self._entry_token_id,
+            price=payout,
+            size=held,
+            notional_usd=pnl,
+            error=None if won else "resolved against position; tokens worthless",
+        )
+        log.info(
+            "live_executor.settled",
+            window_slug=window_slug,
+            won=won,
+            held=held,
+            pnl=pnl,
+        )
+        self._clear_position()
+        return LiveOrderResult(ok=True, status="SETTLED", price=payout, size=held)
+
     @property
     def daily_realized_pnl(self) -> float:
         self._roll_daily_window()

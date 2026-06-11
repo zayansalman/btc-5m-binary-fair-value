@@ -128,6 +128,9 @@ BTC_POSITION_COLUMN_MIGRATIONS = {
     # 'clob' since v0.3.1; NULL rows predate executable CLOB quotes (issue #22)
     # and are excluded from all KPI aggregates (re-baseline).
     "quote_source": "TEXT",
+    # 'settle' | 'scalp' since v0.3.2 (issue #28); KPIs aggregate only the
+    # active style so baselines from different trade shapes never blend.
+    "strategy_style": "TEXT",
 }
 
 # Issue #22: executable top-of-book quotes journaled per tick. Rows without
