@@ -115,13 +115,16 @@ def assert_live_boot_allowed(
         problems.append("POLYMARKET_PRIVATE_KEY is not set")
     if phrase != CONFIRM_PHRASE:
         problems.append(f"BTC_LIVE_CONFIRM is not '{CONFIRM_PHRASE}'")
-    if sig not in (0, 1, 2):
-        problems.append(f"POLYMARKET_SIGNATURE_TYPE={sig} is not one of 0/1/2")
-    elif sig in (1, 2) and not fund:
+    if sig not in (0, 1, 2, 3):
         problems.append(
-            f"POLYMARKET_FUNDER is required for signature_type={sig} (proxy wallet): "
-            "without it every order is signed with the EOA as maker and the CLOB "
-            "rejects it"
+            f"POLYMARKET_SIGNATURE_TYPE={sig} is not one of 0 (EOA), 1 (email/Magic "
+            "proxy), 2 (Gnosis Safe), 3 (deposit wallet / ERC-1271)"
+        )
+    elif sig in (1, 2, 3) and not fund:
+        problems.append(
+            f"POLYMARKET_FUNDER is required for signature_type={sig} (proxy/deposit "
+            "wallet): without it every order is signed with the EOA as maker and "
+            "the CLOB rejects it"
         )
     if problems:
         raise LiveBootRefused(
