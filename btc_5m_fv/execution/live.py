@@ -62,7 +62,7 @@ BUY = "BUY"
 SELL = "SELL"
 CONFIRM_PHRASE = "YES_I_UNDERSTAND"
 
-# Polymarket CLOB conventions (see installed py_clob_client source):
+# Polymarket CLOB conventions (see installed py_clob_client_v2 source):
 # - size granularity is 2 decimals for every tick size (ROUNDING_CONFIG.size == 2)
 # - tick sizes are one of 0.1 / 0.01 / 0.001 / 0.0001 (GET /tick-size per token)
 # - the order book reports min_order_size in shares (typically 5 for 5m markets)
@@ -258,7 +258,7 @@ class LiveExecutor:
         """
         if self._client is None:
             self._client = await asyncio.to_thread(self._build_client)
-        creds = await asyncio.to_thread(self._client.create_or_derive_api_creds)
+        creds = await asyncio.to_thread(self._client.create_or_derive_api_key)
         if creds is None:
             raise LiveBootRefused(
                 "Could not create or derive Polymarket CLOB API credentials."
@@ -283,7 +283,9 @@ class LiveExecutor:
         )
 
     def _build_client(self) -> Any:
-        from py_clob_client.client import ClobClient
+        # py-clob-client (v1) is archived and non-functional; v2 keeps the
+        # same constructor surface incl. signature_type/funder (issue #31).
+        from py_clob_client_v2 import ClobClient
 
         return ClobClient(
             self._host,
@@ -888,7 +890,11 @@ class LiveExecutor:
         matched/cancelled) also counts as "no longer live".
         """
         try:
-            raw = await asyncio.to_thread(self._client.cancel, order_id)
+            from py_clob_client_v2 import OrderPayload
+
+            raw = await asyncio.to_thread(
+                self._client.cancel_order, OrderPayload(orderID=order_id)
+            )
         except Exception as e:  # noqa: BLE001
             error = f"{type(e).__name__}: {e}"
             await journal_live_order(
@@ -982,7 +988,7 @@ class LiveExecutor:
         size: float,
         window_slug: str | None,
     ) -> LiveOrderResult:
-        from py_clob_client.clob_types import OrderArgs
+        from py_clob_client_v2 import OrderArgs
 
         notional = round(price * size, 4)
         # Last-instant kill re-check for ENTRIES: the gate ran before the

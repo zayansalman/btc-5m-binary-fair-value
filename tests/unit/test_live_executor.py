@@ -14,6 +14,7 @@ from unittest.mock import MagicMock
 
 import pytest
 import pytest_asyncio
+from py_clob_client_v2 import OrderPayload
 
 import config as _config
 import db as _db
@@ -73,10 +74,10 @@ def _mock_client(book: SimpleNamespace | None = None) -> MagicMock:
         "status": "live",
     }
     # Cancel responses confirm whichever order id was asked for.
-    client.cancel.side_effect = lambda oid: {"canceled": [oid], "not_canceled": {}}
+    client.cancel_order.side_effect = lambda payload: {"canceled": [payload.orderID], "not_canceled": {}}
     client.cancel_all.return_value = {"canceled": [], "not_canceled": {}}
     client.get_order.return_value = {"size_matched": "5.26", "price": "0.57"}
-    client.create_or_derive_api_creds.return_value = SimpleNamespace(
+    client.create_or_derive_api_key.return_value = SimpleNamespace(
         api_key="k", api_secret="s", api_passphrase="p"
     )
     client.get_ok.return_value = "OK"
@@ -324,7 +325,7 @@ async def test_exit_skipped_when_entry_never_filled(journal_db, tmp_path: Path) 
     assert not result.ok and result.status == "SKIPPED"
     client.create_and_post_order.assert_not_called()
     # Resting unfilled entry was cancelled as part of the flatten.
-    client.cancel.assert_called_once_with("0xORDER1")
+    client.cancel_order.assert_called_once_with(OrderPayload(orderID="0xORDER1"))
 
 
 # ---------------------------------------------------------------------------
@@ -494,7 +495,7 @@ async def test_kill_switch_cancels_open_orders_once(journal_db, tmp_path: Path) 
     assert await executor.enforce_kill_switch() is True
     assert await executor.enforce_kill_switch() is True  # still active
 
-    client.cancel.assert_called_once_with("0xORDER1")  # cancelled exactly once
+    client.cancel_order.assert_called_once_with(OrderPayload(orderID="0xORDER1"))  # cancelled exactly once
     rows = await _journal_rows(journal_db)
     assert any(r["intent"] == "CANCEL" and r["status"] == "CANCELLED" for r in rows)
 
@@ -519,7 +520,7 @@ async def test_kill_switch_rearms_after_file_removed(journal_db, tmp_path: Path)
     (tmp_path / "KILL").touch()
     assert await executor.enforce_kill_switch() is True
 
-    cancelled_ids = [c.args[0] for c in client.cancel.call_args_list]
+    cancelled_ids = [c.args[0].orderID for c in client.cancel_order.call_args_list]
     assert cancelled_ids.count("0xORDER1") >= 2  # second kill cancelled again
 
 
@@ -544,7 +545,7 @@ async def test_cancel_open_cancels_and_journal(journal_db, tmp_path: Path) -> No
     cancelled = await executor.cancel_open(reason="WINDOW_ROLL")
 
     assert cancelled == ["0xORDER1"]
-    client.cancel.assert_called_once_with("0xORDER1")
+    client.cancel_order.assert_called_once_with(OrderPayload(orderID="0xORDER1"))
     rows = await _journal_rows(journal_db)
     cancel_rows = [r for r in rows if r["intent"] == "CANCEL"]
     assert cancel_rows and cancel_rows[0]["status"] == "CANCELLED"
@@ -556,7 +557,7 @@ async def test_cancel_open_noop_without_order(journal_db, tmp_path: Path) -> Non
     client = _mock_client()
     executor = _executor(client, tmp_path)
     assert await executor.cancel_open() == []
-    client.cancel.assert_not_called()
+    client.cancel_order.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -602,7 +603,7 @@ async def test_exit_timeout_cancels_resting_sell(journal_db, tmp_path: Path) -> 
     result = await executor.submit_exit(side_price=0.55)
 
     assert not result.ok and result.status == "UNFILLED"
-    cancelled = [c.args[0] for c in client.cancel.call_args_list]
+    cancelled = [c.args[0].orderID for c in client.cancel_order.call_args_list]
     assert "0xSELL" in cancelled  # the unfilled SELL was cancelled
     # Position must still be tracked (max-1 gate holds, retry possible).
     assert executor.entry_block_reason(3.0) is not None
@@ -821,7 +822,7 @@ async def test_start_derives_and_sets_api_creds(journal_db, tmp_path: Path) -> N
 
     await executor.start()
 
-    client.create_or_derive_api_creds.assert_called_once()
+    client.create_or_derive_api_key.assert_called_once()
     client.set_api_creds.assert_called_once()
     client.get_ok.assert_called_once()
 

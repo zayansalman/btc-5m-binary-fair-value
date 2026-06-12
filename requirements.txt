@@ -5,7 +5,7 @@ aiosqlite==0.20.0
 python-dotenv==1.0.1
 structlog==24.4.0
 gradio==5.49.1
-py-clob-client==0.34.6
+py-clob-client-v2==1.0.1
 websockets==16.0
 
 pytest==8.3.3
