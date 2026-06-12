@@ -269,6 +269,23 @@ class LiveExecutor:
         await asyncio.to_thread(self._client.set_api_creds, creds)
         # Reachability check (raises on network failure).
         await asyncio.to_thread(self._client.get_ok)
+        # Refresh the CLOB's cached view of the funder's collateral balance
+        # and allowance — the documented step before a first order. Best
+        # effort: a refresh failure is logged, and an actually unfunded or
+        # unapproved wallet will surface as order rejections (and in
+        # tools/live_preflight.py), not as a silent boot failure here.
+        try:
+            from py_clob_client_v2 import AssetType, BalanceAllowanceParams
+
+            await asyncio.to_thread(
+                self._client.update_balance_allowance,
+                BalanceAllowanceParams(
+                    asset_type=AssetType.COLLATERAL,
+                    signature_type=self._signature_type,
+                ),
+            )
+        except Exception as e:  # noqa: BLE001
+            log.warning("live_executor.allowance_refresh_failed", error=str(e))
         await self._load_risk_state()
         await self._reconcile_account()
         log.info(

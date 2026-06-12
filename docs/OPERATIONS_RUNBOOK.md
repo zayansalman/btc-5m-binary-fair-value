@@ -50,33 +50,56 @@ Expected:
 Live mode places REAL orders with REAL funds on the Polymarket CLOB. Read this
 whole section before flipping the switch.
 
-### Preconditions
+### Getting a key and funder (the real flow — there is NO key export)
 
-- The paper bot has run cleanly on your machine (ticks flowing, no feed errors).
-- Your Polymarket wallet (the funder) holds the USDC you are willing to lose.
-- You know your signature type: `0` = plain EOA wallet, `1` = email/magic-link
-  account (most common, the default), `2` = browser-wallet proxy.
+The Polymarket product has no "export private key" feature. API trading uses
+a wallet **you** control. The documented options:
+
+| You have | signature type | key | funder |
+|---|---|---|---|
+| Nothing yet (recommended) | `3` (deposit wallet) | fresh EOA key, generated locally | relayer-deployed deposit wallet owned by that key |
+| A browser wallet (MetaMask etc.) | `0` (EOA) | from your wallet app | the EOA itself (needs POL for gas + on-chain approvals) |
+| A Gnosis Safe | `2` | the Safe owner key | the Safe address |
+| An email-login UI account | n/a for API | — | move the funds out instead (withdraw) |
+
+Recommended path — **deposit wallet (type 3)**, fully scripted:
+
+```bash
+# one-time: official py-sdk handles deposit-wallet deploy + gasless approvals
+./.venv/bin/pip install --pre polymarket-client
+./.venv/bin/python tools/live_setup.py
+```
+
+The script generates a key if `.env` has none (shown ONCE — store it in
+`.env` immediately), deploys the deterministic deposit wallet, runs the
+idempotent trading approvals, and prints the exact `.env` block.
+
+**Funding:** send USDC/pUSD on Polygon to the printed funder address. Funds
+sitting in an existing Polymarket UI account move with **Withdraw → paste
+the funder address** — no key export needed anywhere.
 
 ### Launch steps
 
-1. Edit `.env` (never commit it):
+1. Run `tools/live_setup.py` (above) and put its output block in `.env`
+   (never commit it). The key is never logged and never journaled.
+
+2. Preflight — verifies the gate, credential derivation, CLOB reachability,
+   and that the funder balance is actually visible to the CLOB:
 
    ```bash
-   BTC_BOT_MODE=live
-   POLYMARKET_PRIVATE_KEY=0x...          # signing key — never logged, never committed
-   POLYMARKET_FUNDER=0x...               # proxy wallet holding your USDC
-   POLYMARKET_SIGNATURE_TYPE=1
-   BTC_LIVE_CONFIRM=YES_I_UNDERSTAND     # exact phrase, typed by you
+   ./.venv/bin/python tools/live_preflight.py
    ```
 
-2. Start the app and press **Start** on the dashboard:
+   Do not launch on a NO-GO.
+
+3. Start the app and press **Start** on the dashboard:
 
    ```bash
    ./.venv/bin/python main.py
    ```
 
-3. Verify the dashboard says **LIVE — orders are real** and the activity feed
-   shows `btc_live_started`. If either boot gate is missing, Start refuses with
+4. Verify the dashboard says **LIVE — orders are real** and the activity feed
+   shows `btc_live_started`. If any boot gate is missing, Start refuses with
    an explicit error and nothing runs — live never silently falls back to paper.
 
 ### Hard risk limits (enforced in code before every order)
