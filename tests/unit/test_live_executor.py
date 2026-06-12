@@ -844,3 +844,13 @@ def test_private_key_never_in_result(tmp_path: Path) -> None:
     result = LiveOrderResult(ok=True, status="SUBMITTED")
     assert "1111" not in repr(result)
     assert executor._private_key.startswith("0x")  # held privately only
+
+
+@pytest.mark.asyncio
+async def test_start_refreshes_balance_allowance(journal_db, tmp_path: Path) -> None:
+    client = _mock_client()
+    ex = _executor(client, tmp_path)
+    await ex.start()
+    client.update_balance_allowance.assert_called_once()
+    params = client.update_balance_allowance.call_args.args[0]
+    assert params.signature_type == 1  # the executor's configured type

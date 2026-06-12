@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.3.5 — Real Live-Setup Flow (2026-06-12)
+
+Fixes #32. The runbook's "export private key from Polymarket settings" step does not exist in the product (operator-verified; absent from current docs). Setup rewritten to the documented reality — you bring a wallet you control:
+
+- `tools/live_setup.py` — one-time onboarding via official py-sdk (optional install): generates a fresh key if needed, deploys the deterministic deposit wallet (signature type 3), runs idempotent gasless trading approvals, prints the `.env` block and funding instructions. Existing UI funds move by **withdrawing to the funder address** — no export anywhere.
+- `tools/live_preflight.py` — read-only GO/NO-GO: boot gate, credential derivation, CLOB reachability, funder balance/allowance as the CLOB sees it.
+- `LiveExecutor.start()` now refreshes the CLOB balance/allowance cache (`update_balance_allowance`, best-effort) — the documented pre-first-order step.
+- Runbook "Going Live" rewritten (wallet decision table, scripted path, preflight gate); `.env.example` signature-type guidance corrected (type 3 recommended).
+
 ## v0.3.4 — Migrate to py-clob-client-v2 (2026-06-12)
 
 Fixes #31 (launch blocker). Upstream archived `py-clob-client` (v1) with "no longer functional — should not be used"; live mode would have failed at first auth. Migrated `LiveExecutor` to official `py-clob-client-v2` (1.0.1):
