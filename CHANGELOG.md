@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.3.4 — Migrate to py-clob-client-v2 (2026-06-12)
+
+Fixes #31 (launch blocker). Upstream archived `py-clob-client` (v1) with "no longer functional — should not be used"; live mode would have failed at first auth. Migrated `LiveExecutor` to official `py-clob-client-v2` (1.0.1):
+
+- `create_or_derive_api_creds()` → `create_or_derive_api_key()`; `cancel(order_id)` → `cancel_order(OrderPayload(orderID=...))`; import paths updated. Constructor surface (incl. `signature_type`/`funder` for proxy wallets), `set_api_creds`, `get_order`, `cancel_all`, order/cancel response bodies, and `OrderBookSummary` fields (`min_order_size`, `tick_size`, worst→best level ordering) are unchanged — verified against installed v2 source.
+- v1 removed from the venv and dependency declarations; suite green with zero v1 references; v2 smoke-tested against the live CLOB API (`get_ok`, `get_server_time`).
+
 ## v0.3.3 — Anti-Adverse-Selection Entry Filters (2026-06-12)
 
 Fixes #29. The 26h settle soak (n=225, -14.4% ROI overall) revealed structured losses: PnL by claimed edge decreases monotonically (4.5–7%: +7.0% ROI; >15%: -36% to -57%), and entries below 50¢ lose badly while favorites win 63–72%. Large apparent edge = the model lagging a fast market (adverse selection), not opportunity.
