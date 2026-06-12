@@ -150,14 +150,21 @@ def test_boot_allowed_with_key_and_exact_phrase() -> None:
 
 
 def test_boot_refused_without_funder_for_proxy_signature_types() -> None:
-    # Signature types 1/2 sign as a proxy wallet; without a funder the order
-    # maker falls back to the EOA address and the CLOB rejects every order.
-    for sig in (1, 2):
+    # Signature types 1/2/3 sign as a proxy/deposit wallet; without a funder
+    # the order maker falls back to the EOA and the CLOB rejects every order.
+    for sig in (1, 2, 3):
         with pytest.raises(LiveBootRefused, match="POLYMARKET_FUNDER"):
             assert_live_boot_allowed(
                 private_key="0xabc", confirm=CONFIRM_PHRASE,
                 funder="", signature_type=sig,
             )
+
+
+def test_boot_allowed_for_deposit_wallet_type_3_with_funder() -> None:
+    assert_live_boot_allowed(
+        private_key="0xabc", confirm=CONFIRM_PHRASE,
+        funder="0xDEPOSIT", signature_type=3,
+    )
 
 
 def test_boot_allowed_without_funder_for_eoa() -> None:
