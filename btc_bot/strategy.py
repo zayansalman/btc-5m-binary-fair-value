@@ -15,6 +15,11 @@ class StrategyParams:
     entry_min_remaining_seconds: int = 90
     max_entry_price: float = 0.95
     min_entry_price: float = 0.05
+    # Stale-model guard (issue #29): an apparent edge ABOVE this cap means
+    # the model is lagging a fast market, not that the market is wrong —
+    # soaked PnL by claimed edge was monotonically decreasing (4.5-7%:
+    # +7% ROI; >15%: -36% to -57% ROI). Default 1.0 disables the cap.
+    entry_edge_max: float = 1.0
 
 
 def sigma_per_second(closes: list[float]) -> float:
@@ -118,6 +123,10 @@ def signal_from_executable_edges(
         return None, confidence, 0.0, "skip: too close to window end"
     if edge < params.entry_edge_min or confidence < params.min_confidence:
         return None, confidence, 0.0, "skip: edge/confidence below threshold"
+    if edge > params.entry_edge_max:
+        # "Too good" is a warning, not an opportunity: the market has moved
+        # and the model hasn't caught up. Taking these is adverse selection.
+        return None, confidence, 0.0, "skip: edge above cap (stale-model guard)"
     if entry_price < params.min_entry_price or entry_price > params.max_entry_price:
         return None, confidence, 0.0, "skip: entry price too extreme for paper fill model"
     notional = notional_from_confidence(confidence, params)

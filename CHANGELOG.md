@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.3.3 — Anti-Adverse-Selection Entry Filters (2026-06-12)
+
+Fixes #29. The 26h settle soak (n=225, -14.4% ROI overall) revealed structured losses: PnL by claimed edge decreases monotonically (4.5–7%: +7.0% ROI; >15%: -36% to -57%), and entries below 50¢ lose badly while favorites win 63–72%. Large apparent edge = the model lagging a fast market (adverse selection), not opportunity.
+
+- `BTC_PAPER_ENTRY_EDGE_MAX` (default **0.07**): entries whose claimed edge exceeds the cap are rejected — "skip: edge above cap (stale-model guard)"
+- `BTC_PAPER_MIN_ENTRY_PRICE` default raised 0.05 → **0.50**: favorites only
+- In-sample, the joint surviving slice (edge 4.5–7%, entry ≥ 50¢) ran **+22.8% ROI, 73% win, n=48**, positive in both sample halves. This is post-hoc structure: the filtered strategy must hold in a fresh out-of-sample soak before the live gate opens.
+
 ## v0.3.2 — Settle-Style Strategy Profile (2026-06-11)
 
 Fixes #28, closes #27. First honest-baseline soak (135 trades / 70 min) showed the legacy scalp shape is structurally negative under real fills: -$7.87, median hold 8s, up to 17 entries per window, 65 STOPs (-$55) vs 48 TARGETs (+$44) — it pays the spread every few ticks and stops out on noise. The +31% April backtest used the opposite shape.

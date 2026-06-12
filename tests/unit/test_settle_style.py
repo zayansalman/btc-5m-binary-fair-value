@@ -207,3 +207,53 @@ async def test_settled_close_places_no_exit_order(
     assert row["state"] == "closed"
     assert row["exit_price"] == 1.0
     assert row["realized_pnl_usd"] == pytest.approx(3.0)  # 6 * (1.0 - 0.5)
+
+
+# ---------------------------------------------------------------------------
+# Anti-adverse-selection entry filters (issue #29)
+# ---------------------------------------------------------------------------
+
+
+def test_edge_above_cap_is_rejected():
+    from btc_bot.strategy import StrategyParams, signal_from_executable_edges
+
+    params = StrategyParams(
+        min_trade_usd=1.0, max_trade_usd=5.0, entry_edge_min=0.045,
+        min_confidence=0.50, entry_min_remaining_seconds=60,
+        entry_edge_max=0.07, min_entry_price=0.50,
+    )
+    side, _, _, reason = signal_from_executable_edges(
+        edge_up=0.30, edge_down=-0.40, remaining_seconds=120,
+        up_ask=0.55, down_ask=0.60, params=params,
+    )
+    assert side is None and "stale-model guard" in reason
+
+
+def test_longshot_entry_below_min_price_is_rejected():
+    from btc_bot.strategy import StrategyParams, signal_from_executable_edges
+
+    params = StrategyParams(
+        min_trade_usd=1.0, max_trade_usd=5.0, entry_edge_min=0.045,
+        min_confidence=0.50, entry_min_remaining_seconds=60,
+        entry_edge_max=0.07, min_entry_price=0.50,
+    )
+    side, _, _, reason = signal_from_executable_edges(
+        edge_up=0.06, edge_down=-0.10, remaining_seconds=120,
+        up_ask=0.36, down_ask=0.70, params=params,
+    )
+    assert side is None and "too extreme" in reason
+
+
+def test_modest_edge_favorite_passes_filters():
+    from btc_bot.strategy import StrategyParams, signal_from_executable_edges
+
+    params = StrategyParams(
+        min_trade_usd=1.0, max_trade_usd=5.0, entry_edge_min=0.045,
+        min_confidence=0.50, entry_min_remaining_seconds=60,
+        entry_edge_max=0.07, min_entry_price=0.50,
+    )
+    side, _, notional, reason = signal_from_executable_edges(
+        edge_up=0.055, edge_down=-0.08, remaining_seconds=120,
+        up_ask=0.62, down_ask=0.42, params=params,
+    )
+    assert side == "Up" and notional > 0 and "executable edge" in reason

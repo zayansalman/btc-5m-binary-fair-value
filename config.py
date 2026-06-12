@@ -121,6 +121,11 @@ BTC_PAPER_MIN_TRADE_USD = _env_float("BTC_PAPER_MIN_TRADE_USD", 1.0)
 BTC_PAPER_MAX_TRADE_USD = _env_float("BTC_PAPER_MAX_TRADE_USD", 5.0)
 BTC_PAPER_TICK_SECONDS = _env_float("BTC_PAPER_TICK_SECONDS", 5.0)
 BTC_PAPER_ENTRY_EDGE_MIN = _env_float("BTC_PAPER_ENTRY_EDGE_MIN", 0.045)
+# Stale-model guard + favorites filter (issue #29, from the 26h settle soak,
+# n=225): claimed edges above ~7% and entries below ~50c were where adverse
+# selection lived; the joint surviving slice ran +22.8% ROI (n=48, in-sample).
+BTC_PAPER_ENTRY_EDGE_MAX = _env_float("BTC_PAPER_ENTRY_EDGE_MAX", 0.07)
+BTC_PAPER_MIN_ENTRY_PRICE = _env_float("BTC_PAPER_MIN_ENTRY_PRICE", 0.50)
 BTC_PAPER_MIN_CONFIDENCE = _env_float("BTC_PAPER_MIN_CONFIDENCE", 0.50)
 BTC_PAPER_ENTRY_MIN_REMAINING_SECONDS = int(
     os.getenv("BTC_PAPER_ENTRY_MIN_REMAINING_SECONDS", "60")
