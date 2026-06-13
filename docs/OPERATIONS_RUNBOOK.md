@@ -70,9 +70,14 @@ Recommended path — **deposit wallet (type 3)**, fully scripted:
 ./.venv/bin/python tools/live_setup.py
 ```
 
-The script generates a key if `.env` has none (shown ONCE — store it in
-`.env` immediately), deploys the deterministic deposit wallet, runs the
-idempotent trading approvals, and prints the exact `.env` block.
+The script generates a key if `.env` has none, mints a Builder API Key from
+that key (used only for the gasless deploy, then discarded), deploys the
+deterministic deposit wallet, and writes the config straight into `.env`
+(perms `0600`). The private key is **never printed** — it cannot leak into
+scrollback or logs. There is no separate approval step: the collateral
+allowance is set automatically the first time the bot connects to a funded
+wallet (`update_balance_allowance`). `BTC_LIVE_CONFIRM` is deliberately not
+written — you add that line yourself as the final go-live step.
 
 **Funding:** send USDC/pUSD on Polygon to the printed funder address. Funds
 sitting in an existing Polymarket UI account move with **Withdraw → paste

@@ -349,6 +349,10 @@ async def test_controller_start_refuses_live_without_gates(
 async def test_controller_start_runs_paper_by_default(
     bot_db, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # Pin paper explicitly so the test is deterministic regardless of an
+    # operator .env that opts into live locally.
+    monkeypatch.setattr(controller, "BTC_BOT_MODE", "paper")
+    monkeypatch.setattr(_config, "BTC_BOT_MODE", "paper")
     runner = MagicMock()
     monkeypatch.setattr(controller, "_ensure_runner_started", runner)
     monkeypatch.setattr(controller, "_is_runner_alive", lambda: True)
@@ -378,10 +382,10 @@ def _dash_module():
     return importlib.import_module("btc_5m_fv.ops.dashboard.app")
 
 
-def test_dashboard_paper_copy_by_default() -> None:
+def test_dashboard_paper_copy_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     dash = _dash_module()
-
-    assert dash._IS_LIVE is False
+    # Pin paper copy regardless of an operator .env that opts into live.
+    monkeypatch.setattr(dash, "_IS_LIVE", False)
     brief = dash._brief_html()
     assert "paper" in brief
     assert "does not sign or submit live orders" in brief
