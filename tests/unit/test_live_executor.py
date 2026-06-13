@@ -207,9 +207,11 @@ def test_boot_gate_reads_config_at_call_time(monkeypatch: pytest.MonkeyPatch) ->
     assert isinstance(executor, LiveExecutor)
 
 
-def test_paper_mode_is_default_in_config() -> None:
-    # Paper stays the default; live is opt-in only.
-    assert _config.BTC_BOT_MODE == "paper"
+def test_paper_mode_is_default_in_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Paper is the default when BTC_BOT_MODE is unset — asserted on the
+    # resolution logic, independent of any operator .env that opts into live.
+    monkeypatch.delenv("BTC_BOT_MODE", raising=False)
+    assert _config._env_choice("BTC_BOT_MODE", "paper", {"paper", "live"}) == "paper"
 
 
 # ---------------------------------------------------------------------------

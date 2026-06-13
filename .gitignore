@@ -21,3 +21,5 @@ archive/
 .vscode/
 *.log
 *.egg-info/
+
+.env.bak

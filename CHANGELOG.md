@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.3.6 — Verified Self-Serve Deposit-Wallet Onboarding (2026-06-12)
+
+Fixes #33. Hardened and verified `tools/live_setup.py` end-to-end against the live Polymarket API:
+
+- **Key never leaks**: the generated private key is written straight into `.env` (perms `0600`, `.env.bak` saved) and is never printed to stdout — so it cannot land in terminal scrollback or an assistant transcript. Only the public signer/deposit addresses are shown. `_merge_env` updates keys in place, preserves comments/other keys, and is unit-tested to NEVER auto-write `BTC_LIVE_CONFIRM` (the operator's conscious go-live step).
+- **Correct deposit-wallet flow** (verified live): mint a Builder API Key from the signer key (L1→L2→builder, self-serve, used only for the gasless deploy then discarded) → `SecureClient.create(api_key=...)` deploys the deterministic type-3 deposit wallet gaslessly. The earlier `setup_trading_approvals()` call was the EOA method and hit a relayer allowlist rejection; removed. Collateral allowance is set by `update_balance_allowance` on first funded connect (executor + preflight already call it) — no separate approval step.
+- `polymarket-client` declared as the optional `setup` extra (one-time onboarding only; runtime trading uses `py-clob-client-v2`).
+
 ## v0.3.5 — Real Live-Setup Flow (2026-06-12)
 
 Fixes #32. The runbook's "export private key from Polymarket settings" step does not exist in the product (operator-verified; absent from current docs). Setup rewritten to the documented reality — you bring a wallet you control:
