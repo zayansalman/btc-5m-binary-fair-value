@@ -62,7 +62,27 @@ a wallet **you** control. The documented options:
 | A Gnosis Safe | `2` | the Safe owner key | the Safe address |
 | An email-login UI account | n/a for API | — | move the funds out instead (withdraw) |
 
-Recommended path — **deposit wallet (type 3)**, fully scripted:
+**Path A — you already have a funded Polymarket account (connected wallet, e.g. MetaMask):**
+Use it in place; no fund movement, no deploy, no approvals (your proxy is
+already set up from trading in the UI). The trading funds live in a
+deterministic proxy controlled by your wallet key, so the funder and
+signature type are auto-detected from the key:
+
+```bash
+# 1. Put your signer key in .env (MetaMask: Account details -> Show private key):
+#       POLYMARKET_PRIVATE_KEY=0x...
+# 2. Detect the funder proxy + signature type from on-chain balances:
+./.venv/bin/python tools/live_detect_wallet.py
+```
+
+It derives every wallet the key could control (EOA / POLY_PROXY / Gnosis
+Safe), reads each one's on-chain pUSD balance, and writes the funded one's
+address + matching signature type into `.env`. **Security:** that key
+controls your entire wallet, not just the trading balance — only use a key
+whose wallet holds nothing you are not willing to expose on this machine.
+
+**Path B — start fresh with an isolated deposit wallet (type 3)**, fully
+scripted (the bot's key then controls only what you move to it):
 
 ```bash
 # one-time: official py-sdk handles deposit-wallet deploy + gasless approvals

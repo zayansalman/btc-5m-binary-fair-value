@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.3.7 — Existing-Wallet (MetaMask) Onboarding + Auto-Detect (2026-06-12)
+
+Fixes #34. For users who already hold funds in a connected-wallet Polymarket account, added a no-fund-movement path: trade the existing balance in place using the wallet's signer key.
+
+- `tools/live_detect_wallet.py`: given the signer key in `.env`, derives every wallet it could control (EOA / POLY_PROXY / Gnosis Safe via the SDK's `derive_proxy_wallet_address` / `derive_safe_wallet_address`), reads each candidate's on-chain pUSD balance on Polygon (multi-RPC fallback: publicnode / 1rpc / drpc), and writes the funded one's address + matching signature type into `.env`. Deterministic — the funded address's derivation *is* its signature type (EOA=0, POLY_PROXY=1, GNOSIS_SAFE=2); no guessing.
+- Runbook documents Path A (existing connected wallet, auto-detected) vs Path B (fresh isolated deposit wallet), with the key-blast-radius tradeoff stated plainly.
+- pUSD collateral token address (`0xC011a7E1…`, Polygon) sourced from the SDK's PRODUCTION environment config.
+
 ## v0.3.6 — Verified Self-Serve Deposit-Wallet Onboarding (2026-06-12)
 
 Fixes #33. Hardened and verified `tools/live_setup.py` end-to-end against the live Polymarket API:
