@@ -1,3 +1,36 @@
+# Plan — Adaptive layer + go live (2026-06-14)
+
+Preflight GO: MetaMask key in, Gnosis Safe funder `0xc1Daa…` holds $37.86, sig
+type 2, wallet already approved (max allowances). Hard caps in code: $5/trade,
+1 position, -$10/day halt, $30/day cap, kill switch.
+
+## "Leverage AI" — the honest split
+- NOT a price predictor (loses to latency bots on 5m BTC).
+- YES adaptive risk control + an AI research analyst over OUR OWN journal.
+
+## Phase 1 — Adaptive risk controller (#36, build now, protects from trade 1)
+- [ ] btc_bot/adaptive.py: rolling expectancy / win-rate / Brier calibration
+      over the last N closed trades of the active style (model_prob = edge +
+      entry_price; outcome = realized_pnl > 0).
+- [ ] Auto-pause when rolling ROI drops below a floor (after a min sample) —
+      sticky until operator clears. Catches EDGE DECAY, not just a bad day.
+- [ ] Config + entry-path integration + journal/dashboard + clear tool. Tests.
+
+## Phase 2 — AI research loop (design now, build once live fills accumulate)
+- [ ] docs/RESEARCH_LOOP.md: nightly agent mines journal → proposes filters →
+      backtests OOS on the recorded archive → surfaces survivors for operator
+      approval. AI proposes, human disposes. Never auto-applies to live.
+
+## Phase 3 — Go live
+- [ ] Final preflight GO → start live bot → verify boot gate + first real entry
+      → hand off with kill switch (touch data/KILL).
+
+## Won't do
+- RL auto-tuning on live $37 (overfits/blows up — sample far too small).
+- Any live-param change without OOS validation + operator sign-off.
+
+---
+
 # Live Executor Build — Issue #20 (2026-06-10)
 
 ## Plan
