@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.4.0 — Adaptive Risk Controller + AI Research-Loop Design (2026-06-14)
+
+Fixes #36. The "self-improving" layer, done rigorously — adaptive risk control over our own journal, not price prediction.
+
+### Adaptive risk controller (`btc_bot/adaptive.py`)
+- Rolling expectancy / win-rate / **Brier calibration** over the last N closed clob trades of the active style. Model probability reconstructed as `edge + entry_price`; outcome = `realized_pnl > 0`. No schema change.
+- **Auto-pause**: blocks NEW entries when rolling ROI drops below a floor after a minimum sample — STICKY until an operator clears it (`tools/clear_auto_pause.py`). Catches EDGE DECAY before losses pile up; complements (does not replace) the hard −$10/day halt. Notifies on trip; existing positions still settle.
+- Config: `BTC_AUTO_PAUSE_ENABLED/WINDOW/MIN_TRADES/MIN_ROI`. 8 tests (metric math, calibration, style/quote/state filtering, sticky no-auto-resume, warm-up, disabled).
+
+### AI research loop (designed, `docs/RESEARCH_LOOP.md`)
+- Nightly agent mines the journal for loss clusters → proposes filters → backtests walk-forward OOS on the recorded archive → surfaces only survivors with numbers for operator approval. AI proposes, human disposes; never auto-applies to live. Built once ≥~50 live fills accumulate.
+
+### Won't do
+- RL auto-tuning on a live $30–40 bankroll (overfits to noise). No live-param change without OOS validation + operator sign-off.
+
+443 tests green.
+
 ## v0.3.7 — Existing-Wallet (MetaMask) Onboarding + Auto-Detect (2026-06-12)
 
 Fixes #34. For users who already hold funds in a connected-wallet Polymarket account, added a no-fund-movement path: trade the existing balance in place using the wallet's signer key.

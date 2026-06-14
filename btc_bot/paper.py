@@ -66,6 +66,7 @@ from btc_5m_fv.connectors.chainlink_settlement import (
     ChainlinkWsFeed,
 )
 from btc_5m_fv.execution.live import LiveExecutor, build_live_executor
+from btc_bot.adaptive import evaluate_and_maybe_pause
 from btc_bot.strategy import (
     StrategyParams,
     fair_up_probability,
@@ -792,6 +793,17 @@ async def _log_tick(snapshot: PaperSnapshot) -> None:
 
 async def _maybe_open_position(snapshot: PaperSnapshot) -> None:
     if not snapshot.signal_side or snapshot.notional_usd <= 0:
+        return
+    # Adaptive edge-decay gate (#36): pause new entries when rolling expectancy
+    # has gone bad. Sticky until an operator clears it; existing positions still
+    # settle. Complements the hard daily-loss halt.
+    paused, pause_reason = await evaluate_and_maybe_pause()
+    if paused:
+        log.info(
+            "entry.auto_paused",
+            window_slug=snapshot.window_slug,
+            reason=pause_reason,
+        )
         return
     async with connect() as db:
         async with db.execute(

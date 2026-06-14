@@ -92,6 +92,15 @@ BTC_BOT_MODE = _env_choice("BTC_BOT_MODE", "paper", {"paper", "live"})
 # spread every round trip); kept only for experiments.
 BTC_EXIT_STYLE = _env_choice("BTC_EXIT_STYLE", "settle", {"settle", "scalp"})
 
+# Adaptive risk controller (issue #36): pause NEW entries when the strategy's
+# rolling expectancy decays, before losses pile up. Complements the hard halt.
+BTC_AUTO_PAUSE_ENABLED = _env_choice(
+    "BTC_AUTO_PAUSE_ENABLED", "true", {"true", "false"}
+) == "true"
+BTC_AUTO_PAUSE_WINDOW = _env_int("BTC_AUTO_PAUSE_WINDOW", 20)
+BTC_AUTO_PAUSE_MIN_TRADES = _env_int("BTC_AUTO_PAUSE_MIN_TRADES", 10)
+BTC_AUTO_PAUSE_MIN_ROI = _env_float("BTC_AUTO_PAUSE_MIN_ROI", -0.15)
+
 # --- Live trading (Polymarket CLOB) ---------------------------------------
 POLYMARKET_CLOB_API = os.getenv("POLYMARKET_CLOB_API", "https://clob.polymarket.com")
 POLYMARKET_CHAIN_ID = _env_int("POLYMARKET_CHAIN_ID", 137)  # Polygon mainnet
