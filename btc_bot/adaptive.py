@@ -25,18 +25,31 @@ log = get_logger("adaptive")
 
 _PAUSE_KEY = "btc_bot.auto_paused"
 _PAUSE_REASON_KEY = "btc_bot.auto_pause_reason"
+_SESSION_START_KEY = "btc_bot.session_start"
 
 
-async def rolling_performance(window: int, style: str) -> dict[str, Any]:
-    """Metrics over the last ``window`` closed clob trades of ``style``."""
+async def rolling_performance(
+    window: int, style: str, since: str | None = None
+) -> dict[str, Any]:
+    """Metrics over the last ``window`` closed clob trades of ``style``.
+
+    ``since`` (an ISO ``opened_at``) scopes to the current run session so the
+    live safety layer judges THIS deployment's edge, not stale trades from an
+    earlier strategy config in the same journal.
+    """
+    sql = (
+        "SELECT realized_pnl_usd, notional_usd, edge, entry_price "
+        "FROM btc_paper_positions "
+        "WHERE state='closed' AND quote_source='clob' AND strategy_style=?"
+    )
+    params: list[Any] = [style]
+    if since:
+        sql += " AND opened_at >= ?"
+        params.append(since)
+    sql += " ORDER BY position_id DESC LIMIT ?"
+    params.append(window)
     async with connect() as db:
-        async with db.execute(
-            "SELECT realized_pnl_usd, notional_usd, edge, entry_price "
-            "FROM btc_paper_positions "
-            "WHERE state='closed' AND quote_source='clob' AND strategy_style=? "
-            "ORDER BY position_id DESC LIMIT ?",
-            (style, window),
-        ) as cur:
+        async with db.execute(sql, params) as cur:
             rows = [dict(r) for r in await cur.fetchall()]
 
     n = len(rows)
@@ -91,8 +104,9 @@ async def evaluate_and_maybe_pause() -> tuple[bool, str]:
     if not _config.BTC_AUTO_PAUSE_ENABLED:
         return False, "auto-pause disabled"
 
+    since = await get_config(_SESSION_START_KEY, None)
     perf = await rolling_performance(
-        _config.BTC_AUTO_PAUSE_WINDOW, _config.BTC_EXIT_STYLE
+        _config.BTC_AUTO_PAUSE_WINDOW, _config.BTC_EXIT_STYLE, since=since
     )
     pause, reason = should_pause(
         perf, _config.BTC_AUTO_PAUSE_MIN_TRADES, _config.BTC_AUTO_PAUSE_MIN_ROI

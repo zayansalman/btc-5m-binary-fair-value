@@ -235,6 +235,11 @@ async def run_paper_loop(stop_event: threading.Event) -> None:
 
     await set_config("btc_bot.state", "running")
     await set_config("btc_bot.mode", mode)
+    # Mark this run's start so the adaptive auto-pause (#36) judges THIS
+    # deployment's edge, not stale trades from an earlier config in the journal.
+    await set_config(
+        "btc_bot.session_start", datetime.now(UTC).isoformat(timespec="seconds")
+    )
     if mode == "live":
         await _set_detail(
             "BTC LIVE loop running — orders are REAL. "

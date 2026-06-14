@@ -117,6 +117,23 @@ async def test_evaluate_warmup_does_not_pause(test_db, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_since_scopes_to_session(test_db, monkeypatch):
+    # Old losing trades before the session start must be excluded.
+    async with test_db.connect() as conn:
+        await conn.execute(
+            "INSERT INTO btc_paper_positions(opened_at, window_slug, side, state,"
+            " entry_price, notional_usd, shares, edge, realized_pnl_usd,"
+            " quote_source, strategy_style)"
+            " VALUES ('2026-06-13T00:00:00+00:00','w','Up','closed',0.55,5,1,0.06,-5,'clob','settle')",
+        )
+        await conn.commit()
+    perf_all = await rolling_performance(20, "settle")
+    perf_session = await rolling_performance(20, "settle", since="2026-06-14T00:00:00+00:00")
+    assert perf_all["n"] == 1
+    assert perf_session["n"] == 0  # the old trade is before the session start
+
+
+@pytest.mark.asyncio
 async def test_disabled_never_pauses(test_db, monkeypatch):
     monkeypatch.setattr(_config, "BTC_AUTO_PAUSE_ENABLED", False)
     monkeypatch.setattr(_config, "BTC_EXIT_STYLE", "settle")
