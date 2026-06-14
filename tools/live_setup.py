@@ -73,13 +73,24 @@ def _merge_env(text: str, updates: dict[str, str]) -> str:
     return "\n".join(out).rstrip("\n") + "\n"
 
 
+def _write_0600(path: Path, text: str) -> None:
+    """Write a secret file created 0600 from the start (no world-readable window)."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    fd = os.open(path, flags, 0o600)
+    try:
+        os.write(fd, text.encode("utf-8"))
+    finally:
+        os.close(fd)
+    os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)  # enforce 0600 even if pre-existing
+
+
 def _write_env_secure(updates: dict[str, str]) -> None:
-    """Write updates into .env (backing up first) and lock perms to 0600."""
+    """Write updates into .env (backing up first). Both files are 0600 — a
+    backup of a key file is itself a secret and must not be world-readable."""
     existing = ENV_PATH.read_text(encoding="utf-8") if ENV_PATH.exists() else ""
     if existing:
-        (PROJECT_ROOT / ".env.bak").write_text(existing, encoding="utf-8")
-    ENV_PATH.write_text(_merge_env(existing, updates), encoding="utf-8")
-    os.chmod(ENV_PATH, stat.S_IRUSR | stat.S_IWUSR)  # 0600 — owner only
+        _write_0600(PROJECT_ROOT / ".env.bak", existing)
+    _write_0600(ENV_PATH, _merge_env(existing, updates))
 
 
 def _generate_key() -> str:

@@ -9,6 +9,7 @@ from typing import Any, AsyncIterator
 import aiosqlite
 
 from config import DB_PATH
+from logging_setup import redact_secrets
 
 
 SCHEMA = """
@@ -193,6 +194,9 @@ async def get_config(key: str, default: str | None = None) -> str | None:
 
 
 async def set_config(key: str, value: str | None) -> None:
+    # The dashboard "detail" line is stored here and rendered in the UI;
+    # scrub any secret that a stringified exception might have carried in.
+    value = redact_secrets(value)
     async with connect() as db:
         await db.execute(
             """
@@ -223,7 +227,8 @@ async def journal_live_order(
     details: dict[str, Any] | None = None,
 ) -> None:
     """Append one live order/fill/cancel attempt to the btc_live_orders journal."""
-    payload = json.dumps(details or {}, sort_keys=True, default=str)
+    error = redact_secrets(error)
+    payload = redact_secrets(json.dumps(details or {}, sort_keys=True, default=str))
     async with connect() as db:
         await db.execute(
             """
@@ -256,7 +261,9 @@ async def notify(
     message: str,
     details: dict[str, Any] | None = None,
 ) -> None:
-    payload = json.dumps(details or {}, sort_keys=True, default=str)
+    # Scrub secrets at the sink: any caller-supplied string is persisted here.
+    message = redact_secrets(message)
+    payload = redact_secrets(json.dumps(details or {}, sort_keys=True, default=str))
     async with connect() as db:
         await db.execute(
             """
