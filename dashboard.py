@@ -47,6 +47,7 @@ CSS = """
   --amber: #b17214;
   --coal: #1d1b16;
 }
+html, body, gradio-app { height: 100%; margin: 0; }
 .gradio-container {
   background:
     radial-gradient(circle at 18% 10%, rgba(255, 190, 87, 0.26), transparent 28rem),
@@ -54,58 +55,70 @@ CSS = """
     linear-gradient(140deg, #f8efe0 0%, #fffdf7 52%, #ece0c7 100%);
   color: var(--ink);
   font-family: "Avenir Next", "Segoe UI", sans-serif;
+  max-width: 100% !important;
+  width: 100% !important;
+  padding: 12px clamp(10px, 1.6vw, 22px) !important;
+  margin: 0 !important;
+  box-sizing: border-box;
+}
+.gradio-container > .main,
+.gradio-container .contain,
+.gradio-container .wrap {
+  max-width: 100% !important;
+  width: 100% !important;
 }
 .hero, .panel, .metric, .note, .position-card {
   border: 1px solid var(--line);
   background: var(--card);
-  border-radius: 22px;
-  box-shadow: 0 18px 50px rgba(49, 39, 21, 0.08);
+  border-radius: 18px;
+  box-shadow: 0 12px 36px rgba(49, 39, 21, 0.07);
 }
 .hero {
-  padding: 28px 30px;
-  margin-bottom: 18px;
+  padding: clamp(12px, 1.6vw, 20px) clamp(14px, 1.8vw, 24px);
+  margin-bottom: 10px;
 }
 .hero h1 {
-  margin: 0 0 8px;
+  margin: 0 0 4px;
   font-family: Georgia, "Times New Roman", serif;
   letter-spacing: -0.04em;
-  font-size: clamp(2.1rem, 5vw, 4.8rem);
-  line-height: 0.95;
+  font-size: clamp(1.4rem, 2.6vw, 2.6rem);
+  line-height: 1;
 }
 .hero p {
   max-width: 900px;
   margin: 0;
   color: var(--muted);
-  font-size: 1.05rem;
+  font-size: clamp(0.85rem, 1vw, 0.98rem);
 }
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
 }
 .metric {
-  padding: 16px;
+  padding: 12px 14px;
 }
 .metric .label {
   color: var(--muted);
-  font-size: 0.78rem;
+  font-size: 0.72rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 .metric .value {
   font-family: Georgia, "Times New Roman", serif;
-  font-size: 2rem;
+  font-size: clamp(1.15rem, 1.6vw, 1.6rem);
   line-height: 1.1;
-  margin-top: 8px;
+  margin-top: 4px;
+  word-break: break-word;
 }
 .metric .hint {
   color: var(--muted);
-  margin-top: 6px;
-  font-size: 0.9rem;
+  margin-top: 4px;
+  font-size: 0.82rem;
 }
 .panel {
-  padding: 18px;
-  margin: 12px 0;
+  padding: 12px 14px;
+  margin: 8px 0;
 }
 .badge {
   display: inline-flex;
@@ -125,11 +138,12 @@ CSS = """
 }
 .positions {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px;
 }
 .position-card {
-  padding: 14px;
+  padding: 12px;
+  font-size: 0.9rem;
 }
 .position-card b {
   color: var(--coal);
@@ -143,37 +157,42 @@ CSS = """
 button.primary, button.secondary {
   border-radius: 14px !important;
 }
-.connectivity h3 { margin: 0 0 12px; font-family: Georgia, serif; }
+.connectivity h3 { margin: 0 0 8px; font-family: Georgia, serif; font-size: 1rem; }
 .conn-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 6px;
 }
-.conn-row { display: flex; align-items: center; gap: 10px; }
-.conn-detail { color: var(--muted); font-size: 0.9rem; }
-.conn-skip { margin-top: 10px; color: var(--ink); font-size: 0.92rem; }
+.conn-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.conn-detail { color: var(--muted); font-size: 0.82rem; }
+.conn-skip { margin-top: 8px; color: var(--ink); font-size: 0.85rem; }
 .split-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 12px;
-  margin-top: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px;
+  margin-top: 10px;
 }
 .split-card {
   border: 1px solid var(--line);
   background: var(--card);
-  border-radius: 18px;
-  padding: 14px 16px;
+  border-radius: 14px;
+  padding: 12px 14px;
 }
 .split-card h4 {
-  margin: 0 0 6px;
+  margin: 0 0 4px;
   font-family: Georgia, serif;
   display: flex; align-items: center; gap: 8px;
+  font-size: 0.95rem;
 }
 .split-card .row {
   display: flex; justify-content: space-between;
-  color: var(--muted); font-size: 0.92rem; padding: 2px 0;
+  color: var(--muted); font-size: 0.85rem; padding: 1px 0;
 }
 .split-card .row b { color: var(--ink); }
+/* keep tabs and any tables from forcing horizontal scroll */
+.tabs, .tab-nav { flex-wrap: wrap; }
+.gradio-container * { box-sizing: border-box; }
+.gradio-container img, .gradio-container table { max-width: 100%; }
 """
 
 
