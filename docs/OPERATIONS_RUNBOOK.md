@@ -134,15 +134,17 @@ the funder address** — no key export needed anywhere.
 | Max notional per trade | `BTC_LIVE_MAX_TRADE_USD` | $3 |
 | Open positions | (fixed) | 1 |
 | Daily realized-loss halt | `BTC_LIVE_DAILY_LOSS_HALT_USD` | $10 (UTC day, persisted) |
-| Daily bankroll cap (sum of buys) | `BTC_LIVE_BANKROLL_CAP_USD` | $30 (UTC day, persisted) |
+| Daily bankroll cap (sum of buys) | `BTC_LIVE_BANKROLL_CAP_USD` | **disabled** when blank/unset/≤0; positive number = cap (UTC day, persisted) |
 | Entry slippage guard (ask vs signal) | `BTC_LIVE_MAX_ENTRY_SLIPPAGE` | 0.02 |
 | Exit fill wait before cancel/retry | `BTC_LIVE_EXIT_FILL_TIMEOUT_SECONDS` | 10s |
 
-The daily loss halt and the daily bankroll cap are **persisted in SQLite and
-reloaded at boot** — Stop/Start or a process restart inside the same UTC day
-does NOT reset them. Realized PnL feeds the halt from CONFIRMED exit fills at
-the executed order's limit price, never from paper-price estimates at
-submission time.
+The daily loss halt is always on. The daily bankroll cap is **opt-in** as of
+v0.4.4: leave `BTC_LIVE_BANKROLL_CAP_USD` blank/unset and the cap gate is
+bypassed (the spend counter still increments so the dashboard can show daily
+throughput). When set to a positive dollar amount it behaves as before —
+persisted in SQLite, restart-safe within the UTC day. Realized PnL feeds the
+halt from CONFIRMED exit fills at the executed order's limit price, never from
+paper-price estimates at submission time.
 
 A malformed risk-limit env value (e.g. `BTC_LIVE_MAX_TRADE_USD=O.50`) makes
 live boot REFUSE with the exact parse error instead of silently falling back

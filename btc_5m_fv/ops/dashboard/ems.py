@@ -266,6 +266,45 @@ async def _recent_decisions(limit: int = 10) -> list[dict[str, Any]]:
             return [dict(r) for r in await cur.fetchall()]
 
 
+async def _recent_blocked(limit: int = 5) -> list[dict[str, Any]]:
+    """Last N BLOCKED order intents from TODAY, newest first.
+
+    Surfaces silent stop conditions in the dashboard — any time a risk gate
+    rejects an entry, the operator sees the reason without grepping logs.
+    """
+    async with connect() as db:
+        async with db.execute(
+            "SELECT created_at, intent, notional_usd, error "
+            "FROM btc_live_orders "
+            "WHERE status='BLOCKED' "
+            "AND date(created_at)=date('now') "
+            "ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def _today_submitted_summary() -> tuple[int, float]:
+    """Count + summed notional of ENTRY orders that reached the network today.
+
+    'SUBMITTED' is the journal status for orders that passed every risk gate
+    and were posted to the CLOB (whether or not they fully filled). Returned
+    so the guardrails panel can show 'N entries · $X submitted' alongside the
+    persisted daily_buy_notional spend counter (which only counts matched fills).
+    """
+    async with connect() as db:
+        async with db.execute(
+            "SELECT COUNT(*) AS n, COALESCE(SUM(notional_usd), 0.0) AS total "
+            "FROM btc_live_orders "
+            "WHERE intent='ENTRY' AND status='SUBMITTED' "
+            "AND date(created_at)=date('now')"
+        ) as cur:
+            row = await cur.fetchone()
+    if row is None:
+        return 0, 0.0
+    return int(row["n"] or 0), float(row["total"] or 0.0)
+
+
 def _performance(closed: list[dict[str, Any]]) -> dict[str, Any]:
     n = len(closed)
     if n == 0:
@@ -323,6 +362,148 @@ def _stat(label: str, value: str, cls: str = "", sub: str = "") -> str:
         f"<div class='stat-v {cls}'>{value}</div>"
         + (f"<div class='stat-s'>{escape(sub)}</div>" if sub else "")
         + "</div>"
+    )
+
+
+def _guardrails_panel(
+    *,
+    day_spend: float,
+    bankroll_cap: float | None,
+    submitted_count: int,
+    submitted_notional: float,
+    day_pnl: float,
+    loss_halt_usd: float,
+    state: str,
+    bot_detail: str,
+    session_start: str | None,
+    paused: bool,
+    pause_reason: str,
+    blocked: list[dict[str, Any]],
+) -> str:
+    """Surface every silent stop condition: daily spend, loss-halt headroom,
+    bot state + last loop error, and the tail of recent BLOCKED entries.
+
+    The ribbon shows aggregate session metrics; this panel shows the things
+    that can silently freeze trading without changing the run state. If a
+    risk gate rejects every entry — or the loop crashed and is stuck — the
+    operator sees it here instead of grepping logs.
+    """
+    # ── DAILY SPEND ─────────────────────────────────────────────────────
+    if bankroll_cap is not None and bankroll_cap > 0:
+        pct = day_spend / bankroll_cap
+        cap_str = f"${bankroll_cap:,.2f}"
+        cap_cls = "down" if pct >= 0.95 else ("up" if pct < 0.6 else "")
+        headroom_line = (
+            f"<div><span>Cap headroom</span>"
+            f"<b class='mono {cap_cls}'>${max(0.0, bankroll_cap - day_spend):,.2f}</b></div>"
+        )
+    else:
+        cap_str = "disabled"
+        cap_cls = "dim"
+        headroom_line = ""
+    spend_col = (
+        "<div class='de-col'>"
+        "<div class='de-h'>DAILY SPEND (today, UTC)</div>"
+        "<div class='de-kv'>"
+        f"<div><span>Filled notional</span><b class='mono'>${day_spend:,.2f}</b></div>"
+        f"<div><span>Cap</span><b class='mono {cap_cls}'>{escape(cap_str)}</b></div>"
+        + headroom_line
+        + f"<div><span>Submitted today</span><b class='mono'>{submitted_count} entries · ${submitted_notional:,.2f}</b></div>"
+        "</div></div>"
+    )
+
+    # ── LOSS HALT ───────────────────────────────────────────────────────
+    halted = day_pnl <= -loss_halt_usd
+    headroom = loss_halt_usd + min(0.0, day_pnl)
+    halt_pill = (
+        "<span class='pill warn'>HALTED</span>"
+        if halted
+        else "<span class='pill on'>OK</span>"
+    )
+    headroom_cls = "down" if headroom < loss_halt_usd * 0.4 else ""
+    halt_col = (
+        "<div class='de-col'>"
+        "<div class='de-h'>LOSS HALT</div>"
+        "<div class='de-kv'>"
+        f"<div><span>Realized P&amp;L</span><b class='mono {_cls(day_pnl)}'>{_money(day_pnl, True)}</b></div>"
+        f"<div><span>Halt threshold</span><b class='mono'>−${loss_halt_usd:,.2f}</b></div>"
+        f"<div><span>Headroom</span><b class='mono {headroom_cls}'>${headroom:,.2f}</b></div>"
+        f"<div><span>Status</span>{halt_pill}</div>"
+        "</div></div>"
+    )
+
+    # ── BOT STATE + last error ──────────────────────────────────────────
+    state_pill_cls = "on" if state == "running" else "off"
+    detail_first = bot_detail.split("\n", 1)[0].strip()
+    detail_lower = detail_first.lower()
+    if any(k in detail_lower for k in ("error", "fail", "refused", "typeerror", "attributeerror", "exception", "crash")):
+        detail_cls = "down"
+    elif any(k in detail_lower for k in ("running", "starting", "started")):
+        detail_cls = "up"
+    else:
+        detail_cls = "dim"
+    detail_display = (
+        (detail_first[:90] + "…") if len(detail_first) > 90 else (detail_first or "—")
+    )
+    if paused:
+        pause_html = (
+            f"<span class='pill warn' title='{escape(pause_reason)}'>⏸ PAUSED</span>"
+        )
+    else:
+        pause_html = "<b class='mono dim'>—</b>"
+    state_col = (
+        "<div class='de-col'>"
+        "<div class='de-h'>BOT STATE</div>"
+        "<div class='de-kv'>"
+        f"<div><span>State</span><span class='pill {state_pill_cls}'>{escape(state.upper())}</span></div>"
+        f"<div><span>Uptime</span><b class='mono'>{escape(_ago(session_start))}</b></div>"
+        f"<div><span>Last detail</span><b class='mono {detail_cls}' title='{escape(bot_detail)}'>{escape(detail_display)}</b></div>"
+        f"<div><span>Auto-pause</span>{pause_html}</div>"
+        "</div></div>"
+    )
+
+    # ── LAST 5 BLOCKED ──────────────────────────────────────────────────
+    if blocked:
+        rows = ""
+        for r in blocked:
+            ts = r.get("created_at") or ""
+            try:
+                t = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                if t.tzinfo is None:
+                    t = t.replace(tzinfo=UTC)
+                hhmm = t.strftime("%H:%M")
+            except ValueError:
+                hhmm = ts[-8:-3] if len(ts) >= 8 else ts
+            reason = (r.get("error") or "").strip() or "—"
+            short = reason[:64] + "…" if len(reason) > 64 else reason
+            rows += (
+                "<tr>"
+                f"<td class='mono dim'>{escape(hhmm)}</td>"
+                f"<td class='mono down' title='{escape(reason)}' style='white-space:normal'>{escape(short)}</td>"
+                "</tr>"
+            )
+        blocked_html = f"<table class='gr-tail'><tbody>{rows}</tbody></table>"
+    else:
+        blocked_html = (
+            "<div class='gr-tail-empty'>no blocked entries today</div>"
+        )
+    blocked_col = (
+        "<div class='de-col'>"
+        "<div class='de-h'>BLOCKED (LAST 5 TODAY)</div>"
+        f"{blocked_html}"
+        "</div>"
+    )
+
+    return (
+        "<section class='card wide'>"
+        "<div class='card-h'>RISK GUARDRAILS"
+        "<span class='win'>silent-stop surface</span></div>"
+        "<div class='gr-grid'>"
+        + spend_col
+        + halt_col
+        + state_col
+        + blocked_col
+        + "</div></section>"
     )
 
 
@@ -564,6 +745,9 @@ async def ems_html() -> str:
     pause_reason = await get_config("btc_bot.auto_pause_reason", "") or ""
     day_pnl = float(await get_config("btc_live.daily_realized_pnl", "0") or 0)
     day_notional = float(await get_config("btc_live.daily_buy_notional", "0") or 0)
+    bot_detail = await get_config("btc_bot.detail", "") or ""
+    blocked_today = await _recent_blocked(limit=5)
+    submitted_count, submitted_notional = await _today_submitted_summary()
 
     tick = await _latest_tick()
     recent_ticks = await _recent_decisions(limit=10)
@@ -889,10 +1073,26 @@ async def ems_html() -> str:
         tick, _GateParams(), recent_ticks, paused, pause_reason
     )
 
+    guardrails = _guardrails_panel(
+        day_spend=day_notional,
+        bankroll_cap=_config.BTC_LIVE_BANKROLL_CAP_USD,
+        submitted_count=submitted_count,
+        submitted_notional=submitted_notional,
+        day_pnl=day_pnl,
+        loss_halt_usd=_config.BTC_LIVE_DAILY_LOSS_HALT_USD,
+        state=state,
+        bot_detail=bot_detail,
+        session_start=session_start,
+        paused=paused,
+        pause_reason=pause_reason,
+        blocked=blocked_today,
+    )
+
     return (
         "<div class='ems'>"
         + ribbon
         + "<div class='ems-grid'>"
+        + guardrails
         + strat
         + market
         + decision_panel

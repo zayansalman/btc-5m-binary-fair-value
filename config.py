@@ -38,6 +38,19 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_optional_float(name: str) -> float | None:
+    """Risk-limit-style env var: blank / unset / ≤0 → None (gate disabled)."""
+    value = os.getenv(name)
+    if value is None or value.strip() == "":
+        return None
+    try:
+        v = float(value)
+    except ValueError:
+        CONFIG_PARSE_ERRORS.append(f"{name}={value!r} is not a valid number")
+        return None
+    return v if v > 0 else None
+
+
 def _env_choice(name: str, default: str, allowed: set[str]) -> str:
     value = os.getenv(name, default).strip().lower()
     return value if value in allowed else default
@@ -108,12 +121,14 @@ POLYMARKET_PRIVATE_KEY = os.getenv("POLYMARKET_PRIVATE_KEY", "")
 POLYMARKET_FUNDER = os.getenv("POLYMARKET_FUNDER", "")
 # 0 = EOA, 1 = email/magic proxy wallet, 2 = browser wallet proxy.
 POLYMARKET_SIGNATURE_TYPE = _env_int("POLYMARKET_SIGNATURE_TYPE", 1)
-# Hard risk limits enforced in code before every live order. The daily loss
-# halt and daily bankroll cap are persisted in SQLite so restarts cannot
-# reset them within a UTC day.
+# Hard risk limits enforced in code before every live order. The per-trade and
+# daily-loss-halt limits are always on; the daily bankroll cap is OPT-IN and
+# disabled when BTC_LIVE_BANKROLL_CAP_USD is blank / unset / ≤0. The persisted
+# daily counters in SQLite keep tracking spend regardless, so the dashboard can
+# still display daily throughput when the cap is off.
 BTC_LIVE_MAX_TRADE_USD = _env_float("BTC_LIVE_MAX_TRADE_USD", 3.0)
 BTC_LIVE_DAILY_LOSS_HALT_USD = _env_float("BTC_LIVE_DAILY_LOSS_HALT_USD", 10.0)
-BTC_LIVE_BANKROLL_CAP_USD = _env_float("BTC_LIVE_BANKROLL_CAP_USD", 30.0)
+BTC_LIVE_BANKROLL_CAP_USD: float | None = _env_optional_float("BTC_LIVE_BANKROLL_CAP_USD")
 # Block an entry when the live best ask sits more than this far above the
 # signal price that generated the edge (thin 5m books can gap badly).
 BTC_LIVE_MAX_ENTRY_SLIPPAGE = _env_float("BTC_LIVE_MAX_ENTRY_SLIPPAGE", 0.02)

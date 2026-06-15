@@ -6,9 +6,12 @@ Safety model
   is set AND ``BTC_LIVE_CONFIRM == "YES_I_UNDERSTAND"`` AND the wallet config
   is coherent (a funder address is mandatory for proxy signature types 1/2).
 * Hard risk gates run BEFORE every order: per-trade notional cap, one open
-  position max, daily realized-loss halt, daily bankroll cap. The daily
+  position max, daily realized-loss halt, and an OPTIONAL daily bankroll cap
+  (disabled when ``BTC_LIVE_BANKROLL_CAP_USD`` is blank/unset/≤0). The daily
   counters are PERSISTED in SQLite and rebuilt at boot, so Stop/Start or a
-  process restart cannot reset the daily loss halt or grant a fresh bankroll.
+  process restart cannot reset the daily loss halt or grant a fresh bankroll
+  when the cap is enabled. The spend counter is still tracked when the cap is
+  off — the dashboard surfaces daily throughput regardless.
 * Boot reconciliation: ``start()`` cancels ALL resting CLOB orders on the
   account and re-adopts any open ledger position from the order journal, so
   a crash or restart never silently abandons real tokens or resting orders.
@@ -572,7 +575,10 @@ class LiveExecutor:
                 f"per-trade cap: {notional_usd:.2f} USD exceeds "
                 f"{self.max_trade_usd:.2f} USD"
             )
-        if self._daily_buy_notional + notional_usd > self.bankroll_cap_usd:
+        if (
+            self.bankroll_cap_usd is not None
+            and self._daily_buy_notional + notional_usd > self.bankroll_cap_usd
+        ):
             return (
                 f"daily bankroll cap: {self._daily_buy_notional:.2f} + "
                 f"{notional_usd:.2f} USD exceeds {self.bankroll_cap_usd:.2f} USD"

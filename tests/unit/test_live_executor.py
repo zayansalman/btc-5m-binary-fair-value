@@ -90,7 +90,7 @@ def _executor(
     *,
     max_trade: float = 3.0,
     daily_halt: float = 10.0,
-    bankroll: float = 30.0,
+    bankroll: float | None = 30.0,
     slippage: float = 0.5,
     exit_timeout: float = 5.0,
 ) -> LiveExecutor:
@@ -406,6 +406,28 @@ async def test_bankroll_cap_blocks_session_overspend(journal_db, tmp_path: Path)
 
     assert not second.ok and second.status == "BLOCKED"
     assert "bankroll cap" in second.reason
+
+
+@pytest.mark.asyncio
+async def test_bankroll_cap_none_does_not_block(
+    journal_db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With BTC_LIVE_BANKROLL_CAP_USD unset (None), the cap gate is disabled
+    and no amount of cumulative spend triggers a 'bankroll cap' BLOCKED."""
+    # Monkeypatch the config fallback used by the constructor — the test must
+    # not depend on whatever value the developer has in their local .env.
+    monkeypatch.setattr(_config, "BTC_LIVE_BANKROLL_CAP_USD", None)
+    client = _mock_client()
+    executor = _executor(client, tmp_path, bankroll=None)
+    assert executor.bankroll_cap_usd is None
+
+    # Spike the persisted spend counter way above any reasonable cap, then
+    # confirm the gate bypasses it (not just "not yet hit").
+    executor._daily_buy_notional = 9_999.99
+    assert executor.entry_block_reason(3.0) is None
+
+    result = await executor.submit_entry(UP_TOKEN, 0.57, 3.0)
+    assert result.ok, f"cap should be disabled, got: {result.reason}"
 
 
 @pytest.mark.asyncio
