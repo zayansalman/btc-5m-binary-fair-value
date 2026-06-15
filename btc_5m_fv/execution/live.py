@@ -479,7 +479,7 @@ class LiveExecutor:
 
     async def record_realized_pnl(self, pnl_usd: float) -> None:
         """Feed realized PnL into the shared daily-loss-halt tracker."""
-        await self.gate.record_realized_pnl(pnl_usd)
+        await self.gate.record_realized_pnl(pnl_usd, is_live=True)
 
     async def record_settlement(self, won: bool, window_slug: str) -> LiveOrderResult:
         """Register a resolution outcome for the held position without selling.

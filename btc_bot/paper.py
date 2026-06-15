@@ -1410,7 +1410,7 @@ async def _close_position(
         # paper diverges from what live would have done next.
         gate = _risk_gate
         if gate is not None:
-            await gate.record_realized_pnl(round(pnl - prior_pnl, 4))
+            await gate.record_realized_pnl(round(pnl - prior_pnl, 4), is_live=False)
     async with connect() as db:
         await db.execute(
             """

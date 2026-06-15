@@ -375,6 +375,8 @@ def _guardrails_panel(
     submitted_count: int,
     submitted_notional: float,
     day_pnl: float,
+    live_pnl: float,
+    paper_pnl: float,
     loss_halt_usd: float,
     state: str,
     bot_detail: str,
@@ -384,6 +386,8 @@ def _guardrails_panel(
     blocked: list[dict[str, Any]],
     mode: str = "paper",
     bypass_loss_halt: bool = False,
+    trading_hours: frozenset[int] | None = None,
+    bypass_trading_hours: bool = False,
 ) -> str:
     """Surface every silent stop condition: daily spend, loss-halt headroom,
     bot state + last loop error, and the tail of recent BLOCKED entries.
@@ -427,22 +431,32 @@ def _guardrails_panel(
     else:
         halt_pill = "<span class='pill on'>OK</span>"
     headroom_cls = "down" if headroom < loss_halt_usd * 0.4 else ""
-    # Paper-only study toggle (#65). Hidden in live mode — paper builds the
-    # gate with allow_overrides=True; live with False. Even if the live
-    # dashboard tried to POST this endpoint, the live gate ignores it.
-    if mode == "paper":
-        next_state = "false" if bypass_loss_halt else "true"
-        btn_label = "Re-enable halt" if bypass_loss_halt else "Disable halt (study)"
-        btn_cls = "btn-warn" if not bypass_loss_halt else "btn-ok"
-        toggle_html = (
-            "<div class='gr-toggle'>"
+    # Paper-only study toggles (#65, #67). Hidden in live mode — paper builds
+    # the gate with allow_overrides=True; live with False. Even if the live
+    # dashboard tried to POST these endpoints, the live gate ignores them.
+    def _toggle_button(endpoint: str, on: bool, on_label: str, off_label: str) -> str:
+        next_state = "false" if on else "true"
+        btn_label = on_label if on else off_label
+        btn_cls = "btn-warn" if not on else "btn-ok"
+        return (
             f"<button class='gr-btn {btn_cls}' "
-            f"onclick=\"fetch('/api/paper/bypass_loss_halt',"
+            f"onclick=\"fetch('{endpoint}',"
             f"{{method:'POST',headers:{{'Content-Type':'application/json'}},"
             f"body:JSON.stringify({{enabled:{next_state}}})}})"
             f".then(()=>setTimeout(refreshAll,300))\">"
             f"{escape(btn_label)}</button>"
-            "<span class='gr-toggle-hint'>paper study only — never affects live</span>"
+        )
+
+    if mode == "paper":
+        toggle_html = (
+            "<div class='gr-toggle'>"
+            + _toggle_button(
+                "/api/paper/bypass_loss_halt",
+                bypass_loss_halt,
+                "Re-enable halt",
+                "Disable halt (study)",
+            )
+            + "<span class='gr-toggle-hint'>paper study only — never affects live</span>"
             "</div>"
         )
     else:
@@ -451,14 +465,66 @@ def _guardrails_panel(
         "<div class='de-col'>"
         "<div class='de-h'>LOSS HALT</div>"
         "<div class='de-kv'>"
-        f"<div><span>Realized P&amp;L</span><b class='mono {_cls(day_pnl)}'>{_money(day_pnl, True)}</b></div>"
+        f"<div><span>Live P&amp;L</span><b class='mono {_cls(live_pnl)}' "
+        f"title='Real money — drives halt decision'>{_money(live_pnl, True)}</b></div>"
+        f"<div><span>Paper P&amp;L</span><b class='mono {_cls(paper_pnl)}' "
+        f"title='Study — counts toward halt unless bypassed'>{_money(paper_pnl, True)}</b></div>"
         f"<div><span>Halt threshold</span><b class='mono'>−${loss_halt_usd:,.2f}</b></div>"
-        f"<div><span>Headroom</span><b class='mono {headroom_cls}'>${headroom:,.2f}</b></div>"
+        f"<div><span>Headroom (combined)</span><b class='mono {headroom_cls}'>${headroom:,.2f}</b></div>"
         f"<div><span>Status</span>{halt_pill}</div>"
         "</div>"
         + toggle_html
         + "</div>"
     )
+
+    # ── TRADING WINDOW (UTC) ────────────────────────────────────────────
+    if trading_hours is not None:
+        now_h = datetime.now(UTC).hour
+        in_window = now_h in trading_hours
+        allowed = sorted(trading_hours)
+        # Compress consecutive runs into "a-b" segments for display.
+        segs: list[str] = []
+        start = allowed[0]; prev = start
+        for h in allowed[1:] + [None]:
+            if h is None or h != prev + 1:
+                segs.append(f"{start:02d}" if start == prev else f"{start:02d}-{prev:02d}")
+                if h is not None:
+                    start = h
+            if h is not None:
+                prev = h
+        if bypass_trading_hours and mode == "paper":
+            tw_pill = "<span class='pill warn' title='Paper study: window bypassed'>BYPASS</span>"
+        elif in_window:
+            tw_pill = "<span class='pill on'>OPEN</span>"
+        else:
+            tw_pill = "<span class='pill warn'>CLOSED</span>"
+        if mode == "paper":
+            tw_toggle = (
+                "<div class='gr-toggle'>"
+                + _toggle_button(
+                    "/api/paper/bypass_trading_hours",
+                    bypass_trading_hours,
+                    "Re-enable window",
+                    "Bypass window (study)",
+                )
+                + "<span class='gr-toggle-hint'>paper study only</span>"
+                "</div>"
+            )
+        else:
+            tw_toggle = ""
+        window_col = (
+            "<div class='de-col'>"
+            "<div class='de-h'>TRADING WINDOW (UTC)</div>"
+            "<div class='de-kv'>"
+            f"<div><span>Allowed hours</span><b class='mono'>{escape(','.join(segs))}</b></div>"
+            f"<div><span>Now</span><b class='mono'>{now_h:02d}:00</b></div>"
+            f"<div><span>Status</span>{tw_pill}</div>"
+            "</div>"
+            + tw_toggle
+            + "</div>"
+        )
+    else:
+        window_col = ""
 
     # ── BOT STATE + last error ──────────────────────────────────────────
     state_pill_cls = "on" if state == "running" else "off"
@@ -528,15 +594,16 @@ def _guardrails_panel(
         "</div>"
     )
 
+    cols = [spend_col, halt_col]
+    if window_col:
+        cols.append(window_col)
+    cols.extend([state_col, blocked_col])
     return (
         "<section class='card wide'>"
         "<div class='card-h'>RISK GUARDRAILS"
         "<span class='win'>silent-stop surface</span></div>"
         "<div class='gr-grid'>"
-        + spend_col
-        + halt_col
-        + state_col
-        + blocked_col
+        + "".join(cols)
         + "</div></section>"
     )
 
@@ -777,13 +844,18 @@ async def ems_html() -> str:
     session_start = await get_config("btc_bot.session_start", None)
     paused = (await get_config("btc_bot.auto_paused", "0")) == "1"
     pause_reason = await get_config("btc_bot.auto_pause_reason", "") or ""
-    # Prefer the new btc_risk.* counters (#64); fall back to the legacy
-    # btc_live.* keys for the first boot after upgrade.
-    day_pnl = float(
-        await get_config("btc_risk.daily_realized_pnl")
+    # Split counters (issue #67): show LIVE vs PAPER P&L distinctly so the
+    # ribbon and LOSS HALT panel never blend real-money and study results.
+    # Falls back through the pre-split #64 key, then the legacy #20 keys.
+    live_pnl = float(
+        await get_config("btc_risk.live_realized_pnl")
+        or await get_config("btc_risk.daily_realized_pnl")
         or await get_config("btc_live.daily_realized_pnl")
         or 0
     )
+    paper_pnl = float(await get_config("btc_risk.paper_realized_pnl") or 0)
+    # The halt decision uses the combined PnL — see RiskGate.block_reason.
+    day_pnl = live_pnl + paper_pnl
     day_notional = float(
         await get_config("btc_risk.daily_buy_notional")
         or await get_config("btc_live.daily_buy_notional")
@@ -879,7 +951,8 @@ async def ems_html() -> str:
         f"<div class='ribbon-id'>BTC·5M FAIR-VALUE <b>EMS</b>{mode_pill}{run_pill}{pause_chip}{kill_chip}</div>"
         "<div class='ribbon-stats'>"
         f"{_stat('Equity Δ (session)', _money(session_pnl, True) if closed_session else '—', _cls(session_pnl))}"
-        f"{_stat('Day P&L', _money(day_pnl, True), _cls(day_pnl))}"
+        f"{_stat('Live P&L (today)', _money(live_pnl, True), _cls(live_pnl), 'real money')}"
+        f"{_stat('Paper P&L (today)', _money(paper_pnl, True), _cls(paper_pnl), 'study')}"
         f"{_stat('Open Risk', _money(sum(p['notional_usd'] or 0 for p in open_pos)), '', f'{len(open_pos)} pos')}"
         f"{_stat('Halt Headroom', _money(headroom), 'down' if headroom < halt * 0.4 else '')}"
         f"<div class='feeds'>{feeds}</div>"
@@ -1117,8 +1190,16 @@ async def ems_html() -> str:
         tick, _GateParams(), recent_ticks, paused, pause_reason
     )
 
-    from btc_5m_fv.execution.gate import get_paper_bypass_loss_halt
+    from btc_5m_fv.execution.gate import (
+        _parse_trading_hours,
+        get_paper_bypass_loss_halt,
+        get_paper_bypass_trading_hours,
+    )
     bypass_loss_halt = await get_paper_bypass_loss_halt()
+    bypass_trading_hours = await get_paper_bypass_trading_hours()
+    trading_hours = _parse_trading_hours(
+        getattr(_config, "BTC_TRADE_HOURS_UTC", None)
+    )
     current_mode = (await get_config("btc_bot.requested_mode", "paper")) or "paper"
     guardrails = _guardrails_panel(
         day_spend=day_notional,
@@ -1126,6 +1207,8 @@ async def ems_html() -> str:
         submitted_count=submitted_count,
         submitted_notional=submitted_notional,
         day_pnl=day_pnl,
+        live_pnl=live_pnl,
+        paper_pnl=paper_pnl,
         loss_halt_usd=_config.BTC_TRADE_DAILY_LOSS_HALT_USD,
         state=state,
         bot_detail=bot_detail,
@@ -1135,6 +1218,8 @@ async def ems_html() -> str:
         blocked=blocked_today,
         mode=current_mode,
         bypass_loss_halt=bypass_loss_halt,
+        trading_hours=trading_hours,
+        bypass_trading_hours=bypass_trading_hours,
     )
 
     return (
