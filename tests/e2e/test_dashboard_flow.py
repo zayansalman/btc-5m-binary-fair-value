@@ -1,7 +1,7 @@
-"""End-to-end tests for the FastAPI dashboard.
+"""End-to-end tests for the EMS dashboard (#37 redesign).
 
-Tests the complete page-load flow and verifies that all interactive
-components are present and functional.
+Verifies the full page-load flow, EMS panels, controls, API round-trips,
+static assets, and the trading-terminal visual contract.
 """
 
 from __future__ import annotations
@@ -11,7 +11,6 @@ from pathlib import Path
 
 import pytest
 
-# Ensure project root on path
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
@@ -28,176 +27,104 @@ def client() -> TestClient:
 
 
 class TestFullPageLoad:
-    """Verify the complete dashboard page loads with all sections."""
-
     def test_page_loads_200(self, client: TestClient):
-        response = client.get("/")
-        assert response.status_code == 200
+        assert client.get("/").status_code == 200
 
-    def test_page_has_correct_doctype_structure(self, client: TestClient):
-        response = client.get("/")
-        text = response.text
-        assert "<!DOCTYPE html>" in text
-        assert "<html" in text
-        assert "</html>" in text
-        assert "<head>" in text
-        assert "<body>" in text
+    def test_page_has_doctype_structure(self, client: TestClient):
+        text = client.get("/").text
+        for tag in ("<!DOCTYPE html>", "<html", "</html>", "<head>", "<body>"):
+            assert tag in text
 
     def test_page_has_meta_viewport(self, client: TestClient):
-        response = client.get("/")
-        assert "width=device-width" in response.text
+        assert "width=device-width" in client.get("/").text
 
-    def test_all_tab_buttons_exist_with_correct_data_attrs(self, client: TestClient):
-        response = client.get("/")
-        text = response.text
-        for tab in ["overview", "btc5m", "activity", "backtest", "settings"]:
-            assert f'data-tab="{tab}"' in text
+    def test_ems_panels_present(self, client: TestClient):
+        text = client.get("/").text
+        for panel in ("STRATEGY", "LIVE MARKET", "PERFORMANCE / ALPHA",
+                      "TCA", "TRADE BLOTTER", "ems-grid", "ribbon"):
+            assert panel in text
 
-    def test_tab_contents_are_independent(self, client: TestClient):
-        response = client.get("/")
-        text = response.text
-        # Each tab should have its own content container
-        assert "overview-content" in text
-        assert "paper-content" in text
+    def test_ems_content_container(self, client: TestClient):
+        text = client.get("/").text
+        assert "ems-content" in text
         assert "activity-content" in text
         assert "backtest-content" in text
 
-    def test_overview_contains_kpi_metrics(self, client: TestClient):
-        response = client.get("/")
-        text = response.text
-        # Should have metric cards rendered
-        assert "metric" in text
-        # Key labels should appear
-        assert "Bot state" in text or "bot state" in text.lower()
-
-    def test_settings_contains_config_values(self, client: TestClient):
-        response = client.get("/")
-        text = response.text
-        assert "Paper Rules" in text
-        assert "confidence" in text.lower()
+    def test_strategy_panel_shows_params(self, client: TestClient):
+        text = client.get("/").text
+        # Strategy panel surfaces the model + bands.
+        assert "Fair-Value" in text
+        assert "Edge band" in text
+        assert "Settlement" in text
 
 
 class TestButtonInteractivity:
-    """Verify buttons are present with correct onclick handlers."""
-
-    def test_start_button_calls_handle_start(self, client: TestClient):
-        response = client.get("/")
-        text = response.text
+    def test_start_button(self, client: TestClient):
+        text = client.get("/").text
         assert "handleStart()" in text
-        assert "Start BTC Paper Bot" in text
+        assert "Start" in text
 
-    def test_stop_button_calls_handle_stop(self, client: TestClient):
-        response = client.get("/")
-        text = response.text
+    def test_stop_button(self, client: TestClient):
+        text = client.get("/").text
         assert "handleStop()" in text
-        assert "btn-stop" in text
 
-    def test_refresh_button_calls_handle_refresh(self, client: TestClient):
-        response = client.get("/")
-        text = response.text
-        assert "handleRefresh()" in text
-
-    def test_refresh_backtest_button_calls_handler(self, client: TestClient):
-        response = client.get("/")
-        text = response.text
-        assert "handleRefreshBacktest()" in text
-        assert "btn-refresh-backtest" in text
+    def test_refresh_button(self, client: TestClient):
+        assert "handleRefresh()" in client.get("/").text
 
 
 class TestApiRoundTrip:
-    """Verify API endpoints work in sequence."""
+    def test_start_returns_status(self, client: TestClient):
+        r = client.post("/api/start")
+        assert r.status_code == 200 and "status" in r.json()
 
-    def test_start_then_data_reflects_running(self, client: TestClient):
-        start_resp = client.post("/api/start")
-        assert start_resp.status_code == 200
-        start_data = start_resp.json()
-        assert "status" in start_data
-
-    def test_stop_then_data_reflects_stopped(self, client: TestClient):
-        stop_resp = client.post("/api/stop")
-        assert stop_resp.status_code == 200
-        stop_data = stop_resp.json()
-        assert "status" in stop_data
+    def test_stop_returns_status(self, client: TestClient):
+        r = client.post("/api/stop")
+        assert r.status_code == 200 and "status" in r.json()
 
     def test_data_after_start_stop_cycle(self, client: TestClient):
         client.post("/api/start")
         client.post("/api/stop")
-        data_resp = client.get("/api/data")
-        data = data_resp.json()
-        assert "overview" in data
-        assert "paper" in data
+        data = client.get("/api/data").json()
+        assert "ems" in data
         assert "activity" in data
+        assert "backtest" in data
 
 
 class TestStaticAssets:
-    """Verify all static assets are correctly served."""
-
-    def test_css_is_complete(self, client: TestClient):
-        response = client.get("/static/style.css")
-        css = response.text
-        # Verify all major sections of CSS are present
+    def test_css_complete(self, client: TestClient):
+        css = client.get("/static/style.css").text
         selectors = [
-            ":root", "body", ".hero", ".tabs", ".tab-btn", ".tab-content",
-            ".grid", ".metric", ".panel", ".badge", ".note",
-            ".positions", ".position-card", ".mono",
-            ".positive", ".negative", ".btn", ".btn-primary",
-            ".btn-stop", ".btn-secondary", ".feed-list",
-            ".sse-indicator", ".toast", ".md-content",
+            ":root", "body", ".topbar", ".ribbon", ".ems-grid", ".card",
+            ".card-h", ".stat", ".pill", ".gauge", ".book", ".spark",
+            ".calib", ".blotter", ".tag", ".btn", ".sse-indicator", ".toast",
         ]
-        for selector in selectors:
-            assert selector in css, f"Missing CSS selector: {selector}"
+        for sel in selectors:
+            assert sel in css, f"missing CSS selector: {sel}"
 
-    def test_js_has_all_functions(self, client: TestClient):
-        response = client.get("/static/dashboard.js")
-        js = response.text
-        functions = [
-            "showTab", "showToast",
-            "handleStart", "handleStop", "handleRefresh", "handleRefreshBacktest",
-            "refreshAll", "updateDashboard",
-            "connectSSE", "disconnectSSE",
-            "updateSseIndicator",
-        ]
-        for func in functions:
-            assert func in js, f"Missing JS function: {func}"
+    def test_js_has_core_functions(self, client: TestClient):
+        js = client.get("/static/dashboard.js").text
+        for fn in ("showToast", "handleStart", "handleStop", "handleRefresh",
+                   "updateDashboard", "connectSSE", "updateSseIndicator"):
+            assert fn in js, f"missing JS function: {fn}"
 
 
-class TestVisualParity:
-    """Verify the FastAPI dashboard matches Gradio visual design."""
+class TestVisualContract:
+    """Trading-terminal dark theme."""
 
-    def test_warm_paper_palette(self, client: TestClient):
-        response = client.get("/static/style.css")
-        css = response.text
-        assert "#fbf7ec" in css  # --paper
-        assert "#f8efe0" in css  # gradient color
-        assert "#15130f" in css  # --ink
-
-    def test_serif_headings(self, client: TestClient):
-        response = client.get("/static/style.css")
-        assert "Georgia" in response.text
-
-    def test_monospace_data_font(self, client: TestClient):
-        response = client.get("/static/style.css")
-        assert "SFMono-Regular" in response.text
-
-    def test_card_radius_and_shadow(self, client: TestClient):
-        response = client.get("/static/style.css")
-        css = response.text
-        assert "border-radius: 22px" in css
-        assert "box-shadow: 0 18px 50px" in css
-
-    def test_badge_variants(self, client: TestClient):
-        response = client.get("/static/style.css")
-        css = response.text
-        assert ".badge.ok" in css
-        assert ".badge.warn" in css
-        assert ".badge.stop" in css
+    def test_dark_palette(self, client: TestClient):
+        css = client.get("/static/style.css").text
+        assert "#080b12" in css       # --bg near-black
+        assert "#36e0c8" in css       # --accent cyan
 
     def test_pnl_color_classes(self, client: TestClient):
-        response = client.get("/static/style.css")
-        css = response.text
-        assert ".positive" in css
-        assert ".negative" in css
+        css = client.get("/static/style.css").text
+        assert ".up" in css and ".down" in css
+        assert "--green:" in css and "--red:" in css
 
-    def test_button_radius(self, client: TestClient):
-        response = client.get("/static/style.css")
-        assert "border-radius: 14px" in response.text
+    def test_monospace_numbers(self, client: TestClient):
+        assert "--mono:" in client.get("/static/style.css").text
+
+    def test_pill_and_tag_variants(self, client: TestClient):
+        css = client.get("/static/style.css").text
+        assert ".pill.live" in css
+        assert ".tag.up" in css and ".tag.down" in css

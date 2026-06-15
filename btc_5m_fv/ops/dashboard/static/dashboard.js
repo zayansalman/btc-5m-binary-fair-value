@@ -149,22 +149,10 @@ function refreshAll() {
 function updateDashboard(data) {
   if (!data) return;
 
-  // Overview
-  if (data.overview) {
-    var ov = document.getElementById('overview-content');
-    if (ov) ov.innerHTML = data.overview.html || '';
-  }
-
-  // Paper (BTC 5m tab)
-  if (data.paper) {
-    var paperEl = document.getElementById('paper-content');
-    if (paperEl) paperEl.innerHTML = data.paper.html || '';
-  }
-
-  // Status
-  if (data.overview && data.overview.status) {
-    var st = document.getElementById('status-content');
-    if (st) st.innerHTML = data.overview.status || '';
+  // EMS main view (status ribbon + strategy/market/perf/TCA/blotter)
+  if (data.ems) {
+    var ems = document.getElementById('ems-content');
+    if (ems) ems.innerHTML = data.ems || '';
   }
 
   // Activity
