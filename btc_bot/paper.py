@@ -68,6 +68,7 @@ from btc_5m_fv.connectors.chainlink_settlement import (
 from btc_5m_fv.execution.live import LiveExecutor, build_live_executor
 from btc_bot.adaptive import evaluate_and_maybe_pause
 from btc_bot import calibration as _calibration
+from btc_bot import params as _params
 from btc_bot.strategy import (
     StrategyParams,
     fair_up_probability,
@@ -112,15 +113,31 @@ _MIN_CHAINLINK_SIGMA_POINTS = 30
 
 BINANCE_API = BINANCE_API_BASE
 FIVE_MINUTES = BTC_MARKET_TIMEFRAME_MINUTES * 60
-STRATEGY_PARAMS = StrategyParams(
-    min_trade_usd=BTC_PAPER_MIN_TRADE_USD,
-    max_trade_usd=BTC_PAPER_MAX_TRADE_USD,
-    entry_edge_min=BTC_PAPER_ENTRY_EDGE_MIN,
-    min_confidence=BTC_PAPER_MIN_CONFIDENCE,
-    entry_min_remaining_seconds=BTC_PAPER_ENTRY_MIN_REMAINING_SECONDS,
-    entry_edge_max=BTC_PAPER_ENTRY_EDGE_MAX,
-    min_entry_price=BTC_PAPER_MIN_ENTRY_PRICE,
-)
+
+
+def _strategy_params() -> StrategyParams:
+    """Build StrategyParams from the operator-applied params file (#37 Layer 2).
+
+    Falls back to env defaults when no params_active.json exists, so this is a
+    pure no-op until ``params_apply --confirm`` has been run. Called per tick;
+    the file read is cheap and survives operator updates without a restart.
+    """
+    a = _params.load_active()
+    return StrategyParams(
+        min_trade_usd=BTC_PAPER_MIN_TRADE_USD,
+        max_trade_usd=BTC_PAPER_MAX_TRADE_USD,
+        entry_edge_min=a.entry_edge_min,
+        min_confidence=a.min_confidence,
+        entry_min_remaining_seconds=a.min_remaining_seconds,
+        entry_edge_max=a.entry_edge_max,
+        min_entry_price=a.min_entry_price,
+    )
+
+
+# Kept for backwards compatibility — modules that import this constant get the
+# env defaults at import time. The signal path uses _strategy_params() so live
+# parameter updates take effect without a restart.
+STRATEGY_PARAMS = _strategy_params()
 
 
 @dataclass(frozen=True)
@@ -532,7 +549,7 @@ async def _build_snapshot(client: httpx.AsyncClient) -> PaperSnapshot:
             remaining,
             up_book.best_ask,
             down_book.best_ask,
-            STRATEGY_PARAMS,
+            _strategy_params(),
         )
         if side is None and edge_up is None and edge_down is None:
             reason = (
