@@ -170,6 +170,26 @@ function refreshAll() {
 function updateDashboard(data) {
   if (!data) return;
 
+  // Topbar Start/Stop visual state — driven by runtime.state so the user can
+  // see at a glance which control is the live action.
+  if (data.runtime) {
+    var running = data.runtime.state === 'running';
+    var startBtn = document.querySelector('.btn.start.btn-ctl');
+    var stopBtn = document.querySelector('.btn.stop.btn-ctl');
+    if (startBtn) {
+      startBtn.disabled = running;
+      startBtn.classList.toggle('is-active', !running);
+      startBtn.classList.toggle('is-inactive', running);
+      startBtn.title = running ? 'Bot is running' : 'Start the bot';
+    }
+    if (stopBtn) {
+      stopBtn.disabled = !running;
+      stopBtn.classList.toggle('is-active', running);
+      stopBtn.classList.toggle('is-inactive', !running);
+      stopBtn.title = running ? 'Stop the bot' : 'Bot is stopped';
+    }
+  }
+
   // EMS main view (status ribbon + strategy/market/perf/TCA/blotter)
   if (data.ems) {
     var ems = document.getElementById('ems-content');
