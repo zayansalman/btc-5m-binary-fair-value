@@ -214,6 +214,41 @@ class PaperSnapshot:
 
 
 @dataclass
+class ModeStats:
+    """PnL/win-rate aggregates for one execution mode (live or paper)."""
+
+    closed_positions: int = 0
+    total_pnl_usd: float = 0.0
+    closed_notional_usd: float = 0.0
+    win_rate: float | None = None
+    avg_pnl_usd: float | None = None
+    avg_hold_seconds: float | None = None
+    open_positions: int = 0
+    open_exposure_usd: float = 0.0
+
+
+@dataclass
+class ConnectivityStatus:
+    """Per-source liveness summary read from the most recent tick.
+
+    The dashboard renders this verbatim so an operator can prove the bot is
+    talking to Polymarket even when no entries have fired — a gap between
+    real trades is normally the model skipping (risk gate / lopsided book),
+    not a disconnect, and that distinction must be visible.
+    """
+
+    tick_age_seconds: int | None = None
+    tick_stale_after_seconds: int = 0
+    spot_source: str | None = None
+    reference_source: str | None = None
+    vol_source: str | None = None
+    quote_source: str | None = None
+    has_book: bool = False
+    last_skip_reason: str | None = None
+    last_live_order_at: str | None = None
+
+
+@dataclass
 class PaperSummary:
     running_state: str
     open_positions: int
@@ -234,6 +269,9 @@ class PaperSummary:
     last_edge: float | None
     last_feed_source: str | None
     recent_positions: list[dict[str, Any]]
+    live_stats: ModeStats = None  # type: ignore[assignment]
+    paper_stats: ModeStats = None  # type: ignore[assignment]
+    connectivity: ConnectivityStatus = None  # type: ignore[assignment]
 
 
 async def run_paper_loop(stop_event: threading.Event) -> None:
@@ -411,6 +449,19 @@ async def load_paper_summary() -> PaperSummary:
             "SELECT * FROM btc_paper_positions ORDER BY opened_at DESC LIMIT 10"
         ) as cur:
             recent = [dict(r) for r in await cur.fetchall()]
+        # Per-mode aggregates: same KPI rules as the combined view (honest
+        # CLOB quotes + active strategy style), partitioned by mode so live
+        # alpha is never blended with paper-only fills (issues #22/#28).
+        live_stats = await _mode_stats(db, "live")
+        paper_stats = await _mode_stats(db, "paper")
+        # Last live order touch: surfaced separately because a stale live
+        # journal is the operator's clearest signal that the bot stopped
+        # actually placing orders, even when ticks keep flowing.
+        async with db.execute(
+            "SELECT MAX(created_at) AS last_at FROM btc_live_orders"
+        ) as cur:
+            last_live_row = await cur.fetchone()
+        last_live_order_at = last_live_row["last_at"] if last_live_row else None
 
     last_signal = "none"
     if tick is not None:
@@ -426,6 +477,7 @@ async def load_paper_summary() -> PaperSummary:
     avg_pnl = float(closed["avg_pnl"]) if closed and closed["avg_pnl"] is not None else None
     avg_hold = float(closed["avg_hold"]) if closed and closed["avg_hold"] is not None else None
     risk_state = _risk_state(open_count, tick["created_at"] if tick else None)
+    connectivity = _connectivity_from_tick(tick, last_live_order_at)
 
     return PaperSummary(
         running_state="paper",
@@ -447,7 +499,105 @@ async def load_paper_summary() -> PaperSummary:
         last_edge=_f(tick, "edge"),
         last_feed_source=tick["feed_source"] if tick else None,
         recent_positions=recent,
+        live_stats=live_stats,
+        paper_stats=paper_stats,
+        connectivity=connectivity,
     )
+
+
+async def _mode_stats(db: Any, mode: str) -> ModeStats:
+    """KPI aggregate for one execution mode — same exclusions as the combined view."""
+    async with db.execute(
+        "SELECT COUNT(*) AS n, COALESCE(SUM(notional_usd), 0) AS exposure "
+        "FROM btc_paper_positions WHERE state = 'open' AND mode = ?",
+        (mode,),
+    ) as cur:
+        open_row = await cur.fetchone()
+    async with db.execute(
+        "SELECT COUNT(*) AS n, COALESCE(SUM(realized_pnl_usd), 0) AS pnl, "
+        "COALESCE(SUM(notional_usd), 0) AS notional, "
+        "SUM(CASE WHEN realized_pnl_usd > 0 THEN 1 ELSE 0 END) AS wins, "
+        "AVG(realized_pnl_usd) AS avg_pnl, "
+        "AVG(strftime('%s', closed_at) - strftime('%s', opened_at)) AS avg_hold "
+        "FROM btc_paper_positions WHERE state = 'closed' "
+        "AND quote_source = 'clob' AND strategy_style = ? AND mode = ?",
+        (BTC_EXIT_STYLE, mode),
+    ) as cur:
+        closed = await cur.fetchone()
+    closed_count = int(closed["n"] if closed else 0)
+    wins = int(closed["wins"] or 0) if closed else 0
+    win_rate = (wins / closed_count) if closed_count else None
+    avg_pnl = float(closed["avg_pnl"]) if closed and closed["avg_pnl"] is not None else None
+    avg_hold = float(closed["avg_hold"]) if closed and closed["avg_hold"] is not None else None
+    return ModeStats(
+        closed_positions=closed_count,
+        total_pnl_usd=float(closed["pnl"] if closed else 0.0),
+        closed_notional_usd=float(closed["notional"] if closed else 0.0),
+        win_rate=win_rate,
+        avg_pnl_usd=avg_pnl,
+        avg_hold_seconds=avg_hold,
+        open_positions=int(open_row["n"] if open_row else 0),
+        open_exposure_usd=float(open_row["exposure"] if open_row else 0.0),
+    )
+
+
+def _connectivity_from_tick(
+    tick: Any, last_live_order_at: str | None
+) -> ConnectivityStatus:
+    """Decompose the last tick's feed_source / book presence into per-source liveness.
+
+    The tick itself proves the loop is alive AND that market discovery + book
+    fetch + spot read succeeded. The feed_source string carries one label per
+    source so a degraded sub-feed shows up here even when the loop keeps
+    journaling ticks.
+    """
+    stale_after = int(max(BTC_PAPER_TICK_SECONDS * 3, 20))
+    if tick is None:
+        return ConnectivityStatus(
+            tick_age_seconds=None,
+            tick_stale_after_seconds=stale_after,
+            last_live_order_at=last_live_order_at,
+        )
+    try:
+        parsed = datetime.fromisoformat(str(tick["created_at"]).replace("Z", "+00:00"))
+    except ValueError:
+        parsed = None
+    age = (
+        max(0, int((datetime.now(UTC) - parsed).total_seconds()))
+        if parsed is not None
+        else None
+    )
+    parts = _parse_feed_source(tick["feed_source"])
+    has_book = (
+        tick["up_best_ask"] is not None
+        or tick["down_best_ask"] is not None
+        or tick["up_best_bid"] is not None
+        or tick["down_best_bid"] is not None
+    )
+    return ConnectivityStatus(
+        tick_age_seconds=age,
+        tick_stale_after_seconds=stale_after,
+        spot_source=parts.get("spot"),
+        reference_source=parts.get("ref"),
+        vol_source=parts.get("vol"),
+        quote_source=parts.get("quotes") or (tick["quote_source"] if "quote_source" in tick.keys() else None),
+        has_book=has_book,
+        last_skip_reason=tick["reason"],
+        last_live_order_at=last_live_order_at,
+    )
+
+
+def _parse_feed_source(raw: Any) -> dict[str, str]:
+    """Parse 'spot=...;ref=...;vol=...;quotes=...' into a dict; lenient on shape."""
+    if not isinstance(raw, str):
+        return {}
+    out: dict[str, str] = {}
+    for chunk in raw.split(";"):
+        if "=" not in chunk:
+            continue
+        k, v = chunk.split("=", 1)
+        out[k.strip()] = v.strip()
+    return out
 
 
 def _f(row: Any, key: str) -> float | None:
@@ -970,14 +1120,15 @@ async def _maybe_open_position(snapshot: PaperSnapshot) -> None:
 async def _insert_position_row(
     snapshot: PaperSnapshot, entry_price: float, notional: float, shares: float
 ) -> int:
+    mode = "live" if _live_executor is not None else "paper"
     async with connect() as db:
         cur = await db.execute(
             """
             INSERT INTO btc_paper_positions(
               opened_at, window_slug, market_question, side, state, entry_price,
               notional_usd, shares, opened_spot, confidence, edge, entry_reason,
-              feed_source, quote_source, strategy_style
-            ) VALUES (?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              feed_source, quote_source, strategy_style, mode
+            ) VALUES (?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 snapshot.created_at,
@@ -994,6 +1145,7 @@ async def _insert_position_row(
                 snapshot.feed_source,
                 snapshot.quote_source,
                 BTC_EXIT_STYLE,
+                mode,
             ),
         )
         position_id = int(cur.lastrowid or 0)

@@ -153,6 +153,51 @@ async def _latest_tick() -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
+async def _last_live_order_at() -> str | None:
+    """ISO timestamp of the most recent action recorded in btc_live_orders.
+
+    A live bot that has lost the ability to actually place orders looks fine
+    in the tick journal (the loop still polls Chainlink and CLOB) — the only
+    objective signal of "we are still trading for real" is this column.
+    """
+    async with connect() as db:
+        async with db.execute(
+            "SELECT MAX(created_at) AS last_at FROM btc_live_orders"
+        ) as cur:
+            row = await cur.fetchone()
+    return (row["last_at"] if row else None) if row is not None else None
+
+
+def _parse_feed_source(raw: Any) -> dict[str, str]:
+    """Parse 'spot=...;ref=...;vol=...;quotes=...' into a dict.
+
+    The trading loop writes this string to every tick; parsing it lets the
+    ribbon show per-source liveness instead of a blunt 'CHAINLINK' chip that
+    is on whenever the substring matches.
+    """
+    if not isinstance(raw, str):
+        return {}
+    out: dict[str, str] = {}
+    for chunk in raw.split(";"):
+        if "=" not in chunk:
+            continue
+        k, v = chunk.split("=", 1)
+        out[k.strip()] = v.strip()
+    return out
+
+
+def _tick_age_seconds(ts: str | None) -> int | None:
+    if not ts:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return max(0, int((datetime.now(UTC) - parsed).total_seconds()))
+
+
 async def _closed(
     style: str, since: str | None, limit: int | None = None
 ) -> list[dict[str, Any]]:
@@ -206,6 +251,19 @@ async def _avg_spread() -> float | None:
             if r[b] is not None and r[a] is not None and r[a] > r[b]:
                 spreads.append(r[a] - r[b])
     return sum(spreads) / len(spreads) if spreads else None
+
+
+async def _recent_decisions(limit: int = 10) -> list[dict[str, Any]]:
+    """Last N tick decisions, newest first — feeds the decision-stream tail."""
+    async with connect() as db:
+        async with db.execute(
+            "SELECT created_at, spot_price, reference_price, fair_up_prob, edge, "
+            "up_best_ask, down_best_ask, signal_side, notional_usd, confidence, "
+            "reason, remaining_seconds, feed_source "
+            "FROM btc_paper_ticks ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
 
 
 def _performance(closed: list[dict[str, Any]]) -> dict[str, Any]:
@@ -268,6 +326,235 @@ def _stat(label: str, value: str, cls: str = "", sub: str = "") -> str:
     )
 
 
+def _decision_engine_panel(
+    tick: dict[str, Any] | None,
+    params: Any,
+    recent: list[dict[str, Any]],
+    paused: bool,
+    pause_reason: str,
+) -> str:
+    """Render a transparency view of what the bot is digesting → deciding.
+
+    Three columns — INPUTS (the tick), COMPUTATION (probabilities + edges),
+    GATES (pass/fail per filter) — plus the final decision banner and a
+    short tail of recent ticks so the operator can see decisions evolve.
+    """
+    if not tick:
+        return (
+            "<section class='card wide'><div class='card-h'>DECISION ENGINE"
+            "<span class='win'>thinking…</span></div>"
+            "<div class='chart-empty'>no ticks yet — start the bot to see decisions stream in</div>"
+            "</section>"
+        )
+
+    # ── inputs being digested ──────────────────────────────────────────
+    spot = tick.get("spot_price") or 0.0
+    ref = tick.get("reference_price") or 0.0
+    sigma = tick.get("sigma_per_second") or 0.0
+    rem = tick.get("remaining_seconds") or 0
+    up_bid = tick.get("up_best_bid")
+    up_ask = tick.get("up_best_ask")
+    down_bid = tick.get("down_best_bid")
+    down_ask = tick.get("down_best_ask")
+    feed = _parse_feed_source(tick.get("feed_source"))
+
+    inputs_html = (
+        "<div class='de-col'>"
+        "<div class='de-h'>DIGESTING</div>"
+        "<div class='de-kv'>"
+        f"<div><span>BTC spot</span><b class='mono'>${spot:,.2f}</b></div>"
+        f"<div><span>Window ref</span><b class='mono'>${ref:,.2f}</b></div>"
+        f"<div><span>Basis</span><b class='mono {_cls(spot - ref)}'>{(spot - ref):+.2f}</b></div>"
+        f"<div><span>Remaining</span><b class='mono'>{rem}s</b></div>"
+        f"<div><span>σ / sec</span><b class='mono'>{sigma:.6f}</b></div>"
+        f"<div><span>UP book (bid/ask)</span><b class='mono'>{_bk(up_bid)} / {_bk(up_ask)}</b></div>"
+        f"<div><span>DOWN book (bid/ask)</span><b class='mono'>{_bk(down_bid)} / {_bk(down_ask)}</b></div>"
+        f"<div><span>Spot feed</span><b class='mono dim'>{escape(feed.get('spot', '—'))}</b></div>"
+        f"<div><span>Vol feed</span><b class='mono dim'>{escape(feed.get('vol', '—'))}</b></div>"
+        "</div></div>"
+    )
+
+    # ── computation step (model output) ────────────────────────────────
+    fair_up = tick.get("fair_up_prob")
+    edge_up = (fair_up - up_ask) if (fair_up is not None and up_ask is not None) else None
+    edge_dn = ((1 - fair_up) - down_ask) if (fair_up is not None and down_ask is not None) else None
+    cands: list[tuple[str, float, float]] = []
+    if edge_up is not None and up_ask is not None:
+        cands.append(("Up", edge_up, up_ask))
+    if edge_dn is not None and down_ask is not None:
+        cands.append(("Down", edge_dn, down_ask))
+    cand_side: str | None = None
+    cand_edge: float | None = None
+    cand_price: float | None = None
+    if cands:
+        cand_side, cand_edge, cand_price = max(cands, key=lambda c: c[1])
+    cand_conf = (
+        min(0.99, max(0.0, 0.50 + max(cand_edge, 0.0) * 2.8))
+        if cand_edge is not None
+        else None
+    )
+
+    def _edge_html(v: float | None) -> str:
+        if v is None:
+            return "<b class='mono dim'>—</b>"
+        return f"<b class='mono {_cls(v)}'>{v:+.4f}</b>"
+
+    fair_up_s = f"{fair_up * 100:.1f}%" if fair_up is not None else "—"
+    fair_dn_s = f"{(1 - fair_up) * 100:.1f}%" if fair_up is not None else "—"
+    cand_html = (
+        f"{escape(cand_side)} @ {cand_price:.3f}"
+        if cand_side is not None and cand_price is not None
+        else "—"
+    )
+    conf_html = f"{cand_conf * 100:.1f}%" if cand_conf is not None else "—"
+
+    compute_html = (
+        "<div class='de-col'>"
+        "<div class='de-h'>COMPUTING</div>"
+        "<div class='de-kv'>"
+        f"<div><span>fair Up (cal.)</span><b class='mono'>{fair_up_s}</b></div>"
+        f"<div><span>fair Down</span><b class='mono'>{fair_dn_s}</b></div>"
+        f"<div><span>edge Up = fair − ask</span>{_edge_html(edge_up)}</div>"
+        f"<div><span>edge Down = (1−fair) − ask</span>{_edge_html(edge_dn)}</div>"
+        f"<div><span>Candidate side</span><b class='mono'>{cand_html}</b></div>"
+        f"<div><span>Candidate edge</span>{_edge_html(cand_edge)}</div>"
+        f"<div><span>Confidence (model)</span><b class='mono'>{conf_html}</b></div>"
+        "</div></div>"
+    )
+
+    # ── gate checks (re-derived from inputs + active params) ───────────
+    def _gate(label: str, ok: bool | None, detail: str = "") -> str:
+        if ok is None:
+            mark, cls = "·", "dim"
+        elif ok:
+            mark, cls = "✓", "up"
+        else:
+            mark, cls = "✗", "down"
+        d = f" <em class='dim'>{escape(detail)}</em>" if detail else ""
+        return f"<div class='de-gate {cls}'><span>{mark}</span>{escape(label)}{d}</div>"
+
+    feed_ok = not bool(tick.get("reason", "").startswith("skip: settlement feed degraded"))
+    book_ok = (up_ask is not None) or (down_ask is not None)
+    time_ok = rem > params.entry_min_remaining_seconds
+    edge_ok = (cand_edge is not None) and (cand_edge >= params.entry_edge_min)
+    conf_ok = (cand_conf is not None) and (cand_conf >= params.min_confidence)
+    cap_ok = (cand_edge is None) or (cand_edge <= params.entry_edge_max)
+    price_ok = (
+        cand_price is None
+        or (params.min_entry_price <= cand_price <= params.max_entry_price)
+    )
+
+    gates_html = (
+        "<div class='de-col'>"
+        "<div class='de-h'>GATES</div>"
+        "<div class='de-gates'>"
+        + _gate("settlement feed healthy", feed_ok)
+        + _gate("book quote available", book_ok)
+        + _gate(
+            f"remaining > {params.entry_min_remaining_seconds}s",
+            time_ok,
+            f"now {rem}s",
+        )
+        + _gate(
+            f"edge ≥ {params.entry_edge_min:.3f}",
+            edge_ok,
+            (f"{cand_edge:+.3f}" if cand_edge is not None else ""),
+        )
+        + _gate(
+            f"confidence ≥ {params.min_confidence:.2f}",
+            conf_ok,
+            (f"{cand_conf:.2f}" if cand_conf is not None else ""),
+        )
+        + _gate(
+            f"edge ≤ {params.entry_edge_max:.2f} (stale-model)",
+            cap_ok,
+        )
+        + _gate(
+            f"price in [{params.min_entry_price:.2f}, {params.max_entry_price:.2f}]",
+            price_ok,
+            (f"@{cand_price:.3f}" if cand_price is not None else ""),
+        )
+        + "</div></div>"
+    )
+
+    # ── final decision banner ──────────────────────────────────────────
+    reason = (tick.get("reason") or "idle").strip()
+    side = tick.get("signal_side")
+    notional = tick.get("notional_usd") or 0.0
+    if paused:
+        d_cls, d_lbl, d_body = (
+            "down",
+            "AUTO-PAUSED",
+            pause_reason or "edge-decay guard tripped",
+        )
+    elif side in ("Up", "Down"):
+        d_cls, d_lbl = "up", f"ENTER {side.upper()}"
+        d_body = f"size ${notional:.0f} · {reason}"
+    elif reason.startswith("enter"):
+        d_cls, d_lbl, d_body = "up", "ENTER (queued)", reason
+    else:
+        d_cls, d_lbl, d_body = "dim", "SKIP", reason
+
+    decision_banner = (
+        "<div class='de-decision'>"
+        f"<span class='de-arrow'>▸</span><b class='{d_cls}'>{escape(d_lbl)}</b>"
+        f"<span class='de-reason'>{escape(d_body)}</span>"
+        "</div>"
+    )
+
+    # ── recent decision tail ───────────────────────────────────────────
+    tail_rows = ""
+    for r in recent:
+        ts_ago = _ago(r.get("created_at"))
+        sp = r.get("spot_price") or 0.0
+        fu = r.get("fair_up_prob")
+        rs = (r.get("reason") or "").strip()
+        is_entry = rs.startswith("enter")
+        rcls = "up" if is_entry else "dim"
+        cand = r.get("signal_side") or "—"
+        ask_html = (
+            f"ask {(r.get('up_best_ask') if cand == 'Up' else r.get('down_best_ask') or 0):.3f}"
+            if cand in ("Up", "Down")
+            else "—"
+        )
+        fair_t = f"{fu * 100:.1f}%" if fu is not None else "—"
+        tail_rows += (
+            "<tr>"
+            f"<td class='mono dim'>{escape(ts_ago)}</td>"
+            f"<td class='mono'>${sp:,.0f}</td>"
+            f"<td class='mono'>{fair_t}</td>"
+            f"<td class='mono'>{escape(cand)} {ask_html}</td>"
+            f"<td class='mono {rcls}' style='white-space:normal'>{escape(rs)}</td>"
+            "</tr>"
+        )
+    tail_html = (
+        "<div class='de-tail'>"
+        "<div class='de-h'>RECENT TICKS — what the bot saw &amp; decided</div>"
+        "<table class='de-tail-tbl'><thead><tr>"
+        "<th>age</th><th>spot</th><th>fair Up</th><th>side @ ask</th><th>decision</th>"
+        "</tr></thead><tbody>"
+        + (
+            tail_rows
+            or "<tr><td colspan='5' class='dim' style='text-align:center;padding:10px'>no recent ticks</td></tr>"
+        )
+        + "</tbody></table></div>"
+    )
+
+    return (
+        "<section class='card wide'><div class='card-h'>DECISION ENGINE"
+        f"<span class='win'>active params · edge≥{params.entry_edge_min:.3f} · conf≥{params.min_confidence:.2f} · rem≥{params.entry_min_remaining_seconds}s</span>"
+        "</div>"
+        "<div class='de-grid'>"
+        + inputs_html
+        + compute_html
+        + gates_html
+        + "</div>"
+        + decision_banner
+        + tail_html
+        + "</section>"
+    )
+
+
 async def ems_html() -> str:
     style = _config.BTC_EXIT_STYLE
     mode = await get_config("btc_bot.requested_mode", _config.BTC_BOT_MODE) or "paper"
@@ -279,12 +566,16 @@ async def ems_html() -> str:
     day_notional = float(await get_config("btc_live.daily_buy_notional", "0") or 0)
 
     tick = await _latest_tick()
+    recent_ticks = await _recent_decisions(limit=10)
     # Rolling recent window = the CURRENT regime (not blended with older
     # experimental configs that lived in the same journal).
     closed = await _closed(style, None, limit=40)
     closed_session = await _closed(style, session_start)  # this run, for the ribbon
     open_pos = await _open_positions(style)
     perf = _performance(closed)
+    perf_live = _performance([c for c in closed if c.get("mode") == "live"])
+    perf_paper = _performance([c for c in closed if c.get("mode") == "paper"])
+    last_live_at = await _last_live_order_at()
     session_pnl = sum(c["realized_pnl_usd"] or 0.0 for c in closed_session)
     spread = await _avg_spread()
     is_live = mode == "live"
@@ -299,14 +590,55 @@ async def ems_html() -> str:
     run_pill = (
         f"<span class='pill {'on' if state == 'running' else 'off'}'>{state.upper()}</span>"
     )
-    feeds = ""
-    if tick:
-        fs = tick.get("feed_source", "") or ""
-        ok = "chainlink" in fs
-        feeds = (
-            f"<span class='feed {'on' if ok else 'warn'}'>CHAINLINK</span>"
-            f"<span class='feed {'on' if 'clob' in fs else 'warn'}'>CLOB</span>"
-        )
+    # ---- connectivity ----
+    # Real liveness comes from (a) when the loop last journaled a tick, and
+    # (b) what feed_source that tick recorded for each upstream. The old
+    # 'CHAINLINK / CLOB' chips merely string-matched feed_source and would
+    # stay green for hours after the loop hung. Now each chip flips off when
+    # its source goes degraded, and a TICK chip shows the loop's own age.
+    tick_age = _tick_age_seconds(tick.get("created_at") if tick else None)
+    stale_after = int(max(_config.BTC_PAPER_TICK_SECONDS * 3, 20))
+    parts = _parse_feed_source(tick.get("feed_source") if tick else None)
+    book_ok = bool(tick) and (
+        tick.get("up_best_ask") is not None
+        or tick.get("down_best_ask") is not None
+        or tick.get("up_best_bid") is not None
+        or tick.get("down_best_bid") is not None
+    )
+    if tick_age is None:
+        tick_chip = "<span class='feed warn'>TICK ∅</span>"
+    elif tick_age <= stale_after:
+        tick_chip = f"<span class='feed on'>TICK {tick_age}s</span>"
+    else:
+        tick_chip = f"<span class='feed warn'>TICK {tick_age}s STALE</span>"
+
+    def _chip(label: str, ok: bool) -> str:
+        return f"<span class='feed {'on' if ok else 'warn'}'>{label}</span>"
+
+    chips = [
+        tick_chip,
+        _chip("SPOT", (parts.get("spot") or "").startswith("chainlink")),
+        _chip("REF", (parts.get("ref") or "").startswith("chainlink")),
+        _chip("VOL", parts.get("vol") == "chainlink_ws"),
+        _chip("BOOK", book_ok),
+    ]
+    if is_live:
+        live_age = _tick_age_seconds(last_live_at)
+        if live_age is None:
+            chips.append("<span class='feed warn'>EXEC ∅</span>")
+        else:
+            # "Real trade is X minutes ago" was the exact diagnostic the
+            # operator needed when no entries are firing — surface it here.
+            label = (
+                f"EXEC {live_age}s"
+                if live_age < 60
+                else f"EXEC {live_age // 60}m{live_age % 60:02d}s"
+            )
+            # Treat >5min without ANY live-order action as warn-worthy when
+            # the bot is supposed to be live. A bot that lost CLOB write
+            # access often keeps reading and journaling skips.
+            chips.append(_chip(label, live_age <= 300))
+    feeds = "".join(chips)
     pause_chip = (
         f"<span class='pill warn' title='{escape(pause_reason)}'>⏸ AUTO-PAUSED</span>"
         if paused
@@ -413,12 +745,46 @@ async def ems_html() -> str:
         market = "<section class='card'><div class='card-h'>LIVE MARKET</div><div class='chart-empty'>no ticks yet</div></section>"
 
     # ---- performance / alpha panel ----
+    # Combined view stays on top (equity curve, recent-N pnl); the LIVE and
+    # PAPER mini-blocks below it keep real and simulated alpha separate so a
+    # winning live tape never gets dragged down by sim-only paper losses (or
+    # vice versa) in the operator's headline number.
     if perf["n"]:
         wl = f"{perf['wins']}W / {perf['losses']}L"
         pf_s = f"{perf['profit_factor']:.2f}" if perf["profit_factor"] else "∞"
+
+        def _mini(label_html: str, p: dict[str, Any]) -> str:
+            if not p.get("n"):
+                return (
+                    "<div class='perf-mini'>"
+                    f"<div class='perf-mini-h'>{label_html}</div>"
+                    "<div class='perf-mini-empty'>no closed trades yet</div>"
+                    "</div>"
+                )
+            wl_s = f"{p['wins']}W / {p['losses']}L"
+            return (
+                "<div class='perf-mini'>"
+                f"<div class='perf-mini-h'>{label_html}</div>"
+                "<div class='perf-mini-row'>"
+                f"<span>P&amp;L</span><b class='{_cls(p['pnl'])}'>{_money(p['pnl'], True)}</b>"
+                "</div>"
+                "<div class='perf-mini-row'>"
+                f"<span>ROI</span><b class='{_cls(p['roi'])}'>{_pct(p['roi'], True)}</b>"
+                "</div>"
+                "<div class='perf-mini-row'>"
+                f"<span>Win rate</span><b>{_pct(p['win_rate'])} <em>({wl_s})</em></b>"
+                "</div>"
+                "<div class='perf-mini-row'>"
+                f"<span>Expectancy</span><b class='{_cls(p['expectancy'])}'>{_money(p['expectancy'], True)}</b>"
+                "</div>"
+                "</div>"
+            )
+
+        live_label = "<span class='pill live'>● LIVE</span>"
+        paper_label = "<span class='pill paper'>PAPER</span>"
         perf_panel = (
             "<section class='card'><div class='card-h'>PERFORMANCE / ALPHA"
-            f"<span class='win'>recent {perf['n']} · {style}</span></div>"
+            f"<span class='win'>recent {perf['n']} · {style} · live+paper</span></div>"
             f"<div class='equity'>{_svg_equity(perf['equity'])}</div>"
             "<div class='statrow'>"
             f"{_stat('Net P&L', _money(perf['pnl'], True), _cls(perf['pnl']))}"
@@ -427,7 +793,12 @@ async def ems_html() -> str:
             f"{_stat('Expectancy', _money(perf['expectancy'], True), _cls(perf['expectancy']), 'per trade')}"
             f"{_stat('Profit factor', pf_s, _cls((perf['profit_factor'] or 2) - 1))}"
             f"{_stat('Max DD', _money(perf['max_dd']), 'down' if perf['max_dd'] < 0 else '')}"
-            "</div></section>"
+            "</div>"
+            "<div class='perf-split'>"
+            f"{_mini(live_label, perf_live)}"
+            f"{_mini(paper_label, perf_paper)}"
+            "</div>"
+            "</section>"
         )
     else:
         perf_panel = "<section class='card'><div class='card-h'>PERFORMANCE / ALPHA</div><div class='chart-empty'>awaiting first settled trade this session</div></section>"
@@ -456,12 +827,22 @@ async def ems_html() -> str:
     )
 
     # ---- blotter ----
+    # Mode chip per row is the operator's at-a-glance answer to "was that one
+    # real money?" — without it, a row from yesterday's paper run looks
+    # identical to a real fill, and the LIVE PnL number above can't be
+    # tracked back to the trades that produced it.
+    def _mode_chip(m: Any) -> str:
+        label = str(m or "?").upper()
+        cls = "live" if label == "LIVE" else "paper" if label == "PAPER" else "warn"
+        return f"<span class='pill {cls}'>{escape(label)}</span>"
+
     rows = ""
     recent = list(reversed(closed))[:12]
     for c in recent:
         p = c["realized_pnl_usd"] or 0.0
         rows += (
             "<tr>"
+            f"<td>{_mode_chip(c.get('mode'))}</td>"
             f"<td class='mono dim'>{_ago(c.get('closed_at'))}</td>"
             f"<td><span class='tag {c['side'].lower()}'>{escape(c['side'])}</span></td>"
             f"<td class='mono'>{(c['entry_price'] or 0):.3f}</td>"
@@ -474,6 +855,7 @@ async def ems_html() -> str:
     for c in open_pos:
         rows = (
             "<tr class='live-row'>"
+            f"<td>{_mode_chip(c.get('mode'))}</td>"
             f"<td class='mono dim'>now</td>"
             f"<td><span class='tag {c['side'].lower()}'>{escape(c['side'])}</span></td>"
             f"<td class='mono'>{(c['entry_price'] or 0):.3f}</td>"
@@ -486,10 +868,25 @@ async def ems_html() -> str:
     blotter = (
         "<section class='card wide'><div class='card-h'>TRADE BLOTTER</div>"
         "<table class='blotter'><thead><tr>"
-        "<th>age</th><th>side</th><th>entry</th><th>exit</th><th>size</th><th>P&L</th><th>reason</th>"
+        "<th>mode</th><th>age</th><th>side</th><th>entry</th><th>exit</th><th>size</th><th>P&L</th><th>reason</th>"
         "</tr></thead><tbody>"
-        + (rows or "<tr><td colspan='7' class='dim' style='text-align:center;padding:18px'>no trades yet — the strategy is selective</td></tr>")
+        + (rows or "<tr><td colspan='8' class='dim' style='text-align:center;padding:18px'>no trades yet — the strategy is selective</td></tr>")
         + "</tbody></table></section>"
+    )
+
+    # Build a StrategyParams-shaped view from the active params so the
+    # decision-engine panel can re-evaluate gates against the same
+    # thresholds the live loop uses.
+    class _GateParams:
+        entry_edge_min = active.entry_edge_min
+        entry_edge_max = active.entry_edge_max
+        min_confidence = active.min_confidence
+        entry_min_remaining_seconds = active.min_remaining_seconds
+        min_entry_price = active.min_entry_price
+        max_entry_price = active.max_entry_price
+
+    decision_panel = _decision_engine_panel(
+        tick, _GateParams(), recent_ticks, paused, pause_reason
     )
 
     return (
@@ -498,6 +895,7 @@ async def ems_html() -> str:
         + "<div class='ems-grid'>"
         + strat
         + market
+        + decision_panel
         + perf_panel
         + tca
         + blotter

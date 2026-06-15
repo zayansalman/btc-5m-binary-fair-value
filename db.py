@@ -132,6 +132,10 @@ BTC_POSITION_COLUMN_MIGRATIONS = {
     # 'settle' | 'scalp' since v0.3.2 (issue #28); KPIs aggregate only the
     # active style so baselines from different trade shapes never blend.
     "strategy_style": "TEXT",
+    # 'live' | 'paper' — recorded at insert time from whether the live
+    # executor was attached. Legacy rows are backfilled by joining
+    # btc_live_orders on window_slug.
+    "mode": "TEXT",
 }
 
 # Issue #22: executable top-of-book quotes journaled per tick. Rows without
@@ -171,7 +175,31 @@ async def init_db() -> None:
         await db.executescript(SCHEMA)
         await _migrate_columns(db, "btc_paper_positions", BTC_POSITION_COLUMN_MIGRATIONS)
         await _migrate_columns(db, "btc_paper_ticks", BTC_TICK_COLUMN_MIGRATIONS)
+        await _backfill_position_mode(db)
         await db.commit()
+
+
+async def _backfill_position_mode(db: aiosqlite.Connection) -> None:
+    """Fill mode on legacy rows: 'live' iff a SUBMITTED ENTRY exists for the slug.
+
+    A position was real iff the live executor placed a corresponding entry on
+    that same window — the journal proves that. All other rows are paper.
+    Rows that already carry a mode are left alone.
+    """
+    await db.execute(
+        """
+        UPDATE btc_paper_positions
+           SET mode = 'live'
+         WHERE mode IS NULL
+           AND window_slug IN (
+               SELECT window_slug FROM btc_live_orders
+                WHERE intent = 'ENTRY' AND status = 'SUBMITTED'
+           )
+        """
+    )
+    await db.execute(
+        "UPDATE btc_paper_positions SET mode = 'paper' WHERE mode IS NULL"
+    )
 
 
 async def _migrate_columns(

@@ -143,6 +143,37 @@ CSS = """
 button.primary, button.secondary {
   border-radius: 14px !important;
 }
+.connectivity h3 { margin: 0 0 12px; font-family: Georgia, serif; }
+.conn-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 8px;
+}
+.conn-row { display: flex; align-items: center; gap: 10px; }
+.conn-detail { color: var(--muted); font-size: 0.9rem; }
+.conn-skip { margin-top: 10px; color: var(--ink); font-size: 0.92rem; }
+.split-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+.split-card {
+  border: 1px solid var(--line);
+  background: var(--card);
+  border-radius: 18px;
+  padding: 14px 16px;
+}
+.split-card h4 {
+  margin: 0 0 6px;
+  font-family: Georgia, serif;
+  display: flex; align-items: center; gap: 8px;
+}
+.split-card .row {
+  display: flex; justify-content: space-between;
+  color: var(--muted); font-size: 0.92rem; padding: 2px 0;
+}
+.split-card .row b { color: var(--ink); }
 """
 
 
@@ -202,6 +233,112 @@ def _state_badge(state: str, risk_state: str) -> str:
     return f"<span class='badge {cls}'>{escape(state.upper())}</span>"
 
 
+def _mode_badge(mode: str | None) -> str:
+    """LIVE / PAPER chip rendered inline next to a trade row.
+
+    LIVE is the dangerous mode (real money), so it gets the high-attention
+    'stop' colour; paper is the calm 'ok' colour. Anything else falls back to
+    a neutral 'warn' chip so unknown rows are not silently mislabelled.
+    """
+    label = (mode or "unknown").upper()
+    if label == "LIVE":
+        cls = "stop"
+    elif label == "PAPER":
+        cls = "ok"
+    else:
+        cls = "warn"
+    return f"<span class='badge {cls}'>{escape(label)}</span>"
+
+
+def _connectivity_row(label: str, ok: bool, detail: str) -> str:
+    cls = "ok" if ok else "stop"
+    return (
+        "<div class='conn-row'>"
+        f"<span class='badge {cls}'>{escape(label)}</span>"
+        f"<span class='conn-detail'>{escape(detail)}</span>"
+        "</div>"
+    )
+
+
+def _connectivity_html(status: Any, bot_state: str, bot_mode: str) -> str:
+    """Per-source liveness panel — proves the bot is talking to Polymarket.
+
+    A "no trade for N minutes" gap is normally a deliberate skip (lopsided
+    book, risk gate); without this panel the operator cannot tell that from
+    a real disconnect. Each source row shows whether the latest tick's
+    contact succeeded and HOW long ago — paired with the last skip reason so
+    the user can also see WHY no trades fired.
+    """
+    if status is None or status.tick_age_seconds is None:
+        body = "<div class='conn-detail'>No ticks yet — press Start to begin the bot loop.</div>"
+        return (
+            "<div class='panel connectivity'>"
+            "<h3>Connectivity</h3>"
+            f"{body}</div>"
+        )
+    age = int(status.tick_age_seconds)
+    stale_after = int(status.tick_stale_after_seconds or 0)
+    loop_ok = age <= stale_after
+    age_str = f"{age}s ago" if age < 60 else f"{age // 60}m{age % 60:02d}s ago"
+    rows: list[str] = []
+    rows.append(
+        _connectivity_row(
+            "Bot loop",
+            loop_ok,
+            f"last tick {age_str} (stale after {stale_after}s)",
+        )
+    )
+    spot = status.spot_source or "unknown"
+    rows.append(
+        _connectivity_row(
+            "Chainlink spot",
+            spot.startswith("chainlink"),
+            f"source: {spot}",
+        )
+    )
+    ref = status.reference_source or "unknown"
+    rows.append(
+        _connectivity_row(
+            "Chainlink reference",
+            ref.startswith("chainlink"),
+            f"source: {ref}",
+        )
+    )
+    vol = status.vol_source or "unknown"
+    rows.append(
+        _connectivity_row(
+            "Volatility",
+            vol == "chainlink_ws",
+            f"source: {vol}",
+        )
+    )
+    rows.append(
+        _connectivity_row(
+            "Polymarket CLOB book",
+            status.has_book,
+            "top-of-book quotes present this tick"
+            if status.has_book
+            else "book empty/crossed — entries blocked until quotes return",
+        )
+    )
+    if (bot_mode or "").lower() == "live":
+        rows.append(
+            _connectivity_row(
+                "Live executor",
+                status.last_live_order_at is not None,
+                f"last order action: {_fmt_relative(status.last_live_order_at)}",
+            )
+        )
+    skip = status.last_skip_reason or "—"
+    return (
+        "<div class='panel connectivity'>"
+        "<h3>Connectivity</h3>"
+        f"<div class='conn-grid'>{''.join(rows)}</div>"
+        f"<div class='conn-skip'><b>Last tick decision:</b> {escape(skip)}</div>"
+        "</div>"
+    )
+
+
 def _pnl_class(value: float | None) -> str:
     if value is None or value == 0:
         return ""
@@ -235,6 +372,33 @@ def _activity_markdown() -> str:
     return "\n".join(lines)
 
 
+def _mode_split_html(paper: Any) -> str:
+    """Side-by-side LIVE vs PAPER alpha cards — never blends real with simulated."""
+
+    def card(label: str, stats: Any) -> str:
+        badge = _mode_badge(label)
+        pnl_cls = _pnl_class(stats.total_pnl_usd)
+        return (
+            "<div class='split-card'>"
+            f"<h4>{badge} Performance &amp; alpha</h4>"
+            f"<div class='row'>Closed PnL <b class='{pnl_cls}'>{_money(stats.total_pnl_usd, signed=True)}</b></div>"
+            f"<div class='row'>Closed trades <b>{stats.closed_positions}</b></div>"
+            f"<div class='row'>Win rate <b>{_pct(stats.win_rate)}</b></div>"
+            f"<div class='row'>Avg PnL / trade <b>{_money(stats.avg_pnl_usd, signed=True)}</b></div>"
+            f"<div class='row'>Closed notional <b>{_money(stats.closed_notional_usd)}</b></div>"
+            f"<div class='row'>Open positions <b>{stats.open_positions}</b></div>"
+            f"<div class='row'>Open exposure <b>{_money(stats.open_exposure_usd)}</b></div>"
+            "</div>"
+        )
+
+    return (
+        "<div class='split-grid'>"
+        f"{card('LIVE', paper.live_stats)}"
+        f"{card('PAPER', paper.paper_stats)}"
+        "</div>"
+    )
+
+
 def _overview_html() -> str:
     status = _run(get_status())
     paper = _run(load_paper_summary())
@@ -246,11 +410,13 @@ def _overview_html() -> str:
         f"{_kpi_card('Risk state', paper.risk_state, _fmt_relative(paper.last_tick_at))}"
         f"{_kpi_card('Open exposure', _money(paper.open_exposure_usd), f'{paper.open_positions} open position(s)')}"
         f"{_kpi_card('Closed trades', str(paper.closed_positions), f'win rate {_pct(paper.win_rate)}')}"
-        f"<div class='metric'><div class='label'>Paper PnL</div>"
+        f"<div class='metric'><div class='label'>Total PnL (live + paper)</div>"
         f"<div class='value {pnl_cls}'>{_money(paper.total_pnl_usd, signed=True)}</div>"
         f"<div class='hint'>closed notional {_money(paper.closed_notional_usd)}</div></div>"
         f"{_kpi_card('Last signal', paper.last_signal[:90], paper.last_window_slug or 'no market tick yet')}"
         "</div>"
+        f"{_connectivity_html(paper.connectivity, status.state, status.mode)}"
+        f"{_mode_split_html(paper)}"
         "<div class='panel'>"
         f"{badge} <span class='mono'>DB {escape(str(DB_PATH))}</span>"
         f"<p>{escape(status.detail)}</p>"
@@ -283,9 +449,10 @@ def _position_cards(positions: list[dict[str, Any]]) -> str:
         pnl_text = "open" if pnl is None else _money(float(pnl), signed=True)
         pnl_cls = _pnl_class(float(pnl)) if pnl is not None else ""
         closed = _fmt_relative(pos.get("closed_at")) if pos.get("closed_at") else "open"
+        mode_badge = _mode_badge(pos.get("mode"))
         cards.append(
             "<div class='position-card'>"
-            f"<b>{escape(pos['side'])}</b> "
+            f"{mode_badge} <b>{escape(pos['side'])}</b> "
             f"<span class='mono'>{escape(pos['window_slug'])}</span><br>"
             f"State: {escape(pos['state'])} | Opened: {_fmt_relative(pos.get('opened_at'))} | Closed: {closed}<br>"
             f"Entry: {float(pos['entry_price']):.3f} | Exit: {pos.get('exit_price') or 'n/a'} | "
@@ -298,6 +465,7 @@ def _position_cards(positions: list[dict[str, Any]]) -> str:
 
 def _paper_html() -> str:
     paper = _run(load_paper_summary())
+    status = _run(get_status())
     avg_hold = "n/a" if paper.avg_hold_seconds is None else f"{paper.avg_hold_seconds:.0f}s"
     last_edge = "n/a" if paper.last_edge is None else f"{paper.last_edge:+.3f}"
     last_fair = "n/a" if paper.last_fair_up_prob is None else f"{paper.last_fair_up_prob:.1%}"
@@ -311,7 +479,9 @@ def _paper_html() -> str:
         f"{_kpi_card('Avg PnL', _money(paper.avg_pnl_usd, signed=True), f'avg hold {avg_hold}')}"
         f"{_kpi_card('Sizing', f'${BTC_PAPER_MIN_TRADE_USD:.0f}-${BTC_PAPER_MAX_TRADE_USD:.0f}', f'min confidence {BTC_PAPER_MIN_CONFIDENCE:.0%}')}"
         "</div>"
-        "<div class='panel'><h3>Recent Paper Positions</h3>"
+        f"{_connectivity_html(paper.connectivity, status.state, status.mode)}"
+        f"{_mode_split_html(paper)}"
+        "<div class='panel'><h3>Trade blotter</h3>"
         f"{_position_cards(paper.recent_positions)}"
         "</div>"
     )
