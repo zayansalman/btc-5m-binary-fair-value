@@ -70,6 +70,27 @@ function setButtonsDisabled(disabled) {
   });
 }
 
+function setMode(mode) {
+  if (mode === 'live' && !confirm('Switch to LIVE? This places REAL orders with real funds on Polymarket.')) {
+    return;
+  }
+  fetch('/api/mode', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode: mode })
+  })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.status === 'error') {
+        showToast('Mode switch refused: ' + (data.detail || ''), 'error');
+      } else {
+        showToast('Mode → ' + (data.mode || mode).toUpperCase(), 'success');
+        setTimeout(function() { window.location.reload(); }, 600);
+      }
+    })
+    .catch(function(err) { showToast('Mode switch failed: ' + err.message, 'error'); });
+}
+
 function handleStart() {
   setButtonsDisabled(true);
   fetch('/api/start', { method: 'POST' })
@@ -149,22 +170,30 @@ function refreshAll() {
 function updateDashboard(data) {
   if (!data) return;
 
-  // Overview
-  if (data.overview) {
-    var ov = document.getElementById('overview-content');
-    if (ov) ov.innerHTML = data.overview.html || '';
+  // Topbar Start/Stop visual state — driven by runtime.state so the user can
+  // see at a glance which control is the live action.
+  if (data.runtime) {
+    var running = data.runtime.state === 'running';
+    var startBtn = document.querySelector('.btn.start.btn-ctl');
+    var stopBtn = document.querySelector('.btn.stop.btn-ctl');
+    if (startBtn) {
+      startBtn.disabled = running;
+      startBtn.classList.toggle('is-active', !running);
+      startBtn.classList.toggle('is-inactive', running);
+      startBtn.title = running ? 'Bot is running' : 'Start the bot';
+    }
+    if (stopBtn) {
+      stopBtn.disabled = !running;
+      stopBtn.classList.toggle('is-active', running);
+      stopBtn.classList.toggle('is-inactive', !running);
+      stopBtn.title = running ? 'Stop the bot' : 'Bot is stopped';
+    }
   }
 
-  // Paper (BTC 5m tab)
-  if (data.paper) {
-    var paperEl = document.getElementById('paper-content');
-    if (paperEl) paperEl.innerHTML = data.paper.html || '';
-  }
-
-  // Status
-  if (data.overview && data.overview.status) {
-    var st = document.getElementById('status-content');
-    if (st) st.innerHTML = data.overview.status || '';
+  // EMS main view (status ribbon + strategy/market/perf/TCA/blotter)
+  if (data.ems) {
+    var ems = document.getElementById('ems-content');
+    if (ems) ems.innerHTML = data.ems || '';
   }
 
   // Activity

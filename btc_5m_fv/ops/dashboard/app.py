@@ -5,8 +5,9 @@ implementation. All visual design is preserved via extracted CSS.
 
 Endpoints:
     GET  /              — Main dashboard page (HTML)
-    POST /api/start     — Start the paper bot
-    POST /api/stop      — Stop the paper bot
+    POST /api/start     — Start the trading bot (paper by default; LIVE when
+                          BTC_BOT_MODE=live and the boot gates pass)
+    POST /api/stop      — Stop the trading bot (live mode flattens first)
     GET  /api/data      — Full dashboard data as JSON
     GET  /api/stream    — Server-Sent Events for live updates
 """
@@ -38,7 +39,12 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from config import (  # type: ignore[import-untyped]
+    BTC_BOT_MODE,
     BTC_CHAINLINK_STREAM_URL,
+    BTC_LIVE_BANKROLL_CAP_USD,
+    BTC_LIVE_DAILY_LOSS_HALT_USD,
+    BTC_LIVE_MAX_TRADE_USD,
+    KILL_SWITCH_PATH,
     BTC_HISTORY_CSV_PATH,
     BTC_PAPER_ENTRY_EDGE_MIN,
     BTC_PAPER_MAX_TRADE_USD,
@@ -55,15 +61,33 @@ from config import (  # type: ignore[import-untyped]
 )
 from db import connect, init_db  # type: ignore[import-untyped]
 from logging_setup import get_logger  # type: ignore[import-untyped]
+from btc_5m_fv.ops.dashboard.ems import ems_html  # type: ignore[import-untyped]
 
 log = get_logger("dashboard")
 
+_IS_LIVE = BTC_BOT_MODE == "live"
+_MODE_BANNER = (
+    "LIVE — orders are real. Risk-gated CLOB orders are placed on Polymarket."
+    if _IS_LIVE
+    else "Paper — no live orders are placed in this mode."
+)
+
 # Lazily import btc_bot modules (may not be available in test environments)
 try:
-    from btc_bot.controller import get_status, request_start, request_stop  # type: ignore[import-untyped]
+    from btc_bot.controller import (  # type: ignore[import-untyped]
+        current_mode,
+        get_status,
+        request_start,
+        request_stop,
+        set_mode,
+    )
     from btc_bot.history import load_btc_history_stats  # type: ignore[import-untyped]
     from btc_bot.paper import load_paper_summary  # type: ignore[import-untyped]
     from btc_bot.backtest import format_report  # type: ignore[import-untyped]
+    from btc_5m_fv.execution.live import (  # type: ignore[import-untyped]
+        LiveBootRefused,
+        assert_live_boot_allowed,
+    )
 
     _BTC_BOT_AVAILABLE = True
 except Exception:
@@ -114,6 +138,11 @@ def _money(value: float | None, signed: bool = False) -> str:
 
 def _pct(value: float | None) -> str:
     return "n/a" if value is None else f"{value:.1%}"
+
+
+def _fmt_cap(cap: float | None) -> str:
+    """Render an optional risk-limit cap: dollar amount when set, 'disabled' when None."""
+    return f"${cap:.2f}" if cap is not None else "disabled"
 
 
 def _fmt_relative(ts: str | None) -> str:
@@ -190,9 +219,9 @@ async def _get_status_safe() -> Any:
     # Mock status for testing / when btc_bot is not available
     class _MockStatus:
         state = "stopped"
-        mode = "paper"
+        mode = BTC_BOT_MODE
         updated_at = None
-        detail = "BTC 5-minute paper mode is ready. No live orders are placed by this build."
+        detail = f"BTC 5-minute bot is ready. Mode: {_MODE_BANNER}"
     return _MockStatus()
 
 
@@ -285,8 +314,16 @@ async def _status_markdown() -> str:
         f"<li>Risk: <strong>{paper.risk_state}</strong></li>\n"
         "</ul>\n"
         f"<p>{escape(status.detail)}</p>\n"
-        "<p><em>Start runs the paper loop only. Stop prevents new entries immediately "
-        "and force-closes any open simulated position.</em></p>"
+        + (
+            "<p><em><strong>LIVE — orders are real.</strong> Start places risk-gated "
+            "orders on the Polymarket CLOB. Stop cancels resting orders and "
+            f"flattens the open position. Kill switch: <code>{escape(str(KILL_SWITCH_PATH))}</code>."
+            "</em></p>"
+            if _IS_LIVE
+            else "<p><em>Start runs the paper loop only — no live orders in paper mode. "
+            "Stop prevents new entries immediately and force-closes any open "
+            "simulated position.</em></p>"
+        )
     )
 
 
@@ -363,9 +400,17 @@ def _brief_html() -> str:
         "discipline: market discovery, feed labeling, confidence-based sizing, "
         "one-position risk control, structured event logs, and a dashboard kill "
         "switch.</p>\n"
-        "<p>This build does not sign or submit live orders. The active workflow is simple: "
-        "<strong>Start</strong> begins simulated BTC 5m trading, and <strong>Stop</strong> halts new entries "
-        "and closes any open simulated position.</p>"
+        + (
+            "<p><strong>Mode: LIVE — orders are real.</strong> Start places risk-gated "
+            "limit orders on the Polymarket CLOB (per-trade cap "
+            f"${BTC_LIVE_MAX_TRADE_USD:.2f}, daily loss halt ${BTC_LIVE_DAILY_LOSS_HALT_USD:.2f}, "
+            f"bankroll cap {_fmt_cap(BTC_LIVE_BANKROLL_CAP_USD)}); Stop cancels and flattens. "
+            f"Kill switch file: <code>{escape(str(KILL_SWITCH_PATH))}</code>.</p>"
+            if _IS_LIVE
+            else "<p>Mode: paper — this mode does not sign or submit live orders. The active "
+            "workflow is simple: <strong>Start</strong> begins simulated BTC 5m trading, and "
+            "<strong>Stop</strong> halts new entries and closes any open simulated position.</p>"
+        )
     )
 
 
@@ -396,8 +441,16 @@ def _settings_html() -> str:
         f"<li>Time exit: <strong>{BTC_PAPER_TIME_EXIT_SECONDS}s</strong>.</li>\n"
         f"<li>Settlement-aware reference target: {BTC_CHAINLINK_STREAM_URL}</li>\n"
         "</ul>\n"
-        "<p>Required local env vars are optional for paper mode except path overrides. "
-        "No private key is used by this build.</p>"
+        + (
+            "<p><strong>Mode: LIVE — orders are real.</strong> Live limits: per-trade cap "
+            f"<strong>${BTC_LIVE_MAX_TRADE_USD:.2f}</strong>, daily loss halt "
+            f"<strong>${BTC_LIVE_DAILY_LOSS_HALT_USD:.2f}</strong>, session bankroll cap "
+            f"<strong>{_fmt_cap(BTC_LIVE_BANKROLL_CAP_USD)}</strong>, max 1 open position, "
+            f"kill switch <code>{escape(str(KILL_SWITCH_PATH))}</code>.</p>"
+            if _IS_LIVE
+            else "<p>Required local env vars are optional for paper mode except path overrides. "
+            "No private key is used in paper mode.</p>"
+        )
     )
 
 
@@ -457,6 +510,15 @@ async def _get_paper_data() -> dict[str, str]:
     return {"html": await _paper_html()}
 
 
+async def _ems_safe() -> str:
+    """Render the EMS view; never let a dashboard error touch the trading loop."""
+    try:
+        return await ems_html()
+    except Exception as e:  # noqa: BLE001
+        log.warning("ems_render_failed", error=str(e))
+        return f"<div class='ems'><div class='card'>EMS view error: {escape(str(e))}</div></div>"
+
+
 async def _get_activity_data() -> str:
     return await _activity_html()
 
@@ -481,34 +543,59 @@ def _get_settings_data() -> str:
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request) -> Any:
     """Main dashboard page."""
-    overview = await _get_overview_data()
-    status = overview["status"]
-    paper = await _get_paper_data()
-    activity = await _get_activity_data()
-    history = _get_history_data()
-    backtest = _get_backtest_data()
-    settings = _get_settings_data()
-
+    mode, live_available, live_hint = await _mode_context()
     return templates.TemplateResponse(
         request,
         "dashboard.html",
         {
-            "overview": overview,
-            "status": status,
-            "paper": paper,
-            "activity": activity,
-            "history": history,
-            "backtest": backtest,
-            "settings": settings,
-            "brief": _brief_html(),
-            "scorecard": _scorecard_html(),
+            "ems": await _ems_safe(),
+            "activity": await _get_activity_data(),
+            "backtest": _get_backtest_data(),
+            "mode": mode,
+            "live_available": live_available,
+            "live_hint": live_hint,
         },
     )
 
 
+async def _mode_context() -> tuple[str, bool, str]:
+    """(active mode, is live selectable, hint) for the mode toggle."""
+    if not _BTC_BOT_AVAILABLE:
+        return BTC_BOT_MODE, False, "btc_bot unavailable"
+    mode = await current_mode()
+    try:
+        assert_live_boot_allowed()
+        return mode, True, "Switch to LIVE — real CLOB orders"
+    except LiveBootRefused as e:
+        return mode, False, str(e)
+
+
+@app.post("/api/mode")
+async def api_mode(request: Request) -> dict[str, str]:
+    """Switch execution mode (paper/live) and restart the loop cleanly."""
+    if not _BTC_BOT_AVAILABLE:
+        return {"status": "error", "detail": "btc_bot not available"}
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    mode = (body or {}).get("mode", "")
+    if mode not in ("paper", "live"):
+        return {"status": "error", "detail": f"invalid mode {mode!r}"}
+    try:
+        status = await set_mode(mode)
+        return {"status": status.state, "mode": status.mode, "detail": status.detail}
+    except LiveBootRefused as e:
+        return {"status": "error", "detail": f"LIVE refused: {e}"}
+    except Exception as e:  # noqa: BLE001
+        log.exception("btc.set_mode_failed", error=str(e))
+        return {"status": "error", "detail": f"Mode switch failed: {e}"}
+
+
 @app.post("/api/start")
 async def api_start() -> dict[str, str]:
-    """Start the paper bot."""
+    """Start the trading bot — paper by default, LIVE (real orders) when
+    BTC_BOT_MODE=live and every boot gate passes."""
     try:
         if _BTC_BOT_AVAILABLE:
             status = await request_start()
@@ -521,7 +608,8 @@ async def api_start() -> dict[str, str]:
 
 @app.post("/api/stop")
 async def api_stop() -> dict[str, str]:
-    """Stop the paper bot."""
+    """Stop the trading bot. In live mode this waits for the runner to cancel
+    resting orders and flatten open positions before reporting stopped."""
     try:
         if _BTC_BOT_AVAILABLE:
             status = await request_stop()
@@ -532,15 +620,24 @@ async def api_stop() -> dict[str, str]:
         return {"status": "error", "detail": f"Stop failed: {e}"}
 
 
+async def _runtime_state() -> dict[str, str]:
+    """Lightweight snapshot of bot state + mode for the topbar buttons."""
+    from db import get_config
+
+    return {
+        "state": (await get_config("btc_bot.state", "stopped")) or "stopped",
+        "mode": (await get_config("btc_bot.requested_mode", "paper")) or "paper",
+    }
+
+
 @app.get("/api/data")
 async def api_data() -> dict[str, Any]:
     """Get current dashboard data as JSON."""
     return {
-        "overview": await _get_overview_data(),
-        "paper": await _get_paper_data(),
+        "ems": await _ems_safe(),
         "activity": await _get_activity_data(),
-        "history": _get_history_data(),
         "backtest": _get_backtest_data(),
+        "runtime": await _runtime_state(),
     }
 
 
@@ -553,11 +650,10 @@ async def api_stream(request: Request) -> StreamingResponse:
                 break
             try:
                 data = {
-                    "overview": await _get_overview_data(),
-                    "paper": await _get_paper_data(),
+                    "ems": await _ems_safe(),
                     "activity": await _get_activity_data(),
-                    "history": _get_history_data(),
                     "backtest": _get_backtest_data(),
+                    "runtime": await _runtime_state(),
                 }
                 yield f"data: {json.dumps(data)}\n\n"
             except Exception as e:

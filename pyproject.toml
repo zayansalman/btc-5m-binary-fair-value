@@ -15,11 +15,16 @@ dependencies = [
     "fastapi>=0.110",
     "jinja2>=3.1",
     "uvicorn>=0.29",
+    "py-clob-client-v2>=1.0",
+    "websockets>=12",
 ]
 
 [project.optional-dependencies]
 test = ["pytest>=8.0", "pytest-asyncio>=0.24"]
 dev = ["ruff>=0.4", "mypy>=1.9"]
+# One-time live onboarding only (tools/live_setup.py): deposit-wallet deploy.
+# Day-to-day trading uses py-clob-client-v2, a core dependency.
+setup = ["polymarket-client"]
 
 [tool.setuptools]
 packages = ["btc_5m_fv", "btc_bot"]
