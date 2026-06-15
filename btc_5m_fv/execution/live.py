@@ -52,12 +52,11 @@ if str(_PROJECT_ROOT) not in sys.path:
 import config as _config
 from db import (  # type: ignore[import-untyped]
     connect,
-    get_config,
     journal_live_order,
     notify,
-    set_config,
 )
 from logging_setup import get_logger  # type: ignore[import-untyped]
+from btc_5m_fv.execution.gate import EntryRequest, GateConfig, RiskGate
 
 log = get_logger("btc_live")
 
@@ -75,11 +74,6 @@ DEFAULT_MIN_ORDER_SIZE = 5.0
 
 # get_order statuses meaning the order can never trade again.
 _TERMINAL_ORDER_STATUSES = {"matched", "canceled", "cancelled"}
-
-# SQLite config keys for the persisted daily risk counters.
-_RISK_DATE_KEY = "btc_live.risk_date"
-_RISK_PNL_KEY = "btc_live.daily_realized_pnl"
-_RISK_NOTIONAL_KEY = "btc_live.daily_buy_notional"
 
 
 class LiveBootRefused(RuntimeError):
@@ -203,40 +197,37 @@ class LiveExecutor:
         self._signature_type = signature_type
         self._host = host or _config.POLYMARKET_CLOB_API
         self._chain_id = chain_id or _config.POLYMARKET_CHAIN_ID
-        self.max_trade_usd = (
-            max_trade_usd if max_trade_usd is not None else _config.BTC_LIVE_MAX_TRADE_USD
+        gate_cfg = GateConfig(
+            max_trade_usd=(
+                max_trade_usd if max_trade_usd is not None
+                else _config.BTC_TRADE_MAX_USD
+            ),
+            daily_loss_halt_usd=(
+                daily_loss_halt_usd if daily_loss_halt_usd is not None
+                else _config.BTC_TRADE_DAILY_LOSS_HALT_USD
+            ),
+            bankroll_cap_usd=(
+                bankroll_cap_usd if bankroll_cap_usd is not None
+                else _config.BTC_TRADE_BANKROLL_CAP_USD
+            ),
+            max_entry_slippage=(
+                max_entry_slippage if max_entry_slippage is not None
+                else _config.BTC_TRADE_MAX_ENTRY_SLIPPAGE
+            ),
+            kill_switch_path=Path(
+                kill_switch_path if kill_switch_path is not None
+                else _config.KILL_SWITCH_PATH
+            ),
         )
-        self.daily_loss_halt_usd = (
-            daily_loss_halt_usd
-            if daily_loss_halt_usd is not None
-            else _config.BTC_LIVE_DAILY_LOSS_HALT_USD
-        )
-        self.bankroll_cap_usd = (
-            bankroll_cap_usd
-            if bankroll_cap_usd is not None
-            else _config.BTC_LIVE_BANKROLL_CAP_USD
-        )
-        self.max_entry_slippage = (
-            max_entry_slippage
-            if max_entry_slippage is not None
-            else _config.BTC_LIVE_MAX_ENTRY_SLIPPAGE
-        )
+        self.gate = RiskGate(gate_cfg)
         self.exit_fill_timeout_seconds = (
             exit_fill_timeout_seconds
             if exit_fill_timeout_seconds is not None
             else _config.BTC_LIVE_EXIT_FILL_TIMEOUT_SECONDS
         )
-        self.kill_switch_path = Path(
-            kill_switch_path if kill_switch_path is not None else _config.KILL_SWITCH_PATH
-        )
 
         self._client = client
         self._started = client is not None
-        # Risk state (daily, persisted to SQLite — see _load/_persist_risk_state)
-        self._daily_buy_notional = 0.0
-        self._daily_realized_pnl = 0.0
-        self._daily_pnl_date = self._today()
-        self._kill_handled = False
         # Position / order tracking (max 1 open position by design)
         self._entry_order_id: Optional[str] = None
         self._entry_token_id: Optional[str] = None
@@ -289,20 +280,20 @@ class LiveExecutor:
             )
         except Exception as e:  # noqa: BLE001
             log.warning("live_executor.allowance_refresh_failed", error=str(e))
-        await self._load_risk_state()
+        await self.gate.load()
         await self._reconcile_account()
         log.info(
             "live_executor.started",
             host=self._host,
             signature_type=self._signature_type,
             funder_set=bool(self._funder),
-            max_trade_usd=self.max_trade_usd,
-            daily_loss_halt_usd=self.daily_loss_halt_usd,
-            bankroll_cap_usd=self.bankroll_cap_usd,
-            daily_realized_pnl=round(self._daily_realized_pnl, 4),
-            daily_buy_notional=round(self._daily_buy_notional, 4),
+            max_trade_usd=self.gate.cfg.max_trade_usd,
+            daily_loss_halt_usd=self.gate.cfg.daily_loss_halt_usd,
+            bankroll_cap_usd=self.gate.cfg.bankroll_cap_usd,
+            daily_realized_pnl=round(self.gate.daily_realized_pnl, 4),
+            daily_buy_notional=round(self.gate.daily_buy_notional, 4),
             adopted_position=self._position_open,
-            kill_switch=str(self.kill_switch_path),
+            kill_switch=str(self.gate.cfg.kill_switch_path),
         )
 
     def _build_client(self) -> Any:
@@ -430,11 +421,31 @@ class LiveExecutor:
             await db.commit()
 
     # ------------------------------------------------------------------
-    # Kill switch
+    # Gate proxies — single source of truth is self.gate (issue #64)
     # ------------------------------------------------------------------
 
+    @property
+    def max_trade_usd(self) -> float:
+        return self.gate.cfg.max_trade_usd
+
+    @property
+    def daily_loss_halt_usd(self) -> float:
+        return self.gate.cfg.daily_loss_halt_usd
+
+    @property
+    def bankroll_cap_usd(self) -> float | None:
+        return self.gate.cfg.bankroll_cap_usd
+
+    @property
+    def max_entry_slippage(self) -> float:
+        return self.gate.cfg.max_entry_slippage
+
+    @property
+    def kill_switch_path(self) -> Path:
+        return self.gate.cfg.kill_switch_path
+
     def kill_switch_active(self) -> bool:
-        return self.kill_switch_path.exists()
+        return self.gate.kill_switch_active()
 
     async def enforce_kill_switch(self) -> bool:
         """If the kill file exists, cancel open orders once and halt entries.
@@ -443,64 +454,32 @@ class LiveExecutor:
         again later triggers the cancel sweep again. Exits remain allowed
         while the kill switch is active: flattening only reduces exposure.
         """
-        if not self.kill_switch_active():
-            if self._kill_handled:
-                self._kill_handled = False
-                log.info("live_executor.kill_switch_rearmed", path=str(self.kill_switch_path))
+        if not self.gate.kill_switch_active():
+            if self.gate.kill_already_handled():
+                self.gate.rearm_kill()
+                log.info(
+                    "live_executor.kill_switch_rearmed",
+                    path=str(self.gate.cfg.kill_switch_path),
+                )
             return False
-        if not self._kill_handled:
-            self._kill_handled = True
-            log.error("live_executor.kill_switch_triggered", path=str(self.kill_switch_path))
+        if not self.gate.kill_already_handled():
+            self.gate.mark_kill_handled()
+            log.error(
+                "live_executor.kill_switch_triggered",
+                path=str(self.gate.cfg.kill_switch_path),
+            )
             await notify(
                 "btc_live_kill_switch",
-                f"KILL switch file detected at {self.kill_switch_path}. "
+                f"KILL switch file detected at {self.gate.cfg.kill_switch_path}. "
                 "New entries halted; cancelling resting orders. Open positions "
                 "will still be flattened by the exit path.",
             )
             await self.cancel_open(reason="KILL_SWITCH")
         return True
 
-    # ------------------------------------------------------------------
-    # Risk gates (daily counters persisted to SQLite)
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _today() -> str:
-        return datetime.now(UTC).date().isoformat()
-
-    def _roll_daily_window(self) -> None:
-        today = self._today()
-        if today != self._daily_pnl_date:
-            self._daily_pnl_date = today
-            self._daily_realized_pnl = 0.0
-            self._daily_buy_notional = 0.0
-
-    async def _load_risk_state(self) -> None:
-        """Rebuild the daily counters from SQLite so restarts cannot reset them."""
-        stored_date = await get_config(_RISK_DATE_KEY)
-        if stored_date == self._today():
-            try:
-                self._daily_realized_pnl = float(await get_config(_RISK_PNL_KEY, "0") or 0)
-                self._daily_buy_notional = float(
-                    await get_config(_RISK_NOTIONAL_KEY, "0") or 0
-                )
-            except ValueError:
-                log.warning("live_executor.risk_state_unreadable_reset")
-                self._daily_realized_pnl = 0.0
-                self._daily_buy_notional = 0.0
-        self._daily_pnl_date = self._today()
-        await self._persist_risk_state()
-
-    async def _persist_risk_state(self) -> None:
-        await set_config(_RISK_DATE_KEY, self._daily_pnl_date)
-        await set_config(_RISK_PNL_KEY, repr(self._daily_realized_pnl))
-        await set_config(_RISK_NOTIONAL_KEY, repr(self._daily_buy_notional))
-
     async def record_realized_pnl(self, pnl_usd: float) -> None:
-        """Feed realized PnL into the daily loss halt tracker (persisted)."""
-        self._roll_daily_window()
-        self._daily_realized_pnl += pnl_usd
-        await self._persist_risk_state()
+        """Feed realized PnL into the shared daily-loss-halt tracker."""
+        await self.gate.record_realized_pnl(pnl_usd)
 
     async def record_settlement(self, won: bool, window_slug: str) -> LiveOrderResult:
         """Register a resolution outcome for the held position without selling.
@@ -548,42 +527,34 @@ class LiveExecutor:
 
     @property
     def daily_realized_pnl(self) -> float:
-        self._roll_daily_window()
-        return self._daily_realized_pnl
+        return self.gate.daily_realized_pnl
 
     @property
     def daily_buy_notional(self) -> float:
-        self._roll_daily_window()
-        return self._daily_buy_notional
+        return self.gate.daily_buy_notional
 
-    def entry_block_reason(self, notional_usd: float) -> str | None:
-        """Return why a new entry is blocked, or None if all risk gates pass."""
-        if self.kill_switch_active():
-            return f"KILL switch active at {self.kill_switch_path}"
-        self._roll_daily_window()
-        if self._daily_realized_pnl <= -self.daily_loss_halt_usd:
-            return (
-                f"daily loss halt: realized {self._daily_realized_pnl:+.2f} USD "
-                f"breaches -{self.daily_loss_halt_usd:.2f} USD"
+    def entry_block_reason(
+        self,
+        notional_usd: float,
+        *,
+        side_price: float | None = None,
+        best_ask: float | None = None,
+    ) -> str | None:
+        """Return why a new entry is blocked, or None if all risk gates pass.
+
+        Live-only callers omit ``side_price`` / ``best_ask`` and apply the
+        slippage guard separately after fetching the live book; the unified
+        gate handles slippage too when both prices are supplied.
+        """
+        return self.gate.block_reason(
+            EntryRequest(
+                notional_usd=notional_usd,
+                position_open=self._position_open,
+                entry_order_resting=self._entry_order_id is not None,
+                side_price=side_price,
+                best_ask=best_ask,
             )
-        if self._position_open or self._entry_order_id is not None:
-            return "an open live position/order already exists (max 1)"
-        if notional_usd <= 0:
-            return "notional must be positive"
-        if notional_usd > self.max_trade_usd:
-            return (
-                f"per-trade cap: {notional_usd:.2f} USD exceeds "
-                f"{self.max_trade_usd:.2f} USD"
-            )
-        if (
-            self.bankroll_cap_usd is not None
-            and self._daily_buy_notional + notional_usd > self.bankroll_cap_usd
-        ):
-            return (
-                f"daily bankroll cap: {self._daily_buy_notional:.2f} + "
-                f"{notional_usd:.2f} USD exceeds {self.bankroll_cap_usd:.2f} USD"
-            )
-        return None
+        )
 
     # ------------------------------------------------------------------
     # Market metadata helpers
@@ -652,40 +623,38 @@ class LiveExecutor:
         the entry when the live ask has moved too far above the signal price
         that justified the trade.
         """
+        # First-pass gate WITHOUT slippage (no book yet). Cheap pre-filter for
+        # kill switch, daily-loss halt, singleton, per-trade cap, bankroll cap.
         blocked = self.entry_block_reason(notional_usd)
         if blocked is not None:
             await self._journal_blocked(
                 intent="ENTRY", side=BUY, reason=blocked,
                 window_slug=window_slug, token_id=token_id,
-                notional_usd=notional_usd,
+                notional_usd=notional_usd, mode="live",
             )
             return LiveOrderResult(ok=False, status="BLOCKED", reason=blocked)
         if not token_id:
             reason = "no CLOB token id available for this market/outcome"
             await self._journal_blocked(
                 intent="ENTRY", side=BUY, reason=reason,
-                window_slug=window_slug, notional_usd=notional_usd,
+                window_slug=window_slug, notional_usd=notional_usd, mode="live",
             )
             return LiveOrderResult(ok=False, status="BLOCKED", reason=reason)
 
         best_ask, _, tick, min_size = await self._book_context(token_id)
-        if (
-            best_ask is not None
-            and side_price > 0
-            and best_ask - side_price > self.max_entry_slippage
-        ):
-            reason = (
-                f"entry slippage guard: book ask {best_ask:.3f} is "
-                f"{best_ask - side_price:+.3f} above the signal price "
-                f"{side_price:.3f} (max {self.max_entry_slippage:.3f}); "
-                "the edge that justified this trade no longer exists"
-            )
+        # Second pass: re-evaluate INCLUDING the slippage guard now that we
+        # have the live book. The kill switch / counters could also have
+        # tipped over during the book fetch — re-checking is free.
+        blocked = self.entry_block_reason(
+            notional_usd, side_price=side_price, best_ask=best_ask
+        )
+        if blocked is not None:
             await self._journal_blocked(
-                intent="ENTRY", side=BUY, reason=reason,
+                intent="ENTRY", side=BUY, reason=blocked,
                 window_slug=window_slug, token_id=token_id,
-                price=best_ask, notional_usd=notional_usd,
+                price=best_ask, notional_usd=notional_usd, mode="live",
             )
-            return LiveOrderResult(ok=False, status="BLOCKED", reason=reason)
+            return LiveOrderResult(ok=False, status="BLOCKED", reason=blocked)
         raw_price = best_ask if best_ask is not None else side_price
         price = _round_price_to_tick(raw_price, tick)
         size = _round_size_down(notional_usd / price)
@@ -697,7 +666,7 @@ class LiveExecutor:
             await self._journal_blocked(
                 intent="ENTRY", side=BUY, reason=reason,
                 window_slug=window_slug, token_id=token_id,
-                price=price, size=size, notional_usd=notional_usd,
+                price=price, size=size, notional_usd=notional_usd, mode="live",
             )
             return LiveOrderResult(ok=False, status="BLOCKED", reason=reason)
 
@@ -713,8 +682,7 @@ class LiveExecutor:
             self._entry_matched_size = None
             self._entry_sold_size = 0.0
             self._position_open = True
-            self._daily_buy_notional += round(price * size, 4)
-            await self._persist_risk_state()
+            await self.gate.record_buy_notional(round(price * size, 4))
         return result
 
     async def submit_exit(
@@ -892,10 +860,11 @@ class LiveExecutor:
         self._entry_matched_size = matched
         unfilled = max(0.0, self._entry_size - matched)
         if unfilled > 0 and self._entry_price:
-            self._daily_buy_notional = max(
-                0.0, self._daily_buy_notional - round(unfilled * self._entry_price, 4)
+            # Credit back the unfilled notional so the bankroll counter only
+            # reflects size that actually traded.
+            await self.gate.record_buy_notional(
+                -round(unfilled * self._entry_price, 4)
             )
-            await self._persist_risk_state()
         self._entry_order_id = None
         return cancelled
 
@@ -1097,13 +1066,15 @@ class LiveExecutor:
         price: float | None = None,
         size: float | None = None,
         notional_usd: float | None = None,
+        mode: str = "live",
     ) -> None:
         await journal_live_order(
             intent=intent, side=side, status="BLOCKED",
             window_slug=window_slug, token_id=token_id,
             price=price, size=size, notional_usd=notional_usd, error=reason,
+            mode=mode,
         )
-        log.warning("live_executor.order_blocked", intent=intent, reason=reason)
+        log.warning("live_executor.order_blocked", intent=intent, reason=reason, mode=mode)
 
 
 def build_live_executor() -> LiveExecutor:

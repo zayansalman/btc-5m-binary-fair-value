@@ -775,7 +775,7 @@ async def test_boot_adopts_open_position_from_journal(
 
     # The adopted position holds the max-1 gate...
     assert executor.entry_block_reason(3.0) == (
-        "an open live position/order already exists (max 1)"
+        "an open position/order already exists (max 1)"
     )
     # ...and the normal exit path can flatten it.
     client.create_and_post_order.return_value = {"success": True, "orderID": "0xSELL"}

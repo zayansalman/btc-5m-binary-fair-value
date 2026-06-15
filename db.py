@@ -106,13 +106,21 @@ CREATE TABLE IF NOT EXISTS btc_live_orders (
   status TEXT NOT NULL,
   clob_order_id TEXT,
   error TEXT,
-  details_json TEXT
+  details_json TEXT,
+  -- 'live' rows are real CLOB attempts. 'paper' rows record what the live
+  -- gate WOULD have done for the same signal, so paper is a faithful preview
+  -- of live (issue #64). All rows that predate the migration are 'live'.
+  mode TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_btc_live_orders_created
   ON btc_live_orders(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_btc_live_orders_status
   ON btc_live_orders(status);
 """
+
+BTC_LIVE_ORDERS_COLUMN_MIGRATIONS = {
+    "mode": "TEXT",
+}
 
 BTC_POSITION_COLUMN_MIGRATIONS = {
     "market_question": "TEXT",
@@ -175,7 +183,9 @@ async def init_db() -> None:
         await db.executescript(SCHEMA)
         await _migrate_columns(db, "btc_paper_positions", BTC_POSITION_COLUMN_MIGRATIONS)
         await _migrate_columns(db, "btc_paper_ticks", BTC_TICK_COLUMN_MIGRATIONS)
+        await _migrate_columns(db, "btc_live_orders", BTC_LIVE_ORDERS_COLUMN_MIGRATIONS)
         await _backfill_position_mode(db)
+        await _backfill_live_order_mode(db)
         await db.commit()
 
 
@@ -199,6 +209,13 @@ async def _backfill_position_mode(db: aiosqlite.Connection) -> None:
     )
     await db.execute(
         "UPDATE btc_paper_positions SET mode = 'paper' WHERE mode IS NULL"
+    )
+
+
+async def _backfill_live_order_mode(db: aiosqlite.Connection) -> None:
+    """Every pre-migration row in btc_live_orders is real CLOB activity → 'live'."""
+    await db.execute(
+        "UPDATE btc_live_orders SET mode = 'live' WHERE mode IS NULL"
     )
 
 
@@ -253,8 +270,13 @@ async def journal_live_order(
     clob_order_id: str | None = None,
     error: str | None = None,
     details: dict[str, Any] | None = None,
+    mode: str = "live",
 ) -> None:
-    """Append one live order/fill/cancel attempt to the btc_live_orders journal."""
+    """Append one order/fill/cancel attempt to the btc_live_orders journal.
+
+    ``mode`` is 'live' for real CLOB activity and 'paper' for paper-side
+    BLOCKED rows surfaced by the shared RiskGate (issue #64).
+    """
     error = redact_secrets(error)
     payload = redact_secrets(json.dumps(details or {}, sort_keys=True, default=str))
     async with connect() as db:
@@ -262,8 +284,9 @@ async def journal_live_order(
             """
             INSERT INTO btc_live_orders(
               created_at, window_slug, token_id, intent, side, price, size,
-              notional_usd, order_type, status, clob_order_id, error, details_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              notional_usd, order_type, status, clob_order_id, error,
+              details_json, mode
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 utc_now_iso(),
@@ -279,6 +302,7 @@ async def journal_live_order(
                 clob_order_id,
                 error,
                 payload,
+                mode,
             ),
         )
         await db.commit()
