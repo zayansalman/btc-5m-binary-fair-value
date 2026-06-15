@@ -588,7 +588,9 @@ class LiveExecutor:
 
         py-clob-client order books list levels from worst to best, so the best
         ask/bid is the LAST element (see builder.calculate_*_market_price).
-        Falls back to safe defaults when the book is unavailable.
+        ``py-clob-client-v2`` returns the raw JSON dict; the v1 SDK returned an
+        ``OrderBookSummary`` object — accept either. Falls back to safe defaults
+        when the book is unavailable.
         """
         best_ask: float | None = None
         best_bid: float | None = None
@@ -599,16 +601,30 @@ class LiveExecutor:
         except Exception as e:  # noqa: BLE001
             log.warning("live_executor.order_book_failed", error=str(e))
             return best_ask, best_bid, tick, min_size
+
+        def _get(obj: object, name: str, default: object = None) -> object:
+            if isinstance(obj, dict):
+                return obj.get(name, default)
+            return getattr(obj, name, default)
+
+        def _level_price(level: object) -> float | None:
+            p = _get(level, "price")
+            return float(p) if p is not None else None
+
         try:
-            if book.asks:
-                best_ask = float(book.asks[-1].price)
-            if book.bids:
-                best_bid = float(book.bids[-1].price)
-            if book.tick_size:
-                tick = float(book.tick_size)
-            if book.min_order_size:
-                min_size = float(book.min_order_size)
-        except (TypeError, ValueError) as e:
+            asks = _get(book, "asks") or []
+            bids = _get(book, "bids") or []
+            if asks:
+                best_ask = _level_price(asks[-1])
+            if bids:
+                best_bid = _level_price(bids[-1])
+            t = _get(book, "tick_size")
+            if t is not None:
+                tick = float(t)
+            m = _get(book, "min_order_size")
+            if m is not None:
+                min_size = float(m)
+        except (TypeError, ValueError, AttributeError) as e:
             log.warning("live_executor.order_book_parse_failed", error=str(e))
         return best_ask, best_bid, tick, min_size
 

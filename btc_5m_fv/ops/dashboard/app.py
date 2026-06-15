@@ -615,6 +615,16 @@ async def api_stop() -> dict[str, str]:
         return {"status": "error", "detail": f"Stop failed: {e}"}
 
 
+async def _runtime_state() -> dict[str, str]:
+    """Lightweight snapshot of bot state + mode for the topbar buttons."""
+    from db import get_config
+
+    return {
+        "state": (await get_config("btc_bot.state", "stopped")) or "stopped",
+        "mode": (await get_config("btc_bot.requested_mode", "paper")) or "paper",
+    }
+
+
 @app.get("/api/data")
 async def api_data() -> dict[str, Any]:
     """Get current dashboard data as JSON."""
@@ -622,6 +632,7 @@ async def api_data() -> dict[str, Any]:
         "ems": await _ems_safe(),
         "activity": await _get_activity_data(),
         "backtest": _get_backtest_data(),
+        "runtime": await _runtime_state(),
     }
 
 
@@ -637,6 +648,7 @@ async def api_stream(request: Request) -> StreamingResponse:
                     "ems": await _ems_safe(),
                     "activity": await _get_activity_data(),
                     "backtest": _get_backtest_data(),
+                    "runtime": await _runtime_state(),
                 }
                 yield f"data: {json.dumps(data)}\n\n"
             except Exception as e:

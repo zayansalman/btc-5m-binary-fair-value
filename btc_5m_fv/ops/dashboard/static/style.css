@@ -66,6 +66,10 @@ body {
 .btn.stop:hover { background: rgba(255,84,112,.12); }
 .btn.ghost { color: var(--dim); }
 .btn:disabled { opacity: .45; cursor: not-allowed; }
+/* state-driven topbar buttons: highlight the actionable one, dim the other. */
+.btn.start.is-active { background: rgba(43,212,125,.16); border-color: rgba(43,212,125,.7); box-shadow: 0 0 0 1px rgba(43,212,125,.35) inset; }
+.btn.stop.is-active { background: rgba(255,84,112,.16); border-color: rgba(255,84,112,.7); box-shadow: 0 0 0 1px rgba(255,84,112,.35) inset; }
+.btn.is-inactive { opacity: .35; }
 
 /* ── status ribbon ── */
 .ribbon {

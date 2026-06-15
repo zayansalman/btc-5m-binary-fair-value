@@ -277,6 +277,31 @@ async def test_entry_falls_back_to_signal_price_without_book(
 
 
 @pytest.mark.asyncio
+async def test_entry_handles_dict_shaped_order_book(
+    journal_db, tmp_path: Path
+) -> None:
+    # py-clob-client-v2 returns the raw JSON dict, not an OrderBookSummary
+    # object. _book_context must accept both shapes — otherwise submit_entry
+    # crashes with AttributeError and live entries silently never reach CLOB
+    # (regression observed in production: 5 positions opened against a dict-
+    # shaped book, zero BUY orders journaled).
+    client = _mock_client()
+    client.get_order_book.return_value = {
+        "asks": [{"price": "0.99", "size": "100"}, {"price": "0.60", "size": "50"}],
+        "bids": [{"price": "0.01", "size": "100"}, {"price": "0.55", "size": "50"}],
+        "tick_size": "0.01",
+        "min_order_size": "5",
+    }
+    executor = _executor(client, tmp_path)
+
+    result = await executor.submit_entry(UP_TOKEN, 0.60, 3.0)
+
+    assert result.ok, result.reason
+    args = client.create_and_post_order.call_args.args[0]
+    assert args.price == 0.60
+
+
+@pytest.mark.asyncio
 async def test_entry_blocked_below_min_order_size(journal_db, tmp_path: Path) -> None:
     # $3 at 0.70 = 4.28 shares < Polymarket minimum of 5 shares.
     client = _mock_client(_mock_book(best_ask="0.70"))
