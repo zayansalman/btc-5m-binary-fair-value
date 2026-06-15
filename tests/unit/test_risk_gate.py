@@ -33,6 +33,7 @@ def _cfg(
     bankroll_cap_usd: Optional[float] = None,
     max_entry_slippage: float = 0.02,
     kill_switch_path: Path | None = None,
+    trading_hours_utc: Optional[frozenset[int]] = None,
 ) -> GateConfig:
     return GateConfig(
         max_trade_usd=max_trade_usd,
@@ -40,6 +41,7 @@ def _cfg(
         bankroll_cap_usd=bankroll_cap_usd,
         max_entry_slippage=max_entry_slippage,
         kill_switch_path=kill_switch_path or Path("/does/not/exist"),
+        trading_hours_utc=trading_hours_utc,
     )
 
 
@@ -86,8 +88,8 @@ class TestGateDecisionTable:
         gate_paper = RiskGate(_cfg(daily_loss_halt_usd=10.0))
         gate_live = RiskGate(_cfg(daily_loss_halt_usd=10.0))
         # Both feed the same loss into their counters.
-        await gate_paper.record_realized_pnl(-10.5)
-        await gate_live.record_realized_pnl(-10.5)
+        await gate_paper.record_realized_pnl(-10.5, is_live=False)
+        await gate_live.record_realized_pnl(-10.5, is_live=True)
         assert gate_paper.block_reason(_req()) == gate_live.block_reason(_req())
         assert "daily loss halt" in (gate_live.block_reason(_req()) or "")
 
@@ -146,9 +148,9 @@ class TestPaperLiveCounterParity:
     @pytest.mark.asyncio
     async def test_paper_pnl_advances_halt(self) -> None:
         gate = RiskGate(_cfg(daily_loss_halt_usd=10.0))
-        await gate.record_realized_pnl(-4.0)
+        await gate.record_realized_pnl(-4.0, is_live=False)
         assert gate.block_reason(_req()) is None  # not yet at halt
-        await gate.record_realized_pnl(-6.5)  # cumulative -10.5
+        await gate.record_realized_pnl(-6.5, is_live=False)  # cumulative -10.5
         msg = gate.block_reason(_req())
         assert msg is not None and "daily loss halt" in msg
 
@@ -164,6 +166,103 @@ class TestPaperLiveCounterParity:
         assert gate.block_reason(_req(notional_usd=5.0)) is None
 
 
+class TestPnlSplit:
+    """Issue #67: live and paper PnL track separately, halt sums both."""
+
+    @pytest.mark.asyncio
+    async def test_live_paper_separate_buckets(self) -> None:
+        gate = RiskGate(_cfg(daily_loss_halt_usd=10.0))
+        await gate.record_realized_pnl(5.0, is_live=True)
+        await gate.record_realized_pnl(-2.0, is_live=False)
+        assert gate.live_pnl == pytest.approx(5.0)
+        assert gate.paper_pnl == pytest.approx(-2.0)
+        assert gate.daily_realized_pnl == pytest.approx(3.0)
+
+    @pytest.mark.asyncio
+    async def test_halt_sums_both_buckets(self) -> None:
+        gate = RiskGate(_cfg(daily_loss_halt_usd=10.0))
+        await gate.record_realized_pnl(-6.0, is_live=True)
+        await gate.record_realized_pnl(-5.0, is_live=False)
+        # Combined -11 USD breaches the -10 halt.
+        msg = gate.block_reason(_req())
+        assert msg is not None and "daily loss halt" in msg
+
+
+class TestTradingHoursWindow:
+    """Issue #67: UTC-hour gate."""
+
+    def test_parse_range(self) -> None:
+        from btc_5m_fv.execution.gate import _parse_trading_hours
+        assert _parse_trading_hours("05-12") == frozenset(range(5, 13))
+        assert _parse_trading_hours("05-07,11-14") == frozenset({5, 6, 7, 11, 12, 13, 14})
+        assert _parse_trading_hours("5,6,7") == frozenset({5, 6, 7})
+        assert _parse_trading_hours("*") is None
+        assert _parse_trading_hours("") is None
+        assert _parse_trading_hours(None) is None
+        # Out-of-range silently dropped.
+        assert _parse_trading_hours("25-30") == None
+        # Reversed range silently dropped (not "wrap").
+        assert _parse_trading_hours("12-05") == None
+
+    def test_unbounded_passes(self) -> None:
+        gate = RiskGate(_cfg(trading_hours_utc=None))
+        assert gate.block_reason(_req()) is None
+
+    def test_inside_window_passes(self, monkeypatch) -> None:
+        from btc_5m_fv.execution import gate as gate_mod
+        from datetime import datetime, UTC
+
+        class FixedDT:
+            @classmethod
+            def now(cls, tz=None):
+                return datetime(2026, 6, 16, 7, 30, tzinfo=UTC)
+        monkeypatch.setattr(gate_mod, "datetime", FixedDT)
+        gate = RiskGate(_cfg(trading_hours_utc=frozenset(range(5, 13))))
+        assert gate.block_reason(_req()) is None
+
+    def test_outside_window_blocks(self, monkeypatch) -> None:
+        from btc_5m_fv.execution import gate as gate_mod
+        from datetime import datetime, UTC
+
+        class FixedDT:
+            @classmethod
+            def now(cls, tz=None):
+                return datetime(2026, 6, 16, 19, 30, tzinfo=UTC)
+        monkeypatch.setattr(gate_mod, "datetime", FixedDT)
+        gate = RiskGate(_cfg(trading_hours_utc=frozenset(range(5, 13))))
+        msg = gate.block_reason(_req())
+        assert msg is not None and "outside trading window" in msg
+
+    @pytest.mark.asyncio
+    async def test_paper_bypass_works_live_doesnt(self, monkeypatch) -> None:
+        from btc_5m_fv.execution import gate as gate_mod
+        from btc_5m_fv.execution.gate import set_paper_bypass_trading_hours
+        from datetime import datetime, UTC
+
+        class FixedDT:
+            @classmethod
+            def now(cls, tz=None):
+                return datetime(2026, 6, 16, 19, 30, tzinfo=UTC)
+        monkeypatch.setattr(gate_mod, "datetime", FixedDT)
+        await set_paper_bypass_trading_hours(True)
+
+        # Paper bypasses.
+        paper = RiskGate(
+            _cfg(trading_hours_utc=frozenset(range(5, 13))),
+            allow_overrides=True,
+        )
+        await paper.refresh_overrides()
+        assert paper.block_reason(_req()) is None
+        # Live still blocks despite the flag.
+        live = RiskGate(
+            _cfg(trading_hours_utc=frozenset(range(5, 13))),
+            allow_overrides=False,
+        )
+        await live.refresh_overrides()
+        msg = live.block_reason(_req())
+        assert msg is not None and "outside trading window" in msg
+
+
 class TestPaperOverrideStructurallyIgnoredInLive:
     """Live's gate is built with allow_overrides=False so the paper study
     toggle cannot affect real funds even if the SQLite flag is set."""
@@ -174,7 +273,7 @@ class TestPaperOverrideStructurallyIgnoredInLive:
 
         await set_paper_bypass_loss_halt(True)  # operator hits the toggle
         live = RiskGate(_cfg(daily_loss_halt_usd=10.0), allow_overrides=False)
-        await live.record_realized_pnl(-15.0)
+        await live.record_realized_pnl(-15.0, is_live=True)
         await live.refresh_overrides()
         # Live still halts despite the bypass flag being persisted.
         msg = live.block_reason(_req())
@@ -187,7 +286,7 @@ class TestPaperOverrideStructurallyIgnoredInLive:
 
         await set_paper_bypass_loss_halt(True)
         paper = RiskGate(_cfg(daily_loss_halt_usd=10.0), allow_overrides=True)
-        await paper.record_realized_pnl(-15.0)
+        await paper.record_realized_pnl(-15.0, is_live=False)
         await paper.refresh_overrides()
         # Paper passes — that's the whole point of the study toggle.
         assert paper.block_reason(_req()) is None
