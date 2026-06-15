@@ -67,6 +67,7 @@ from btc_5m_fv.connectors.chainlink_settlement import (
 )
 from btc_5m_fv.execution.live import LiveExecutor, build_live_executor
 from btc_bot.adaptive import evaluate_and_maybe_pause
+from btc_bot import calibration as _calibration
 from btc_bot.strategy import (
     StrategyParams,
     fair_up_probability,
@@ -86,6 +87,24 @@ _chainlink_feed: ChainlinkWsFeed | None = None
 # Reference open print per window_start_ts. The open is immutable once the
 # provisional revision settles, so one stabilized REST read per window.
 _reference_cache: dict[int, float] = {}
+
+# Side-relative probability calibrator (#37). Lazily loaded on first use and
+# reloaded by the dashboard when a fresh fit is persisted. Identity when no
+# calibration.json exists — fully no-op in that state.
+_calibrator: _calibration.IsotonicCalibrator | _calibration.IdentityCalibrator | None = None
+
+
+def _get_calibrator() -> _calibration.IsotonicCalibrator | _calibration.IdentityCalibrator:
+    global _calibrator
+    if _calibrator is None:
+        _calibrator = _calibration.load()
+    return _calibrator
+
+
+def reload_calibrator() -> None:
+    """Drop the cached calibrator so the next tick reloads from disk."""
+    global _calibrator
+    _calibrator = None
 
 # Minimum points in the WS 1s series before it is trusted for sigma;
 # below this the engine falls back to Binance return SHAPE (never levels).
@@ -167,6 +186,10 @@ class PaperSnapshot:
     # True when the Chainlink settlement feed could not price this tick;
     # entries are blocked and fair-value-based exits are suppressed.
     feed_degraded: bool = False
+    # Pre-calibration fair_up_prob — populated when a calibrator is active so
+    # the dashboard can show raw vs calibrated and the journal stays auditable.
+    # Equals fair_up_prob when the identity calibrator is in use.
+    fair_up_prob_raw: float | None = None
 
     @property
     def has_executable_quote(self) -> bool:
@@ -476,18 +499,26 @@ async def _build_snapshot(client: httpx.AsyncClient) -> PaperSnapshot:
         degraded_reason = "chainlink reference unavailable (REST)"
 
     if degraded_reason is None:
-        fair_up = fair_up_probability(
+        fair_up_raw = fair_up_probability(
             spot, reference, sigma, remaining, print_granularity=BTC_PRINT_GRANULARITY_USD
         )
     else:
-        fair_up = 0.5
+        fair_up_raw = 0.5
+
+    # Apply the side-relative calibrator (#37). Identity when no calibration
+    # has been fit, so the raw value passes through. ``fair_up`` below is the
+    # value used for edge calculation and journaling; ``fair_up_raw`` is
+    # preserved on the snapshot for diagnostics.
+    calibrator = _get_calibrator()
+    p_up_cal, p_down_cal = _calibration.apply_to_pair(calibrator, fair_up_raw)
+    fair_up = p_up_cal
 
     # Edge against the EXECUTABLE price: a BUY of side X pays X's best ask.
     # A degraded feed pins fair_up at 0.5, so any "edge" against a lopsided
     # book would be an artifact — journal no edge at all in that state.
     if degraded_reason is None:
-        edge_up = fair_up - up_book.best_ask if up_book.buyable else None
-        edge_down = (1.0 - fair_up) - down_book.best_ask if down_book.buyable else None
+        edge_up = p_up_cal - up_book.best_ask if up_book.buyable else None
+        edge_down = p_down_cal - down_book.best_ask if down_book.buyable else None
     else:
         edge_up = edge_down = None
 
@@ -524,6 +555,7 @@ async def _build_snapshot(client: httpx.AsyncClient) -> PaperSnapshot:
         market_up_price=up_book.best_ask,
         market_down_price=down_book.best_ask,
         fair_up_prob=fair_up,
+        fair_up_prob_raw=fair_up_raw,
         edge=edge,
         signal_side=side,
         confidence=confidence,

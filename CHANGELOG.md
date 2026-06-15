@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.4.3 — Layer 1 Self-Improvement: Isotonic Calibration (2026-06-15)
+
+Fixes #37 (new). Closes the prediction → outcome loop on the strategy's own raw probability without touching strategy logic.
+
+### What
+- **`btc_bot/calibration.py`**: pure-Python pool-adjacent-violators (PAV) isotonic regression, no sklearn/numpy dependency. `IsotonicCalibrator` (monotonic piecewise-constant map, JSON round-trip), `IdentityCalibrator` (no-op fallback so the bot is a no-op until a fit exists), `apply_to_pair` (calibrates fair_up and 1-fair_up, renormalises to sum=1 since exactly one outcome resolves).
+- **`btc_bot/calibration_fit.py`**: CLI that pulls closed clob trades from the journal, derives `(model_p_side, side_won)` pairs from existing `edge`, `entry_price`, `realized_pnl_usd` columns (no schema change), fits, persists to `$DATA_DIR/calibration.json` atomically, prints Brier-before vs Brier-after and the fitted blocks.
+- **`btc_bot/paper.py`**: applies the calibrator to `fair_up_raw` before computing side edges; preserves raw value on the snapshot as `fair_up_prob_raw` for diagnostics. Cached at module level with a `reload_calibrator()` helper for next-tick refresh after a refit.
+- **Dashboard STRATEGY card**: new "Calibration" row showing kind / n_samples / Brier raw → calibrated (delta). Renders `identity (no fit yet)` until the first fit.
+- **Tests**: 14 new unit tests (PAV correctness, monotonicity, identity, JSON round-trip, missing/corrupt/unknown-kind fallback). 442 green.
+
+### Fit on live DB (n=844 closed clob trades)
+- Brier **0.275 → 0.242 (+0.033 absolute, ~12% relative)**.
+- Calibration curve makes the bias plain: model's claimed 95% confidence trades win ~59%, claimed ~68% win ~54%. The bot has been paying that overconfidence at every entry. Renormalised pairs compress: raw fair_up=0.93 maps to calibrated (0.62, 0.38).
+
+### Why this, not Hugging Face (yet)
+- HF time-series foundation models (Chronos, TimesFM, Lag-Llama) and FinBERT are interesting but speculative for a 5-minute BTC binary; the calibration layer is the no-regret first step that the existing journal already supports. Layer 2 (param auto-tune) and Layer 3 (model ensembles) are deferred to later issues.
+
+### Out of scope (next)
+- Daily/scheduled refit (run `python -m btc_bot.calibration_fit` manually for now).
+- Layer 2: rolling-window auto-tune of `entry_edge_min`, sigma floor, sizing curve via the existing backtest harness.
+- Layer 3: optional HF time-series model as a second probability source, A/B'd via the replay harness.
+
 ## v0.4.2 — Bloomberg-EMS Theme + Mode Selector + Single-Process Lock (2026-06-15)
 
 Refs #37, #36.
