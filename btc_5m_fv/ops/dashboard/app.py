@@ -74,10 +74,20 @@ _MODE_BANNER = (
 
 # Lazily import btc_bot modules (may not be available in test environments)
 try:
-    from btc_bot.controller import get_status, request_start, request_stop  # type: ignore[import-untyped]
+    from btc_bot.controller import (  # type: ignore[import-untyped]
+        current_mode,
+        get_status,
+        request_start,
+        request_stop,
+        set_mode,
+    )
     from btc_bot.history import load_btc_history_stats  # type: ignore[import-untyped]
     from btc_bot.paper import load_paper_summary  # type: ignore[import-untyped]
     from btc_bot.backtest import format_report  # type: ignore[import-untyped]
+    from btc_5m_fv.execution.live import (  # type: ignore[import-untyped]
+        LiveBootRefused,
+        assert_live_boot_allowed,
+    )
 
     _BTC_BOT_AVAILABLE = True
 except Exception:
@@ -528,6 +538,7 @@ def _get_settings_data() -> str:
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request) -> Any:
     """Main dashboard page."""
+    mode, live_available, live_hint = await _mode_context()
     return templates.TemplateResponse(
         request,
         "dashboard.html",
@@ -535,8 +546,45 @@ async def dashboard(request: Request) -> Any:
             "ems": await _ems_safe(),
             "activity": await _get_activity_data(),
             "backtest": _get_backtest_data(),
+            "mode": mode,
+            "live_available": live_available,
+            "live_hint": live_hint,
         },
     )
+
+
+async def _mode_context() -> tuple[str, bool, str]:
+    """(active mode, is live selectable, hint) for the mode toggle."""
+    if not _BTC_BOT_AVAILABLE:
+        return BTC_BOT_MODE, False, "btc_bot unavailable"
+    mode = await current_mode()
+    try:
+        assert_live_boot_allowed()
+        return mode, True, "Switch to LIVE — real CLOB orders"
+    except LiveBootRefused as e:
+        return mode, False, str(e)
+
+
+@app.post("/api/mode")
+async def api_mode(request: Request) -> dict[str, str]:
+    """Switch execution mode (paper/live) and restart the loop cleanly."""
+    if not _BTC_BOT_AVAILABLE:
+        return {"status": "error", "detail": "btc_bot not available"}
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    mode = (body or {}).get("mode", "")
+    if mode not in ("paper", "live"):
+        return {"status": "error", "detail": f"invalid mode {mode!r}"}
+    try:
+        status = await set_mode(mode)
+        return {"status": status.state, "mode": status.mode, "detail": status.detail}
+    except LiveBootRefused as e:
+        return {"status": "error", "detail": f"LIVE refused: {e}"}
+    except Exception as e:  # noqa: BLE001
+        log.exception("btc.set_mode_failed", error=str(e))
+        return {"status": "error", "detail": f"Mode switch failed: {e}"}
 
 
 @app.post("/api/start")

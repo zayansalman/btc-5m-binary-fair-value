@@ -59,7 +59,7 @@ from config import (
     BTC_PRINT_GRANULARITY_USD,
 )
 import config as _config
-from db import connect, notify, set_config
+from db import connect, get_config, notify, set_config
 from logging_setup import get_logger
 from btc_5m_fv.connectors.chainlink_settlement import (
     ChainlinkSettlementConnector,
@@ -205,7 +205,9 @@ async def run_paper_loop(stop_event: threading.Event) -> None:
     back to paper.
     """
     global _live_executor, _chainlink_feed
-    mode = _config.BTC_BOT_MODE
+    # Runtime mode selector (dashboard) overrides the env default; live still
+    # passes the same boot gate. Falls back to BTC_BOT_MODE when unset.
+    mode = await get_config("btc_bot.requested_mode", _config.BTC_BOT_MODE) or "paper"
     if mode == "live":
         try:
             executor = build_live_executor()

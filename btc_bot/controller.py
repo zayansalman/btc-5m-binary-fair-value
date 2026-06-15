@@ -87,10 +87,32 @@ async def get_status() -> BtcBotStatus:
     )
 
 
+async def current_mode() -> str:
+    """The active execution mode: runtime selector overrides the env default."""
+    return await get_config("btc_bot.requested_mode", _config.BTC_BOT_MODE) or "paper"
+
+
+async def set_mode(mode: str) -> BtcBotStatus:
+    """Switch execution mode from the dashboard, then restart the loop cleanly.
+
+    Live is gated exactly like a boot: if the gate fails the mode is NOT
+    changed and an error status is returned. Stop-before-start guarantees a
+    single loop (no overlap).
+    """
+    if mode not in ("paper", "live"):
+        raise ValueError(f"unknown mode {mode!r}")
+    if mode == "live":
+        # Refuse the switch up front if live can't legally run.
+        assert_live_boot_allowed()
+    await request_stop()
+    await set_config("btc_bot.requested_mode", mode)
+    return await request_start()
+
+
 async def request_start() -> BtcBotStatus:
     """Start the trading runner (paper by default, live only when fully gated)."""
     now = datetime.now(UTC).isoformat(timespec="seconds")
-    mode = _config.BTC_BOT_MODE
+    mode = await current_mode()
     if mode == "live":
         try:
             # Boot gate is checked HERE, before any thread starts. Refusal

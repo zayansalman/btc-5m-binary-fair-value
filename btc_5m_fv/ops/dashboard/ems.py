@@ -16,10 +16,11 @@ from typing import Any
 import config as _config
 from db import connect, get_config
 
-ACCENT = "#36e0c8"
-GREEN = "#2bd47d"
-RED = "#ff5470"
-DIM = "#7f8aa3"
+# Bloomberg-EMS palette: amber accent, convention green/red, dim slate.
+ACCENT = "#ffa53c"
+GREEN = "#34d399"
+RED = "#ff5d6c"
+DIM = "#6b7689"
 
 
 # ---------------------------------------------------------------------------
@@ -267,7 +268,7 @@ def _stat(label: str, value: str, cls: str = "", sub: str = "") -> str:
 
 async def ems_html() -> str:
     style = _config.BTC_EXIT_STYLE
-    mode = await get_config("btc_bot.mode", _config.BTC_BOT_MODE) or "paper"
+    mode = await get_config("btc_bot.requested_mode", _config.BTC_BOT_MODE) or "paper"
     state = await get_config("btc_bot.state", "stopped") or "stopped"
     session_start = await get_config("btc_bot.session_start", None)
     paused = (await get_config("btc_bot.auto_paused", "0")) == "1"

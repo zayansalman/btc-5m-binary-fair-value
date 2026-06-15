@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.4.2 — Bloomberg-EMS Theme + Mode Selector + Single-Process Lock (2026-06-15)
+
+Refs #37, #36.
+
+- **Bloomberg-EMS retheme**: amber accent (the trading-terminal signature) on dark slate, amber category-header bars, dense monospace grid; convention colors (green/red/amber/blue). Replaces the teal "modern fintech" palette per EMS design references.
+- **Paper/Live mode selector** in the topbar: a runtime toggle (`/api/mode`, `controller.set_mode`) that switches mode via the config table and restarts the loop cleanly (stop-before-start = single loop). Live is gated exactly like boot (`assert_live_boot_allowed`); the LIVE option is disabled with the reason when the gate isn't met, and a confirm dialog precedes any switch to real.
+- **Single-process lock** (`main.py`, advisory flock on `data/bot.lock`): a second instance fails fast. This is the root-cause fix for #36 — multiple overlapping processes each ran a loop with independent live-executor state, which is why "live" entries silently took the paper path. `run_paper_loop` now reads the runtime-selected mode.
+- 428 tests green; retheme + selector verified in-browser.
+
 ## v0.4.1 — EMS-Style Dashboard (2026-06-15)
 
 Fixes #37. Rebuilt the dashboard as an execution-management terminal.

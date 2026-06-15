@@ -35,8 +35,35 @@ async def startup_tasks() -> None:
     )
 
 
+def _acquire_singleton_lock() -> object:
+    """Refuse to start if another instance is already running (#36).
+
+    Multiple concurrent processes writing the shared SQLite journal each ran
+    their own loop with independent live-executor state — the root cause of
+    entries silently taking the paper path in 'live' mode. An advisory lock
+    on data/bot.lock makes a second instance fail fast and loud.
+    """
+    import fcntl
+
+    lock_path = DB_PATH.parent / "bot.lock"
+    fh = open(lock_path, "w")
+    try:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        print(
+            f"REFUSED: another bot instance already holds {lock_path}. "
+            "Only one process may run the loop (it would otherwise trade the "
+            "same account from two uncoordinated loops). Stop the other first."
+        )
+        raise SystemExit(1)
+    fh.write(str(__import__("os").getpid()))
+    fh.flush()
+    return fh  # keep the handle alive for the process lifetime
+
+
 def main() -> None:
     setup_logging("INFO")
+    _LOCK = _acquire_singleton_lock()  # noqa: F841 — held for process lifetime
     log.info(
         "app.boot",
         db_path=str(DB_PATH),

@@ -1,16 +1,20 @@
 /* Fair-Value EMS — trading-terminal theme (#37) */
 :root {
-  --bg: #080b12;
-  --panel: #111726;
-  --panel-2: #0d121d;
-  --line: #1e2840;
-  --text: #d4dcea;
-  --dim: #7f8aa3;
-  --faint: #4a5570;
-  --accent: #36e0c8;
-  --green: #2bd47d;
-  --red: #ff5470;
+  /* Bloomberg-EMS: dark slate (not pure black), amber accent, convention colors */
+  --bg: #0a0d13;
+  --panel: #11151e;
+  --panel-2: #0d111a;
+  --line: #222a38;
+  --line-soft: #1a212c;
+  --text: #c9d1de;
+  --dim: #6b7689;
+  --faint: #475063;
+  --accent: #ffa53c;        /* Bloomberg amber */
+  --accent-dim: #b8732a;
+  --green: #34d399;
+  --red: #ff5d6c;
   --amber: #ffb454;
+  --blue: #4aa8ff;
   --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
   --sans: -apple-system, "Inter", "Segoe UI", system-ui, sans-serif;
 }
@@ -38,6 +42,17 @@ body {
 .brand b { color: var(--accent); }
 .brand .sub { display:block; font-family: var(--sans); font-size: 10.5px; letter-spacing: 0.5px; color: var(--dim); margin-top: 2px; }
 .controls { display: flex; align-items: center; gap: 8px; }
+
+/* paper / live mode selector */
+.mode-toggle { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; margin-right: 4px; }
+.mode-opt {
+  font-family: var(--mono); font-size: 11px; letter-spacing: .6px; padding: 7px 12px;
+  background: var(--panel); color: var(--dim); cursor: pointer; border: none; transition: all .12s;
+}
+.mode-opt:hover { color: var(--text); }
+.mode-opt.active.paper { background: rgba(74,168,255,.16); color: var(--blue); }
+.mode-opt.active.live { background: rgba(255,93,108,.16); color: var(--red); }
+.mode-opt:disabled { opacity: .5; cursor: not-allowed; }
 
 .btn {
   font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.4px;
@@ -98,7 +113,9 @@ body {
 .card.wide { grid-column: 1 / -1; }
 .card-h {
   font-family: var(--mono); font-size: 10.5px; letter-spacing: 1.4px; text-transform: uppercase;
-  color: var(--dim); margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--line);
+  color: var(--accent); margin: -14px -16px 12px; padding: 9px 16px 8px;
+  border-bottom: 1px solid var(--line); background: rgba(255,165,60,0.04);
+  border-left: 2px solid var(--accent);
   display: flex; align-items: center; justify-content: space-between;
 }
 .card-h .win { color: var(--faint); font-size: 10px; letter-spacing: .5px; }

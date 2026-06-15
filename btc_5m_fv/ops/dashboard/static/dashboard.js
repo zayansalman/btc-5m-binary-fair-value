@@ -70,6 +70,27 @@ function setButtonsDisabled(disabled) {
   });
 }
 
+function setMode(mode) {
+  if (mode === 'live' && !confirm('Switch to LIVE? This places REAL orders with real funds on Polymarket.')) {
+    return;
+  }
+  fetch('/api/mode', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode: mode })
+  })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.status === 'error') {
+        showToast('Mode switch refused: ' + (data.detail || ''), 'error');
+      } else {
+        showToast('Mode → ' + (data.mode || mode).toUpperCase(), 'success');
+        setTimeout(function() { window.location.reload(); }, 600);
+      }
+    })
+    .catch(function(err) { showToast('Mode switch failed: ' + err.message, 'error'); });
+}
+
 function handleStart() {
   setButtonsDisabled(true);
   fetch('/api/start', { method: 'POST' })

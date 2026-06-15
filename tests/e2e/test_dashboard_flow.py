@@ -113,8 +113,8 @@ class TestVisualContract:
 
     def test_dark_palette(self, client: TestClient):
         css = client.get("/static/style.css").text
-        assert "#080b12" in css       # --bg near-black
-        assert "#36e0c8" in css       # --accent cyan
+        assert "#0a0d13" in css       # --bg dark slate
+        assert "#ffa53c" in css       # --accent Bloomberg amber
 
     def test_pnl_color_classes(self, client: TestClient):
         css = client.get("/static/style.css").text
