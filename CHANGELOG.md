@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.4.1 — EMS-Style Dashboard (2026-06-15)
+
+Fixes #37. Rebuilt the dashboard as an execution-management terminal.
+
+- New `btc_5m_fv/ops/dashboard/ems.py`: status ribbon (mode/run pills, session equity, day P&L, open risk, daily-halt headroom, feed chips, uptime, auto-pause/kill state); STRATEGY panel (model, edge band, entry floor, sizing, settlement rule, auto-pause); LIVE MARKET (fair-Up gauge, Up/Down book, spot/ref/basis/edge, decision); PERFORMANCE/ALPHA (inline SVG equity curve, net P&L, ROI, win rate, expectancy, profit factor, max DD); TCA (quoted spread, taker half-spread, signaled-vs-realized edge capture, Brier, SVG calibration); TRADE BLOTTER. Inline SVG charts — no JS charting dependency.
+- Performance/TCA/blotter use a **recent rolling window** (current regime), not the lifetime blend that mixed in older experimental configs; the ribbon stays session/day-scoped. Honest framing, labeled "recent N".
+- Dark trading-terminal CSS (tabular monospace numbers, P&L color coding, dense panels); reuses the SSE pipeline (`ems` added to `/api/data` + `/api/stream`; JS swaps `#ems-content`).
+- Fixed a latent `float(None)` crash in `load_paper_summary` when a tick has no up-ask (now common in live).
+- Dashboard tests rewritten to the EMS contract. 428 green; verified visually in-browser.
+
 ## v0.4.0 — Adaptive Risk Controller + AI Research-Loop Design (2026-06-14)
 
 Fixes #36. The "self-improving" layer, done rigorously — adaptive risk control over our own journal, not price prediction.

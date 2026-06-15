@@ -399,13 +399,21 @@ async def load_paper_summary() -> PaperSummary:
         last_signal=last_signal,
         last_tick_at=tick["created_at"] if tick else None,
         last_window_slug=tick["window_slug"] if tick else None,
-        last_spot_price=float(tick["spot_price"]) if tick else None,
-        last_fair_up_prob=float(tick["fair_up_prob"]) if tick else None,
-        last_up_price=float(tick["market_up_price"]) if tick else None,
-        last_edge=float(tick["edge"]) if tick else None,
+        last_spot_price=_f(tick, "spot_price"),
+        last_fair_up_prob=_f(tick, "fair_up_prob"),
+        last_up_price=_f(tick, "market_up_price"),
+        last_edge=_f(tick, "edge"),
         last_feed_source=tick["feed_source"] if tick else None,
         recent_positions=recent,
     )
+
+
+def _f(row: Any, key: str) -> float | None:
+    """Safe float for a nullable journal column (market prices can be None)."""
+    if row is None:
+        return None
+    val = row[key]
+    return float(val) if val is not None else None
 
 
 def _risk_state(open_positions: int, last_tick_at: str | None) -> str:

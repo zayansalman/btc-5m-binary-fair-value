@@ -61,6 +61,7 @@ from config import (  # type: ignore[import-untyped]
 )
 from db import connect, init_db  # type: ignore[import-untyped]
 from logging_setup import get_logger  # type: ignore[import-untyped]
+from btc_5m_fv.ops.dashboard.ems import ems_html  # type: ignore[import-untyped]
 
 log = get_logger("dashboard")
 
@@ -494,6 +495,15 @@ async def _get_paper_data() -> dict[str, str]:
     return {"html": await _paper_html()}
 
 
+async def _ems_safe() -> str:
+    """Render the EMS view; never let a dashboard error touch the trading loop."""
+    try:
+        return await ems_html()
+    except Exception as e:  # noqa: BLE001
+        log.warning("ems_render_failed", error=str(e))
+        return f"<div class='ems'><div class='card'>EMS view error: {escape(str(e))}</div></div>"
+
+
 async def _get_activity_data() -> str:
     return await _activity_html()
 
@@ -518,27 +528,13 @@ def _get_settings_data() -> str:
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request) -> Any:
     """Main dashboard page."""
-    overview = await _get_overview_data()
-    status = overview["status"]
-    paper = await _get_paper_data()
-    activity = await _get_activity_data()
-    history = _get_history_data()
-    backtest = _get_backtest_data()
-    settings = _get_settings_data()
-
     return templates.TemplateResponse(
         request,
         "dashboard.html",
         {
-            "overview": overview,
-            "status": status,
-            "paper": paper,
-            "activity": activity,
-            "history": history,
-            "backtest": backtest,
-            "settings": settings,
-            "brief": _brief_html(),
-            "scorecard": _scorecard_html(),
+            "ems": await _ems_safe(),
+            "activity": await _get_activity_data(),
+            "backtest": _get_backtest_data(),
         },
     )
 
@@ -575,10 +571,8 @@ async def api_stop() -> dict[str, str]:
 async def api_data() -> dict[str, Any]:
     """Get current dashboard data as JSON."""
     return {
-        "overview": await _get_overview_data(),
-        "paper": await _get_paper_data(),
+        "ems": await _ems_safe(),
         "activity": await _get_activity_data(),
-        "history": _get_history_data(),
         "backtest": _get_backtest_data(),
     }
 
@@ -592,10 +586,8 @@ async def api_stream(request: Request) -> StreamingResponse:
                 break
             try:
                 data = {
-                    "overview": await _get_overview_data(),
-                    "paper": await _get_paper_data(),
+                    "ems": await _ems_safe(),
                     "activity": await _get_activity_data(),
-                    "history": _get_history_data(),
                     "backtest": _get_backtest_data(),
                 }
                 yield f"data: {json.dumps(data)}\n\n"
