@@ -70,6 +70,10 @@ def main() -> None:
         version="0.2.0",
         has_new_dashboard=HAS_NEW_DASHBOARD,
     )
+    # Deferred from config.py import-time (logging wasn't ready then).
+    import config as _config
+    for note in getattr(_config, "CONFIG_DEPRECATIONS", []):
+        log.warning("config.deprecation", message=note)
     asyncio.run(startup_tasks())
 
     if HAS_NEW_DASHBOARD:
