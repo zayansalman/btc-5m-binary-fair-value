@@ -315,9 +315,13 @@ async def run_paper_loop(stop_event: threading.Event) -> None:
         _risk_gate = executor.gate  # share state: counters, kill flag, cfg
     else:
         # Paper mode: same gate class, same persisted counters, same config.
-        # "What paper does is what live would have done."
-        _risk_gate = build_gate_from_config()
+        # "What paper does is what live would have done." allow_overrides=True
+        # lets the operator disable the loss-halt via the dashboard for study
+        # runs (issue #65) — live builds the gate with overrides off so the
+        # toggle structurally cannot affect real funds.
+        _risk_gate = build_gate_from_config(allow_overrides=True)
         await _risk_gate.load()
+        await _risk_gate.refresh_overrides()
 
     # Settlement-aligned live spot (issue #21): the WS feed task lives and
     # dies with this loop. Until its first print arrives, ticks journal
@@ -391,6 +395,10 @@ async def paper_tick_once() -> PaperSnapshot:
     if _live_executor is not None:
         # Kill switch is checked every tick BEFORE any order can be placed.
         kill_active = await _live_executor.enforce_kill_switch()
+    # Re-read paper override toggles so dashboard changes take effect on the
+    # very next tick without needing a Stop/Start. No-op in live mode.
+    if _risk_gate is not None:
+        await _risk_gate.refresh_overrides()
     async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
         snapshot = await _build_snapshot(client)
         await _log_tick(snapshot)

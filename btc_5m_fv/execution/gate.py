@@ -34,6 +34,11 @@ _RISK_DATE_KEY = "btc_risk.date"
 _RISK_PNL_KEY = "btc_risk.daily_realized_pnl"
 _RISK_NOTIONAL_KEY = "btc_risk.daily_buy_notional"
 
+# Paper-only study overrides (#65). Only honoured when the gate was built
+# with ``allow_overrides=True`` — live's gate ignores them by construction so
+# nobody can ever disable a hard limit on real funds via the UI.
+_BYPASS_LOSS_HALT_KEY = "btc_risk.paper_bypass_loss_halt"
+
 # Legacy keys, written by the live-only counter before issue #64. Read once at
 # boot if the new keys are absent, then never touched again — the next persist
 # writes the new keys exclusively.
@@ -88,13 +93,21 @@ class RiskGate:
     silently grants a fresh bankroll when the cap is enabled.
     """
 
-    def __init__(self, cfg: GateConfig) -> None:
+    def __init__(self, cfg: GateConfig, *, allow_overrides: bool = False) -> None:
         self.cfg = cfg
         self._date = self._today()
         self._daily_realized_pnl: float = 0.0
         self._daily_buy_notional: float = 0.0
         self._kill_handled = False
         self._loaded = False
+        # Paper builds with True (lets the operator disable the loss halt for
+        # study runs); live builds with False so the override is structurally
+        # impossible to apply to real funds.
+        self.allow_overrides = allow_overrides
+        # Cached override state — refreshed by ``refresh_overrides`` on each
+        # tick so the dashboard toggle takes effect immediately without
+        # restarting the loop.
+        self._bypass_loss_halt = False
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -143,6 +156,19 @@ class RiskGate:
         await set_config(_RISK_DATE_KEY, self._date)
         await set_config(_RISK_PNL_KEY, repr(self._daily_realized_pnl))
         await set_config(_RISK_NOTIONAL_KEY, repr(self._daily_buy_notional))
+
+    async def refresh_overrides(self) -> None:
+        """Re-read paper-only override flags from SQLite (no-op when disabled)."""
+        if not self.allow_overrides:
+            self._bypass_loss_halt = False
+            return
+        raw = await get_config(_BYPASS_LOSS_HALT_KEY)
+        self._bypass_loss_halt = raw == "1"
+
+    @property
+    def bypass_loss_halt(self) -> bool:
+        """Live always sees False; paper sees whatever the toggle is set to."""
+        return self.allow_overrides and self._bypass_loss_halt
 
     # ------------------------------------------------------------------
     # Counters — fed by BOTH paper closes and live closes
@@ -198,7 +224,10 @@ class RiskGate:
         if self.kill_switch_active():
             return f"KILL switch active at {self.cfg.kill_switch_path}"
         self._roll_daily_window()
-        if self._daily_realized_pnl <= -self.cfg.daily_loss_halt_usd:
+        if (
+            not self.bypass_loss_halt
+            and self._daily_realized_pnl <= -self.cfg.daily_loss_halt_usd
+        ):
             return (
                 f"daily loss halt: realized {self._daily_realized_pnl:+.2f} USD "
                 f"breaches -{self.cfg.daily_loss_halt_usd:.2f} USD"
@@ -242,12 +271,16 @@ class RiskGate:
 # ---------------------------------------------------------------------------
 
 
-def build_gate_from_config() -> RiskGate:
+def build_gate_from_config(*, allow_overrides: bool = False) -> RiskGate:
     """Build a RiskGate from the global ``config`` module.
 
     The single source of truth: paper and live both use this so their gate
     configs cannot drift. The persisted state is NOT loaded here — callers
     must ``await gate.load()`` once before the first ``block_reason()``.
+
+    ``allow_overrides=True`` is paper-mode only: it lets the dashboard
+    operator disable specific gates for study runs. Live always passes
+    ``False`` so paper toggles can never affect real funds.
     """
     import config as _config  # type: ignore[import-untyped]
 
@@ -258,4 +291,13 @@ def build_gate_from_config() -> RiskGate:
         max_entry_slippage=_config.BTC_TRADE_MAX_ENTRY_SLIPPAGE,
         kill_switch_path=Path(_config.KILL_SWITCH_PATH),
     )
-    return RiskGate(cfg)
+    return RiskGate(cfg, allow_overrides=allow_overrides)
+
+
+async def set_paper_bypass_loss_halt(enabled: bool) -> None:
+    """Persist the paper-mode loss-halt bypass (no effect in live mode)."""
+    await set_config(_BYPASS_LOSS_HALT_KEY, "1" if enabled else "0")
+
+
+async def get_paper_bypass_loss_halt() -> bool:
+    return (await get_config(_BYPASS_LOSS_HALT_KEY)) == "1"

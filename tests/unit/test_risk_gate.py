@@ -162,3 +162,36 @@ class TestPaperLiveCounterParity:
         await gate.record_buy_notional(-4.0)
         # 4 + 5 ≤ 10 → unblocked.
         assert gate.block_reason(_req(notional_usd=5.0)) is None
+
+
+class TestPaperOverrideStructurallyIgnoredInLive:
+    """Live's gate is built with allow_overrides=False so the paper study
+    toggle cannot affect real funds even if the SQLite flag is set."""
+
+    @pytest.mark.asyncio
+    async def test_live_gate_ignores_bypass_flag(self) -> None:
+        from btc_5m_fv.execution.gate import set_paper_bypass_loss_halt
+
+        await set_paper_bypass_loss_halt(True)  # operator hits the toggle
+        live = RiskGate(_cfg(daily_loss_halt_usd=10.0), allow_overrides=False)
+        await live.record_realized_pnl(-15.0)
+        await live.refresh_overrides()
+        # Live still halts despite the bypass flag being persisted.
+        msg = live.block_reason(_req())
+        assert msg is not None and "daily loss halt" in msg
+        assert live.bypass_loss_halt is False
+
+    @pytest.mark.asyncio
+    async def test_paper_gate_respects_bypass_flag(self) -> None:
+        from btc_5m_fv.execution.gate import set_paper_bypass_loss_halt
+
+        await set_paper_bypass_loss_halt(True)
+        paper = RiskGate(_cfg(daily_loss_halt_usd=10.0), allow_overrides=True)
+        await paper.record_realized_pnl(-15.0)
+        await paper.refresh_overrides()
+        # Paper passes — that's the whole point of the study toggle.
+        assert paper.block_reason(_req()) is None
+        assert paper.bypass_loss_halt is True
+        # Other gates STILL run (per-trade cap, slippage, singleton).
+        msg = paper.block_reason(_req(notional_usd=999.0))
+        assert msg is not None and "per-trade cap" in msg
