@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.4.4 — Bankroll Cap Opt-In + RISK GUARDRAILS Panel (2026-06-15)
+
+Closes #61. Investigation of "why did the bot stop trading after lunch?" surfaced a UX gap: the daily $30 bankroll cap had been silently rejecting every entry from 10:46 UTC onward (43 BLOCKED entries journaled in `btc_live_orders`), but nothing on the dashboard showed it. Operator had to grep logs and query SQLite to figure out the cap was hit.
+
+### What
+- **`config.py`**: new `_env_optional_float` helper; `BTC_LIVE_BANKROLL_CAP_USD` is now `Optional[float]` — blank / unset / ≤0 → `None` (gate disabled). Default behavior is now **no cap**. The per-trade cap and the daily loss halt are unchanged — both still mandatory.
+- **`btc_5m_fv/execution/live.py`**: the bankroll-cap gate in `entry_block_reason` is skipped when `bankroll_cap_usd is None`. The persisted `daily_buy_notional` counter keeps incrementing on every matched fill regardless, so the dashboard can still show throughput when the cap is off.
+- **RISK GUARDRAILS panel** (new wide card in `btc_5m_fv/ops/dashboard/ems.py`, first row of the EMS grid). Four columns:
+  - **DAILY SPEND** — filled notional today, cap status (disabled or $X with headroom), submitted-entry count + total notional.
+  - **LOSS HALT** — realized day P&L, halt threshold (–$10), headroom, OK/HALTED pill.
+  - **BOT STATE** — state pill (RUNNING/STOPPED/OFF), uptime, last loop detail line (red when it contains error/fail/crash keywords — the NoneType crash that triggered today's investigation would have surfaced here), auto-pause status.
+  - **BLOCKED (LAST 5 TODAY)** — newest-first tail of risk-gate rejections from `btc_live_orders` WHERE `status='BLOCKED'`, full reason on hover.
+- Knock-on callsites (`btc_bot/controller.py:_default_detail`, `btc_5m_fv/ops/dashboard/app.py` `_brief_html`/`_settings_html`) render the cap as "disabled" when `None`.
+- New unit test `test_bankroll_cap_none_does_not_block` confirms the gate bypasses arbitrarily large cumulative spend when the cap is unset.
+
+### Why this, not a config flip
+- The cap is "opt-in default off" rather than ripped out — same code path, just a new sentinel. If a future operator wants a budget guard back, they set the env var; no code change needed. Reversible.
+- The guardrails panel makes the cap's status (and the loss halt's, the loop's last error, and any silent BLOCKED queue) **visible by default** — the original failure mode was lack of observability, not the cap itself.
+
+### Out of scope (filed separately)
+- The `TypeError: unsupported format string passed to NoneType.__format__` crash in the live loop tick at 11:24 UTC (surfaced today's investigation). Needs its own fix.
+- Orphan live position 1222 from the morning's failed `exit_untracked` event — manual ledger reconcile required.
+
 ## v0.4.3 — Layer 1 Self-Improvement: Isotonic Calibration (2026-06-15)
 
 Fixes #37 (new). Closes the prediction → outcome loop on the strategy's own raw probability without touching strategy logic.

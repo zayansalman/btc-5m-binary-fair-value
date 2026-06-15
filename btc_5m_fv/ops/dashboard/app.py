@@ -140,6 +140,11 @@ def _pct(value: float | None) -> str:
     return "n/a" if value is None else f"{value:.1%}"
 
 
+def _fmt_cap(cap: float | None) -> str:
+    """Render an optional risk-limit cap: dollar amount when set, 'disabled' when None."""
+    return f"${cap:.2f}" if cap is not None else "disabled"
+
+
 def _fmt_relative(ts: str | None) -> str:
     if not ts:
         return "never"
@@ -399,7 +404,7 @@ def _brief_html() -> str:
             "<p><strong>Mode: LIVE — orders are real.</strong> Start places risk-gated "
             "limit orders on the Polymarket CLOB (per-trade cap "
             f"${BTC_LIVE_MAX_TRADE_USD:.2f}, daily loss halt ${BTC_LIVE_DAILY_LOSS_HALT_USD:.2f}, "
-            f"bankroll cap ${BTC_LIVE_BANKROLL_CAP_USD:.2f}); Stop cancels and flattens. "
+            f"bankroll cap {_fmt_cap(BTC_LIVE_BANKROLL_CAP_USD)}); Stop cancels and flattens. "
             f"Kill switch file: <code>{escape(str(KILL_SWITCH_PATH))}</code>.</p>"
             if _IS_LIVE
             else "<p>Mode: paper — this mode does not sign or submit live orders. The active "
@@ -440,7 +445,7 @@ def _settings_html() -> str:
             "<p><strong>Mode: LIVE — orders are real.</strong> Live limits: per-trade cap "
             f"<strong>${BTC_LIVE_MAX_TRADE_USD:.2f}</strong>, daily loss halt "
             f"<strong>${BTC_LIVE_DAILY_LOSS_HALT_USD:.2f}</strong>, session bankroll cap "
-            f"<strong>${BTC_LIVE_BANKROLL_CAP_USD:.2f}</strong>, max 1 open position, "
+            f"<strong>{_fmt_cap(BTC_LIVE_BANKROLL_CAP_USD)}</strong>, max 1 open position, "
             f"kill switch <code>{escape(str(KILL_SWITCH_PATH))}</code>.</p>"
             if _IS_LIVE
             else "<p>Required local env vars are optional for paper mode except path overrides. "

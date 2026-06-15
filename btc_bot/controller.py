@@ -42,11 +42,13 @@ class BtcBotStatus:
 
 def _default_detail() -> str:
     if _config.BTC_BOT_MODE == "live":
+        cap = _config.BTC_LIVE_BANKROLL_CAP_USD
+        cap_str = f"${cap:.2f}" if cap is not None else "disabled"
         return (
             f"{LIVE_MODE_DETAIL}\n\n"
             f"Per-trade cap ${_config.BTC_LIVE_MAX_TRADE_USD:.2f}, daily loss halt "
             f"${_config.BTC_LIVE_DAILY_LOSS_HALT_USD:.2f}, bankroll cap "
-            f"${_config.BTC_LIVE_BANKROLL_CAP_USD:.2f}. "
+            f"{cap_str}. "
             f"Kill switch: touch {_config.KILL_SWITCH_PATH}."
         )
     return (
