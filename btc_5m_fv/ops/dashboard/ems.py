@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import config as _config
+from btc_bot import calibration as _calibration
 from db import connect, get_config
 
 # Bloomberg-EMS palette: amber accent, convention green/red, dim slate.
@@ -326,6 +327,20 @@ async def ems_html() -> str:
     )
 
     # ---- strategy panel ----
+    cal = _calibration.load()
+    if isinstance(cal, _calibration.IsotonicCalibrator) and cal.n_samples > 0:
+        if cal.brier_raw is not None and cal.brier_cal is not None:
+            delta = cal.brier_raw - cal.brier_cal
+            cal_html = (
+                f"<b class='up'>isotonic · n={cal.n_samples} · "
+                f"Brier {cal.brier_raw:.3f}→{cal.brier_cal:.3f} "
+                f"({delta:+.3f})</b>"
+            )
+        else:
+            cal_html = f"<b class='up'>isotonic · n={cal.n_samples}</b>"
+    else:
+        cal_html = "<b class='dim'>identity (no fit yet)</b>"
+
     strat = (
         "<section class='card'><div class='card-h'>STRATEGY</div>"
         "<div class='kv'>"
@@ -335,6 +350,7 @@ async def ems_html() -> str:
         f"<div><span>Entry floor</span><b>≥ {_config.BTC_PAPER_MIN_ENTRY_PRICE:.2f} (favorites)</b></div>"
         f"<div><span>Sizing</span><b>${_config.BTC_LIVE_MAX_TRADE_USD if is_live else _config.BTC_PAPER_MAX_TRADE_USD:.0f}/clip · 1 pos max</b></div>"
         f"<div><span>Settlement</span><b>Chainlink BTC/USD · ≥ ⇒ Up</b></div>"
+        f"<div><span>Calibration</span>{cal_html}</div>"
         f"<div><span>Auto-pause</span><b class='{'down' if paused else 'up'}'>{'PAUSED — ' + escape(pause_reason[:40]) if paused else 'armed (edge-decay)'}</b></div>"
         "</div></section>"
     )
