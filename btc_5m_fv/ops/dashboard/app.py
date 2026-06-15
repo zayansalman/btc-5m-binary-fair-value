@@ -620,6 +620,26 @@ async def api_stop() -> dict[str, str]:
         return {"status": "error", "detail": f"Stop failed: {e}"}
 
 
+@app.post("/api/paper/bypass_loss_halt")
+async def api_paper_bypass_loss_halt(request: Request) -> dict[str, Any]:
+    """Paper-mode study toggle: disable the daily realized-loss halt.
+
+    Has effect ONLY in paper mode. Live's gate is constructed with
+    ``allow_overrides=False`` so this flag is structurally ignored when real
+    funds are at stake. Persisted under ``btc_risk.paper_bypass_loss_halt``
+    so the choice survives Stop/Start, and re-read by the gate at every tick
+    so it takes effect immediately without needing a restart.
+    """
+    from btc_5m_fv.execution.gate import set_paper_bypass_loss_halt
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    enabled = bool((body or {}).get("enabled", False))
+    await set_paper_bypass_loss_halt(enabled)
+    return {"status": "ok", "bypass_loss_halt": enabled}
+
+
 async def _runtime_state() -> dict[str, str]:
     """Lightweight snapshot of bot state + mode for the topbar buttons."""
     from db import get_config

@@ -271,10 +271,13 @@ async def _recent_blocked(limit: int = 5) -> list[dict[str, Any]]:
 
     Surfaces silent stop conditions in the dashboard — any time a risk gate
     rejects an entry, the operator sees the reason without grepping logs.
+    Paper-mode blocks (#64) appear here too so the operator can study what
+    live would have rejected, tagged with mode='paper' so they are visually
+    distinguishable from real live rejections.
     """
     async with connect() as db:
         async with db.execute(
-            "SELECT created_at, intent, notional_usd, error "
+            "SELECT created_at, intent, notional_usd, error, mode "
             "FROM btc_live_orders "
             "WHERE status='BLOCKED' "
             "AND date(created_at)=date('now') "
@@ -379,6 +382,8 @@ def _guardrails_panel(
     paused: bool,
     pause_reason: str,
     blocked: list[dict[str, Any]],
+    mode: str = "paper",
+    bypass_loss_halt: bool = False,
 ) -> str:
     """Surface every silent stop condition: daily spend, loss-halt headroom,
     bot state + last loop error, and the tail of recent BLOCKED entries.
@@ -413,14 +418,35 @@ def _guardrails_panel(
     )
 
     # ── LOSS HALT ───────────────────────────────────────────────────────
-    halted = day_pnl <= -loss_halt_usd
+    halted = day_pnl <= -loss_halt_usd and not bypass_loss_halt
     headroom = loss_halt_usd + min(0.0, day_pnl)
-    halt_pill = (
-        "<span class='pill warn'>HALTED</span>"
-        if halted
-        else "<span class='pill on'>OK</span>"
-    )
+    if bypass_loss_halt:
+        halt_pill = "<span class='pill warn' title='Paper study: halt disabled'>BYPASS</span>"
+    elif halted:
+        halt_pill = "<span class='pill warn'>HALTED</span>"
+    else:
+        halt_pill = "<span class='pill on'>OK</span>"
     headroom_cls = "down" if headroom < loss_halt_usd * 0.4 else ""
+    # Paper-only study toggle (#65). Hidden in live mode — paper builds the
+    # gate with allow_overrides=True; live with False. Even if the live
+    # dashboard tried to POST this endpoint, the live gate ignores it.
+    if mode == "paper":
+        next_state = "false" if bypass_loss_halt else "true"
+        btn_label = "Re-enable halt" if bypass_loss_halt else "Disable halt (study)"
+        btn_cls = "btn-warn" if not bypass_loss_halt else "btn-ok"
+        toggle_html = (
+            "<div class='gr-toggle'>"
+            f"<button class='gr-btn {btn_cls}' "
+            f"onclick=\"fetch('/api/paper/bypass_loss_halt',"
+            f"{{method:'POST',headers:{{'Content-Type':'application/json'}},"
+            f"body:JSON.stringify({{enabled:{next_state}}})}})"
+            f".then(()=>setTimeout(refreshAll,300))\">"
+            f"{escape(btn_label)}</button>"
+            "<span class='gr-toggle-hint'>paper study only — never affects live</span>"
+            "</div>"
+        )
+    else:
+        toggle_html = ""
     halt_col = (
         "<div class='de-col'>"
         "<div class='de-h'>LOSS HALT</div>"
@@ -429,7 +455,9 @@ def _guardrails_panel(
         f"<div><span>Halt threshold</span><b class='mono'>−${loss_halt_usd:,.2f}</b></div>"
         f"<div><span>Headroom</span><b class='mono {headroom_cls}'>${headroom:,.2f}</b></div>"
         f"<div><span>Status</span>{halt_pill}</div>"
-        "</div></div>"
+        "</div>"
+        + toggle_html
+        + "</div>"
     )
 
     # ── BOT STATE + last error ──────────────────────────────────────────
@@ -476,10 +504,16 @@ def _guardrails_panel(
                 hhmm = ts[-8:-3] if len(ts) >= 8 else ts
             reason = (r.get("error") or "").strip() or "—"
             short = reason[:64] + "…" if len(reason) > 64 else reason
+            row_mode = (r.get("mode") or "live").lower()
+            mode_tag = (
+                "<span class='pill dim' style='margin-right:6px'>paper</span>"
+                if row_mode == "paper" else ""
+            )
             rows += (
                 "<tr>"
                 f"<td class='mono dim'>{escape(hhmm)}</td>"
-                f"<td class='mono down' title='{escape(reason)}' style='white-space:normal'>{escape(short)}</td>"
+                f"<td class='mono down' title='{escape(reason)}' style='white-space:normal'>"
+                f"{mode_tag}{escape(short)}</td>"
                 "</tr>"
             )
         blocked_html = f"<table class='gr-tail'><tbody>{rows}</tbody></table>"
@@ -743,8 +777,18 @@ async def ems_html() -> str:
     session_start = await get_config("btc_bot.session_start", None)
     paused = (await get_config("btc_bot.auto_paused", "0")) == "1"
     pause_reason = await get_config("btc_bot.auto_pause_reason", "") or ""
-    day_pnl = float(await get_config("btc_live.daily_realized_pnl", "0") or 0)
-    day_notional = float(await get_config("btc_live.daily_buy_notional", "0") or 0)
+    # Prefer the new btc_risk.* counters (#64); fall back to the legacy
+    # btc_live.* keys for the first boot after upgrade.
+    day_pnl = float(
+        await get_config("btc_risk.daily_realized_pnl")
+        or await get_config("btc_live.daily_realized_pnl")
+        or 0
+    )
+    day_notional = float(
+        await get_config("btc_risk.daily_buy_notional")
+        or await get_config("btc_live.daily_buy_notional")
+        or 0
+    )
     bot_detail = await get_config("btc_bot.detail", "") or ""
     blocked_today = await _recent_blocked(limit=5)
     submitted_count, submitted_notional = await _today_submitted_summary()
@@ -1073,19 +1117,24 @@ async def ems_html() -> str:
         tick, _GateParams(), recent_ticks, paused, pause_reason
     )
 
+    from btc_5m_fv.execution.gate import get_paper_bypass_loss_halt
+    bypass_loss_halt = await get_paper_bypass_loss_halt()
+    current_mode = (await get_config("btc_bot.requested_mode", "paper")) or "paper"
     guardrails = _guardrails_panel(
         day_spend=day_notional,
-        bankroll_cap=_config.BTC_LIVE_BANKROLL_CAP_USD,
+        bankroll_cap=_config.BTC_TRADE_BANKROLL_CAP_USD,
         submitted_count=submitted_count,
         submitted_notional=submitted_notional,
         day_pnl=day_pnl,
-        loss_halt_usd=_config.BTC_LIVE_DAILY_LOSS_HALT_USD,
+        loss_halt_usd=_config.BTC_TRADE_DAILY_LOSS_HALT_USD,
         state=state,
         bot_detail=bot_detail,
         session_start=session_start,
         paused=paused,
         pause_reason=pause_reason,
         blocked=blocked_today,
+        mode=current_mode,
+        bypass_loss_halt=bypass_loss_halt,
     )
 
     return (
