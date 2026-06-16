@@ -82,13 +82,13 @@ class TestGateDecisionTable:
         assert "KILL switch active" in (gate_live.block_reason(_req()) or "")
 
     @pytest.mark.asyncio
-    async def test_daily_loss_halt_blocks_both_modes(self) -> None:
-        gate_paper = RiskGate(_cfg(daily_loss_halt_usd=10.0))
-        gate_live = RiskGate(_cfg(daily_loss_halt_usd=10.0))
-        # Both feed the same loss into their counters.
+    async def test_daily_loss_halt_blocks_each_mode_on_its_leg(self) -> None:
+        # Issue #76: each mode halts on its OWN realized-loss leg.
+        gate_paper = RiskGate(_cfg(daily_loss_halt_usd=10.0), is_live=False)
+        gate_live = RiskGate(_cfg(daily_loss_halt_usd=10.0), is_live=True)
         await gate_paper.record_realized_pnl(-10.5, is_live=False)
         await gate_live.record_realized_pnl(-10.5, is_live=True)
-        assert gate_paper.block_reason(_req()) == gate_live.block_reason(_req())
+        assert "daily loss halt" in (gate_paper.block_reason(_req()) or "")
         assert "daily loss halt" in (gate_live.block_reason(_req()) or "")
 
     def test_position_open_blocks(self) -> None:
@@ -165,7 +165,8 @@ class TestPaperLiveCounterParity:
 
 
 class TestPnlSplit:
-    """Issue #67: live and paper PnL track separately, halt sums both."""
+    """Issue #67/#76: live and paper PnL track separately; the halt uses the
+    running mode's OWN leg, not the sum."""
 
     @pytest.mark.asyncio
     async def test_live_paper_separate_buckets(self) -> None:
@@ -177,54 +178,97 @@ class TestPnlSplit:
         assert gate.daily_realized_pnl == pytest.approx(3.0)
 
     @pytest.mark.asyncio
-    async def test_halt_sums_both_buckets(self) -> None:
-        gate = RiskGate(_cfg(daily_loss_halt_usd=10.0))
-        await gate.record_realized_pnl(-6.0, is_live=True)
-        await gate.record_realized_pnl(-5.0, is_live=False)
-        # Combined -11 USD breaches the -10 halt.
-        msg = gate.block_reason(_req())
-        assert msg is not None and "daily loss halt" in msg
-
-
-class TestPaperOverrideStructurallyIgnoredInLive:
-    """Live's gate is built with allow_overrides=False so the paper study
-    toggle cannot affect real funds even if the SQLite flag is set."""
+    async def test_paper_losses_do_not_halt_live(self) -> None:
+        # Issue #76: paper-study losses no longer halt live trading.
+        live = RiskGate(_cfg(daily_loss_halt_usd=10.0), is_live=True)
+        await live.record_realized_pnl(-3.0, is_live=True)   # live within limit
+        await live.record_realized_pnl(-20.0, is_live=False)  # huge paper loss
+        assert live.block_reason(_req()) is None  # live leg -3 > -10 → not halted
 
     @pytest.mark.asyncio
-    async def test_live_gate_ignores_bypass_flag(self) -> None:
-        from btc_5m_fv.execution.gate import set_paper_bypass_loss_halt
+    async def test_live_halts_on_live_leg_only(self) -> None:
+        live = RiskGate(_cfg(daily_loss_halt_usd=10.0), is_live=True)
+        await live.record_realized_pnl(-11.0, is_live=True)
+        msg = live.block_reason(_req())
+        assert msg is not None and "daily loss halt" in msg and "live" in msg
 
-        await set_paper_bypass_loss_halt(True)  # operator hits the toggle
-        live = RiskGate(_cfg(daily_loss_halt_usd=10.0), allow_overrides=False)
+
+class TestLossHaltBypassBothModes:
+    """Issue #76: the loss-halt bypass is an operator runtime knob that applies
+    in BOTH paper and live (the old live-lock invariant was removed)."""
+
+    @pytest.mark.asyncio
+    async def test_live_gate_respects_bypass_flag(self) -> None:
+        from btc_5m_fv.execution.gate import set_loss_halt_bypass
+
+        await set_loss_halt_bypass(True)  # operator hits the toggle
+        live = RiskGate(_cfg(daily_loss_halt_usd=10.0), is_live=True)
         await live.record_realized_pnl(-15.0, is_live=True)
         await live.refresh_overrides()
-        # Live still halts despite the bypass flag being persisted.
-        msg = live.block_reason(_req())
-        assert msg is not None and "daily loss halt" in msg
-        assert live.bypass_loss_halt is False
+        # Live now HONOURS the bypass — keeps trading past the limit.
+        assert live.bypass_loss_halt is True
+        assert live.loss_halt_breached() is False
+        assert live.block_reason(_req()) is None
+        # Other gates STILL run (per-trade cap, slippage, singleton).
+        msg = live.block_reason(_req(notional_usd=999.0))
+        assert msg is not None and "per-trade cap" in msg
 
     @pytest.mark.asyncio
     async def test_paper_gate_respects_bypass_flag(self) -> None:
-        from btc_5m_fv.execution.gate import set_paper_bypass_loss_halt
+        from btc_5m_fv.execution.gate import set_loss_halt_bypass
 
-        await set_paper_bypass_loss_halt(True)
-        paper = RiskGate(_cfg(daily_loss_halt_usd=10.0), allow_overrides=True)
+        await set_loss_halt_bypass(True)
+        paper = RiskGate(_cfg(daily_loss_halt_usd=10.0), is_live=False)
         await paper.record_realized_pnl(-15.0, is_live=False)
         await paper.refresh_overrides()
-        # Paper passes — that's the whole point of the study toggle.
         assert paper.block_reason(_req()) is None
         assert paper.bypass_loss_halt is True
-        # Other gates STILL run (per-trade cap, slippage, singleton).
-        msg = paper.block_reason(_req(notional_usd=999.0))
-        assert msg is not None and "per-trade cap" in msg
+
+    @pytest.mark.asyncio
+    async def test_bypass_off_halts_live(self) -> None:
+        from btc_5m_fv.execution.gate import set_loss_halt_bypass
+
+        await set_loss_halt_bypass(False)
+        live = RiskGate(_cfg(daily_loss_halt_usd=10.0), is_live=True)
+        await live.record_realized_pnl(-15.0, is_live=True)
+        await live.refresh_overrides()
+        assert "daily loss halt" in (live.block_reason(_req()) or "")
+
+
+class TestLossHaltBreached:
+    """``loss_halt_breached()`` — the predicate the loop uses to auto-stop (#76)."""
+
+    @pytest.mark.asyncio
+    async def test_true_on_live_leg_past_limit(self) -> None:
+        live = RiskGate(_cfg(daily_loss_halt_usd=10.0), is_live=True)
+        await live.record_realized_pnl(-10.0, is_live=True)
+        assert live.loss_halt_breached() is True
+
+    @pytest.mark.asyncio
+    async def test_false_within_limit(self) -> None:
+        live = RiskGate(_cfg(daily_loss_halt_usd=10.0), is_live=True)
+        await live.record_realized_pnl(-9.99, is_live=True)
+        assert live.loss_halt_breached() is False
+
+    @pytest.mark.asyncio
+    async def test_false_when_bypassed(self) -> None:
+        from btc_5m_fv.execution.gate import set_loss_halt_bypass
+
+        await set_loss_halt_bypass(True)
+        live = RiskGate(_cfg(daily_loss_halt_usd=10.0), is_live=True)
+        await live.record_realized_pnl(-50.0, is_live=True)
+        await live.refresh_overrides()
+        assert live.loss_halt_breached() is False
+
+    @pytest.mark.asyncio
+    async def test_paper_leg_ignored_in_live(self) -> None:
+        live = RiskGate(_cfg(daily_loss_halt_usd=10.0), is_live=True)
+        await live.record_realized_pnl(-50.0, is_live=False)  # paper only
+        assert live.loss_halt_breached() is False
 
 
 class TestRuntimeMaxTradeOverride:
-    """Operator runtime per-trade cap (#50): applies in BOTH modes, no restart.
-
-    Distinct from the paper-only loss-halt bypass — this is a tuning knob, so
-    it is honoured whether or not the gate was built with allow_overrides.
-    """
+    """Operator runtime per-trade cap (#50): applies in BOTH modes, no restart."""
 
     def test_effective_defaults_to_cfg(self) -> None:
         gate = RiskGate(_cfg(max_trade_usd=5.0))
@@ -246,9 +290,9 @@ class TestRuntimeMaxTradeOverride:
     async def test_override_raises_cap_for_both_modes(self) -> None:
         from btc_5m_fv.execution.gate import set_runtime_max_trade_usd
 
-        # The override applies regardless of allow_overrides (paper or live).
-        paper = RiskGate(_cfg(max_trade_usd=3.0), allow_overrides=True)
-        live = RiskGate(_cfg(max_trade_usd=3.0), allow_overrides=False)
+        # The runtime cap applies in both modes (paper and live).
+        paper = RiskGate(_cfg(max_trade_usd=3.0), is_live=False)
+        live = RiskGate(_cfg(max_trade_usd=3.0), is_live=True)
         # Without override, $5 trips the $3 env cap in both.
         assert paper.block_reason(_req(notional_usd=5.0)) is not None
         assert live.block_reason(_req(notional_usd=5.0)) is not None

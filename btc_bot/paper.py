@@ -286,6 +286,25 @@ class PaperSummary:
     connectivity: ConnectivityStatus = None  # type: ignore[assignment]
 
 
+def _loss_halt_stop_detail(gate: Any, mode: str) -> str | None:
+    """Stop-detail string when the daily loss halt is breached (#76), else None.
+
+    ``run_paper_loop`` calls this once per tick. A non-None result means: stop
+    the bot, flatten, and surface this as LAST DETAIL so the operator knows to
+    Reset the tally before pressing Start. Returns None when the gate is absent,
+    within the limit, or the operator has the bypass on.
+    """
+    if gate is None or not gate.loss_halt_breached():
+        return None
+    leg = "live" if gate.is_live else "paper"
+    pnl = gate.live_pnl if gate.is_live else gate.paper_pnl
+    limit = gate.cfg.daily_loss_halt_usd
+    return (
+        f"Daily loss halt: {leg} realized {pnl:+.2f} USD ≤ -{limit:.2f} USD. "
+        "Bot stopped & flattened — Reset the halt, then Start to resume."
+    )
+
+
 async def run_paper_loop(stop_event: threading.Event) -> None:
     """Run until Stop is pressed or the process exits.
 
@@ -317,11 +336,10 @@ async def run_paper_loop(stop_event: threading.Event) -> None:
         _risk_gate = executor.gate  # share state: counters, kill flag, cfg
     else:
         # Paper mode: same gate class, same persisted counters, same config.
-        # "What paper does is what live would have done." allow_overrides=True
-        # lets the operator disable the loss-halt via the dashboard for study
-        # runs (issue #65) — live builds the gate with overrides off so the
-        # toggle structurally cannot affect real funds.
-        _risk_gate = build_gate_from_config(allow_overrides=True)
+        # "What paper does is what live would have done." is_live defaults False
+        # so the paper gate halts on the paper (study) leg (#76). The loss-halt
+        # bypass is re-read each tick via refresh_overrides and applies here too.
+        _risk_gate = build_gate_from_config()
         await _risk_gate.load()
         await _risk_gate.refresh_overrides()
 
@@ -353,6 +371,9 @@ async def run_paper_loop(stop_event: threading.Event) -> None:
         await notify("btc_paper_started", "BTC paper bot started")
     log.info("paper_loop.started", mode=mode)
 
+    # Set when the daily loss halt trips (#76): the loop stops the bot and the
+    # finally surfaces this as LAST DETAIL instead of the generic stop line.
+    stop_detail: str | None = None
     try:
         while not stop_event.is_set():
             try:
@@ -362,6 +383,14 @@ async def run_paper_loop(stop_event: threading.Event) -> None:
                 error = f"{type(e).__name__}: {e!s}"
                 log.warning("paper_loop.tick_failed", error=error)
                 await _set_detail(f"BTC {mode} loop tick failed: {error}")
+            # Issue #76: a breached daily loss halt STOPS the bot (cancel +
+            # flatten via the finally below), not just blocks entries — so the
+            # operator resets the tally and restarts to resume trading.
+            stop_detail = _loss_halt_stop_detail(_risk_gate, mode)
+            if stop_detail is not None:
+                log.warning("paper_loop.loss_halt_stop", detail=stop_detail)
+                await notify("btc_loss_halt_stop", stop_detail)
+                break
             await _sleep_interruptible(stop_event, float(BTC_PAPER_TICK_SECONDS))
     finally:
         if _live_executor is not None:
@@ -386,7 +415,10 @@ async def run_paper_loop(stop_event: threading.Event) -> None:
         except (asyncio.CancelledError, Exception):  # noqa: BLE001
             pass
         await set_config("btc_bot.state", "stopped")
-        await _set_detail(f"BTC {mode} loop stopped. No new entries will be opened.")
+        await _set_detail(
+            stop_detail
+            or f"BTC {mode} loop stopped. No new entries will be opened."
+        )
         await notify("btc_paper_stopped", f"BTC {mode} bot stopped")
         log.info("paper_loop.stopped", mode=mode)
 

@@ -49,7 +49,8 @@ async def ems_html() -> str:
         or 0
     )
     paper_pnl = float(await get_config("btc_risk.paper_realized_pnl") or 0)
-    # The halt decision uses the combined PnL — see RiskGate.block_reason.
+    # Combined PnL for the ribbon's headline number. The loss-halt decision uses
+    # the per-mode leg (live in live, paper in paper) — see RiskGate.halt_pnl (#76).
     day_pnl = live_pnl + paper_pnl
     day_notional = float(
         await get_config("btc_risk.daily_buy_notional")
@@ -80,10 +81,10 @@ async def ems_html() -> str:
 
     # ---- panels ----
     from btc_5m_fv.execution.gate import (
-        get_paper_bypass_loss_halt,
+        get_loss_halt_bypass,
         get_runtime_max_trade_usd,
     )
-    bypass_loss_halt = await get_paper_bypass_loss_halt()
+    bypass_loss_halt = await get_loss_halt_bypass()
     # Operator runtime per-trade cap (#50): None when unset → bot uses the env
     # default. Used by the CONTROLS card and the STRATEGY sizing line so the UI
     # reflects the value the loop is actually enforcing this tick.

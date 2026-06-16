@@ -1,10 +1,12 @@
 """Risk guardrails: daily spend, loss-halt, bot state, recent BLOCKED entries.
 
-The loss-halt toggle is rendered in BOTH paper and live so the control
-surface matches across modes. In live mode the button is disabled and
-labeled — the live gate is built with ``allow_overrides=False`` and would
-ignore the POST anyway; disabling at the UI layer makes the safety invariant
-visible to the operator instead of silently no-opping.
+Loss-halt controls (#76): the STATUS pill is a button that toggles the bypass
+in BOTH paper and live (one click, journaled server-side), and a Reset button
+zeroes today's realized-loss tally. Reset is disabled while the bot is running
+(the running loop owns the in-memory counters) — but the halt auto-stops the
+bot, so after a halt the operator is already stopped and Reset is live. The
+halt is decided on the running mode's own leg, so the Headroom shown is the
+live leg in live mode and the paper leg in paper mode.
 """
 from __future__ import annotations
 
@@ -59,72 +61,86 @@ def render(
     )
 
     # ── LOSS HALT ───────────────────────────────────────────────────────
-    halted = day_pnl <= -loss_halt_usd and not bypass_loss_halt
-    headroom = loss_halt_usd + min(0.0, day_pnl)
-    if bypass_loss_halt:
-        halt_pill = "<span class='pill warn' title='Paper study: halt disabled'>BYPASS</span>"
-    elif halted:
-        halt_pill = "<span class='pill warn'>HALTED</span>"
-    else:
-        halt_pill = "<span class='pill on'>OK</span>"
+    # Halt is decided on the running mode's OWN leg (#76): real money in live,
+    # study PnL in paper. Paper losses no longer halt live.
+    is_live_mode = mode == "live"
+    leg_label = "live" if is_live_mode else "paper"
+    halt_pnl = live_pnl if is_live_mode else paper_pnl
+    halted = halt_pnl <= -loss_halt_usd and not bypass_loss_halt
+    headroom = loss_halt_usd + min(0.0, halt_pnl)
     headroom_cls = "down" if headroom < loss_halt_usd * 0.4 else ""
 
-    def _toggle_button(
-        endpoint: str,
-        on: bool,
-        on_label: str,
-        off_label: str,
-        disabled: bool = False,
-        disabled_title: str = "",
-    ) -> str:
-        next_state = "false" if on else "true"
-        btn_label = on_label if on else off_label
-        btn_cls = "btn-warn" if not on else "btn-ok"
-        if disabled:
-            return (
-                f"<button class='gr-btn {btn_cls}' disabled "
-                f"title='{escape(disabled_title)}'>{escape(btn_label)}</button>"
-            )
-        return (
-            f"<button class='gr-btn {btn_cls}' "
-            f"onclick=\"fetch('{endpoint}',"
-            f"{{method:'POST',headers:{{'Content-Type':'application/json'}},"
-            f"body:JSON.stringify({{enabled:{next_state}}})}})"
-            f".then(()=>setTimeout(refreshAll,300))\">"
-            f"{escape(btn_label)}</button>"
+    # STATUS is a BUTTON (#76): one click toggles the loss-halt bypass in BOTH
+    # paper and live (no confirm; the POST is journaled server-side). Clicking
+    # OK/HALTED disables the halt; clicking BYPASS re-enables it.
+    if bypass_loss_halt:
+        status_cls, status_label = "warn", "BYPASS"
+        status_title = "Halt disabled — click to re-enable"
+    elif halted:
+        status_cls, status_label = "down", "HALTED"
+        status_title = "Loss halt hit — click to bypass and keep trading"
+    else:
+        status_cls, status_label = "on", "OK"
+        status_title = "Halt active — click to bypass"
+    next_bypass = "false" if bypass_loss_halt else "true"
+    status_btn = (
+        f"<button class='pill {status_cls} gr-pill-btn' "
+        f"title='{escape(status_title)}' "
+        f"onclick=\"fetch('/api/loss_halt/bypass',"
+        f"{{method:'POST',headers:{{'Content-Type':'application/json'}},"
+        f"body:JSON.stringify({{enabled:{next_bypass}}})}})"
+        f".then(()=>setTimeout(refreshAll,300))\">{status_label}</button>"
+    )
+
+    # RESET clears today's realized-loss tally so the halt lifts. Stopped-only:
+    # the running loop owns the in-memory counters. The halt auto-stops the bot,
+    # so after a halt the bot is already stopped and this is live.
+    if state == "running":
+        reset_btn = (
+            "<button class='gr-btn' disabled "
+            "title='Stop the bot to reset the loss-halt tally'>Reset halt</button>"
+        )
+    else:
+        reset_btn = (
+            "<button class='gr-btn btn-ok' "
+            "title='Zero today&#39;s realized-loss tally so the halt clears' "
+            "onclick=\"fetch('/api/loss_halt/reset',{method:'POST'})"
+            ".then(()=>setTimeout(refreshAll,300))\">Reset halt</button>"
         )
 
-    is_live_mode = mode == "live"
-    halt_btn = _toggle_button(
-        "/api/paper/bypass_loss_halt",
-        bypass_loss_halt,
-        "Re-enable halt",
-        "Disable halt (study)",
-        disabled=is_live_mode,
-        disabled_title="Live mode: loss halt is a real-money safety gate and cannot be disabled from the UI",
-    )
     halt_hint = (
-        "live: safety gate enforced — cannot disable"
+        "bypass + reset affect REAL MONEY in live"
         if is_live_mode
-        else "paper study only — never affects live"
+        else "paper study — affects this study only"
     )
     toggle_html = (
         "<div class='gr-toggle'>"
-        + halt_btn
+        + reset_btn
         + f"<span class='gr-toggle-hint'>{escape(halt_hint)}</span>"
         "</div>"
+    )
+    live_title = (
+        "Real money — drives the halt"
+        if is_live_mode
+        else "Real money — does not affect the paper halt"
+    )
+    paper_title = (
+        "Study — does not affect the live halt"
+        if is_live_mode
+        else "Study — drives the halt"
     )
     halt_col = (
         "<div class='de-col'>"
         "<div class='de-h'>LOSS HALT</div>"
         "<div class='de-kv'>"
         f"<div><span>Live P&amp;L</span><b class='mono {s.cls(live_pnl)}' "
-        f"title='Real money — drives halt decision'>{s.money(live_pnl, True)}</b></div>"
+        f"title='{escape(live_title)}'>{s.money(live_pnl, True)}</b></div>"
         f"<div><span>Paper P&amp;L</span><b class='mono {s.cls(paper_pnl)}' "
-        f"title='Study — counts toward halt unless bypassed'>{s.money(paper_pnl, True)}</b></div>"
+        f"title='{escape(paper_title)}'>{s.money(paper_pnl, True)}</b></div>"
         f"<div><span>Halt threshold</span><b class='mono'>−${loss_halt_usd:,.2f}</b></div>"
-        f"<div><span>Headroom (combined)</span><b class='mono {headroom_cls}'>${headroom:,.2f}</b></div>"
-        f"<div><span>Status</span>{halt_pill}</div>"
+        f"<div><span>Headroom ({leg_label})</span>"
+        f"<b class='mono {headroom_cls}'>${headroom:,.2f}</b></div>"
+        f"<div><span>Status</span>{status_btn}</div>"
         "</div>"
         + toggle_html
         + "</div>"

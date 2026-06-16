@@ -101,6 +101,10 @@ except Exception:
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     await init_db()
+    # One-shot (#76): clear a stale paper-era loss-halt bypass so live starts
+    # halt-ON now that the bypass applies to real money. Idempotent via sentinel.
+    from btc_5m_fv.execution.gate import migrate_clear_stale_bypass_v76
+    await migrate_clear_stale_bypass_v76()
     yield
 
 
@@ -620,24 +624,59 @@ async def api_stop() -> dict[str, str]:
         return {"status": "error", "detail": f"Stop failed: {e}"}
 
 
-@app.post("/api/paper/bypass_loss_halt")
-async def api_paper_bypass_loss_halt(request: Request) -> dict[str, Any]:
-    """Paper-mode study toggle: disable the daily realized-loss halt.
+@app.post("/api/loss_halt/bypass")
+async def api_loss_halt_bypass(request: Request) -> dict[str, Any]:
+    """Toggle the daily realized-loss halt bypass (#76).
 
-    Has effect ONLY in paper mode. Live's gate is constructed with
-    ``allow_overrides=False`` so this flag is structurally ignored when real
-    funds are at stake. Persisted under ``btc_risk.paper_bypass_loss_halt``
-    so the choice survives Stop/Start, and re-read by the gate at every tick
-    so it takes effect immediately without needing a restart.
+    Applies to BOTH paper and live — the old "live can never disable a hard
+    money limit from the UI" invariant was removed at the operator's request.
+    Persisted under ``btc_risk.paper_bypass_loss_halt`` so the choice survives
+    Stop/Start, and re-read by the gate every tick so it takes effect without a
+    restart. Audited to ``notification_feed``.
     """
-    from btc_5m_fv.execution.gate import set_paper_bypass_loss_halt
+    from db import notify  # type: ignore[import-untyped]
+    from btc_5m_fv.execution.gate import set_loss_halt_bypass
     try:
         body = await request.json()
     except Exception:  # noqa: BLE001
         body = {}
     enabled = bool((body or {}).get("enabled", False))
-    await set_paper_bypass_loss_halt(enabled)
+    await set_loss_halt_bypass(enabled)
+    await notify(
+        "btc_loss_halt_bypass",
+        f"Operator {'ENABLED' if enabled else 'disabled'} loss-halt bypass "
+        "(paper+live, runtime — affects real money in live)",
+        {"enabled": enabled},
+    )
+    log.info("btc.loss_halt_bypass", enabled=enabled)
     return {"status": "ok", "bypass_loss_halt": enabled}
+
+
+@app.post("/api/loss_halt/reset")
+async def api_loss_halt_reset() -> dict[str, Any]:
+    """Reset today's realized-loss tally to $0 so the halt clears (#76).
+
+    Stopped-only: the running loop holds the daily counters in memory and
+    re-persists them on every close, so a reset while running would be
+    clobbered. The halt auto-stops the bot, so the operator is already stopped
+    when they reach for this. Bankroll-cap notional is left untouched. Audited
+    to ``notification_feed``.
+    """
+    from db import get_config, notify, set_config  # type: ignore[import-untyped]
+    state = (await get_config("btc_bot.state", "stopped")) or "stopped"
+    if state == "running":
+        return {
+            "status": "error",
+            "detail": "stop the bot before resetting the loss halt",
+        }
+    await set_config("btc_risk.live_realized_pnl", "0.0")
+    await set_config("btc_risk.paper_realized_pnl", "0.0")
+    await notify(
+        "btc_loss_halt_reset",
+        "Operator reset the daily loss-halt tally to $0.00 (live + paper)",
+    )
+    log.info("btc.loss_halt_reset")
+    return {"status": "ok", "reset": True}
 
 
 # Hard sanity bound on the operator runtime per-trade cap. Generous enough for
