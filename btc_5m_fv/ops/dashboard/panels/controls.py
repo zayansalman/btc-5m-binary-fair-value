@@ -13,7 +13,6 @@ def render(
     *,
     max_trade_current: float | None,
     max_trade_env: float,
-    min_trade: float,
 ) -> str:
     """Render the CONTROLS card.
 
@@ -33,12 +32,13 @@ def render(
         "</div>"
         "<div class='ctl-row'>"
         "<input id='ctl-max-trade' class='ctl-input' type='number' "
-        f"step='0.5' min='{min_trade:.2f}' value='{effective:.2f}' "
+        f"step='0.5' min='0.5' value='{effective:.2f}' "
         "aria-label='Max trade size in USD' />"
         "<button class='gr-btn btn-ok' onclick='setMaxTradeSize()'>Apply</button>"
         "</div>"
         "<div class='gr-toggle-hint'>"
-        f"sizes by confidence up to this cap · min ${min_trade:,.2f} · applies to paper + live"
+        "sizes by confidence up to this cap · small orders auto-bump to "
+        "Polymarket's 5-share minimum · paper + live"
         "</div>"
         "</section>"
     )

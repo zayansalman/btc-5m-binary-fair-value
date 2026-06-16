@@ -1,3 +1,19 @@
+# #87 — Auto-bump sub-minimum orders to the venue share minimum (2026-06-17)
+
+**Issue:** #87. **Branch:** `feature/87-auto-bump-min-order` off `develop`. **Supersedes #85's $5 floor.**
+
+## Why
+The #85 floor blocked the operator from setting sub-$5 clips — over-restrictive. Polymarket's real limit is 5 shares/order, which at ≥0.50 favourites costs only $2.50–$5. Operator wants full size control. So bump small orders UP to the venue minimum instead of forbidding small caps.
+
+## Done
+- Reverted #85 floor (endpoint/gate/controls + its tests) — any positive clip valid again.
+- `live.py::submit_entry`: `size < min_size` → bump to `min_size` and place (guard: block if `min_size > MAX_AUTO_BUMP_SHARES = 10`). Logs the bump; `record_buy_notional` uses bumped size.
+- `paper.py`: parity bump (`shares = max(shares, DEFAULT_MIN_ORDER_SIZE)`).
+- Tests: live block test → places-bumped + too-large guard; dropped #85 floor tests. **542 green; ruff clean; no new mypy.**
+- Cap is now a TARGET (may exceed by venue minimum, bounded ~$10). CHANGELOG v0.4.7.
+
+---
+
 # #85 — Live trades 100% blocked: runtime max-trade cap below Polymarket share minimum (2026-06-16)
 
 **Issue:** #85. **Branch:** `feature/85-runtime-cap-min-floor` off `develop`.

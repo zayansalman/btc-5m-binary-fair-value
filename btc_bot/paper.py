@@ -61,7 +61,11 @@ from btc_5m_fv.connectors.chainlink_settlement import (
     ChainlinkSettlementConnector,
     ChainlinkWsFeed,
 )
-from btc_5m_fv.execution.live import LiveExecutor, build_live_executor
+from btc_5m_fv.execution.live import (
+    DEFAULT_MIN_ORDER_SIZE,
+    LiveExecutor,
+    build_live_executor,
+)
 from btc_5m_fv.execution.gate import (
     EntryRequest,
     RiskGate,
@@ -1117,6 +1121,11 @@ async def _maybe_open_position(snapshot: PaperSnapshot) -> None:
     )
     notional = snapshot.notional_usd
     shares = notional / entry_price
+    # Parity with live auto-bump (#87): round a sub-minimum clip up to the venue
+    # share minimum so paper previews the same fill live would place.
+    if shares < DEFAULT_MIN_ORDER_SIZE:
+        shares = DEFAULT_MIN_ORDER_SIZE
+        notional = shares * entry_price
     if top_size is not None:
         if top_size <= 0:
             log.info(

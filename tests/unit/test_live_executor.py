@@ -302,9 +302,30 @@ async def test_entry_handles_dict_shaped_order_book(
 
 
 @pytest.mark.asyncio
-async def test_entry_blocked_below_min_order_size(journal_db, tmp_path: Path) -> None:
-    # $3 at 0.70 = 4.28 shares < Polymarket minimum of 5 shares.
+async def test_entry_below_min_order_size_bumps_to_minimum(
+    journal_db, tmp_path: Path
+) -> None:
+    # $3 at 0.70 = 4.28 shares < Polymarket's 5-share minimum. The operator opted
+    # into auto-bump (#87): round the order UP to exactly the venue minimum so a
+    # small configured clip still places, rather than blocking the window.
     client = _mock_client(_mock_book(best_ask="0.70"))
+    executor = _executor(client, tmp_path)
+
+    result = await executor.submit_entry(UP_TOKEN, 0.70, 3.0)
+
+    assert result.ok, result.reason
+    args = client.create_and_post_order.call_args.args[0]
+    assert args.size == 5.0  # bumped up to the venue minimum
+    assert args.price == 0.70
+
+
+@pytest.mark.asyncio
+async def test_entry_blocked_when_venue_minimum_too_large_to_bump(
+    journal_db, tmp_path: Path
+) -> None:
+    # A market demanding more than 2x the normal 5-share minimum is too large to
+    # auto-bump on this bankroll — block rather than silently overspend.
+    client = _mock_client(_mock_book(best_ask="0.70", min_order_size="20"))
     executor = _executor(client, tmp_path)
 
     result = await executor.submit_entry(UP_TOKEN, 0.70, 3.0)
