@@ -60,6 +60,10 @@ _BYPASS_MIGRATED_KEY = "btc_risk.bypass_migrated_v76"
 # re-read every tick via ``refresh_runtime_limits``. Unset → fall back to the
 # env/config default, so absence is fully backward-compatible.
 _RUNTIME_MAX_TRADE_KEY = "btc_runtime.max_trade_usd"
+# Operator runtime trade size in SHARES (#89). When set it takes precedence over
+# the dollar cap above: the bot sizes each clip to this many shares and the
+# per-trade dollar cap derives from it (N shares cost ≤ ~$N since prices < 1).
+_RUNTIME_TRADE_SHARES_KEY = "btc_runtime.trade_shares"
 
 # Legacy keys, written by the live-only counter before issue #64. Read once at
 # boot if the new keys are absent, then never touched again — the next persist
@@ -140,6 +144,9 @@ class RiskGate:
         # restart, in BOTH paper and live (this is a tuning knob, not a
         # safety-loosening override like the loss-halt bypass).
         self._runtime_max_trade_usd: float | None = None
+        # Operator runtime trade size in SHARES (#89). None → fall back to the
+        # dollar cap above. Refreshed every tick by ``refresh_runtime_limits``.
+        self._runtime_trade_shares: float | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -233,16 +240,8 @@ class RiskGate:
         regardless of mode. A blank / unset / non-numeric / ≤0 value clears the
         override and the gate falls back to the env default.
         """
-        raw = await get_config(_RUNTIME_MAX_TRADE_KEY)
-        if raw is None or raw.strip() == "":
-            self._runtime_max_trade_usd = None
-            return
-        try:
-            value = float(raw)
-        except ValueError:
-            self._runtime_max_trade_usd = None
-            return
-        self._runtime_max_trade_usd = value if value > 0 else None
+        self._runtime_max_trade_usd = await _read_positive(_RUNTIME_MAX_TRADE_KEY)
+        self._runtime_trade_shares = await _read_positive(_RUNTIME_TRADE_SHARES_KEY)
 
     @property
     def runtime_max_trade_usd(self) -> float | None:
@@ -250,8 +249,20 @@ class RiskGate:
         return self._runtime_max_trade_usd
 
     @property
+    def runtime_trade_shares(self) -> float | None:
+        """The operator-set trade size in shares (#89), or None when unset."""
+        return self._runtime_trade_shares
+
+    @property
     def effective_max_trade_usd(self) -> float:
-        """The per-trade cap in force: runtime override when set, else env default."""
+        """The per-trade dollar cap in force.
+
+        Precedence: a share-denominated trade size (#89) wins — N shares cost at
+        most ~$N (binary prices are < 1), so the dollar cap is N and never blocks
+        the bot's own N-share clip. Else the dollar override, else the env default.
+        """
+        if self._runtime_trade_shares is not None:
+            return self._runtime_trade_shares
         if self._runtime_max_trade_usd is not None:
             return self._runtime_max_trade_usd
         return self.cfg.max_trade_usd
@@ -436,7 +447,29 @@ async def set_runtime_max_trade_usd(value: float | None) -> None:
 
 async def get_runtime_max_trade_usd() -> float | None:
     """The persisted runtime per-trade cap, or None when unset/invalid."""
-    raw = await get_config(_RUNTIME_MAX_TRADE_KEY)
+    return await _read_positive(_RUNTIME_MAX_TRADE_KEY)
+
+
+async def set_runtime_trade_shares(value: float | None) -> None:
+    """Persist the operator runtime trade size in shares (#89).
+
+    ``None`` (or ≤0) clears it so the gate falls back to the dollar cap. Re-read
+    every tick, so it takes effect without a restart, in both paper and live.
+    """
+    if value is None or value <= 0:
+        await set_config(_RUNTIME_TRADE_SHARES_KEY, "")
+    else:
+        await set_config(_RUNTIME_TRADE_SHARES_KEY, repr(float(value)))
+
+
+async def get_runtime_trade_shares() -> float | None:
+    """The persisted runtime trade size in shares, or None when unset/invalid."""
+    return await _read_positive(_RUNTIME_TRADE_SHARES_KEY)
+
+
+async def _read_positive(key: str) -> float | None:
+    """Read a config key as a positive float, or None when unset / invalid / ≤0."""
+    raw = await get_config(key)
     if raw is None or raw.strip() == "":
         return None
     try:
