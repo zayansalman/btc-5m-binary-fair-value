@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.4.8 — Set trade size in shares from the CONTROLS panel (2026-06-17)
+
+Closes #89. The operator thinks in shares (contracts), not dollars — a binary's $ cost varies with price. The CONTROLS panel now takes a **share count** (≥5, the Polymarket minimum), shows the **$ value** of that many shares at the live price (plus the $2.50–$5-style range), and an **infographic** of the 5-share venue minimum. The share setting drives sizing everywhere — paper + live, next tick, no restart.
+
+### What
+- **`btc_5m_fv/execution/gate.py`**: new runtime knob `btc_runtime.trade_shares` (`set/get_runtime_trade_shares`, `runtime_trade_shares`, refreshed each tick). When set it takes precedence over the dollar `max_trade_usd` override: `effective_max_trade_usd` returns `trade_shares` (N shares cost ≤ ~$N since binary prices < 1, so the per-trade cap never blocks the bot's own N-share clip). DRYed the config reads behind `_read_positive`.
+- **`btc_bot/paper.py`**: new pure `_share_sized_notional(side, notional, up_ask, down_ask, trade_shares)` — when a share target is set, `notional = trade_shares × the chosen side's ask`, so the loop sizes to ≈N shares (exact in paper; ≈N in live within rounding). The executor still auto-bumps to the venue minimum (#87). Unset → the dollar path is untouched (backward compatible).
+- **`POST /api/runtime-config`**: new key `trade_shares` (validated 5 ≤ v ≤ 1000, audited).
+- **CONTROLS panel** (`panels/controls.py`, wired in `ems.py`): shares input (`min=5`, live `≈ $` value computed in `dashboard.js:updateShareValue()` from the favoured side's ask), `$` range, share-minimum infographic (pips + label), updated hint. `setTradeShares()` POSTs the new key. STRATEGY sizing line shows `N shares (~$X)`.
+- **Tests**: `test_share_sizing.py` (the resize helper), `test_risk_gate.py` (shares precedence + cap derivation), `test_runtime_config.py` (endpoint accept ≥5 / reject <5), `test_dashboard.py` (panel + handler). Full suite green (555); ruff clean; no new mypy errors.
+
+### Why this shape
+- The cap becomes a **target the venue minimum may exceed**, bounded by the derived dollar cap; the bankroll cap (when enabled) remains the dollar guard. The share count is the stable quantity the operator controls; the $ cost is shown as a derived, live estimate. The dollar `max_trade_usd` knob remains as a fallback when no share target is set (fully backward compatible).
+- **Out of scope:** #83 (backtest leak) / #84 (signal overfit) — live *edge*, not sizing.
+
 ## v0.4.7 — Auto-bump sub-minimum orders to the venue share minimum (2026-06-17)
 
 Closes #87; **supersedes the v0.4.6 floor**. v0.4.6 stopped the operator from setting a clip below ~$5, which removed legitimate control — Polymarket's real constraint is **5 shares/order**, which at the ≥0.50 favourites floor costs only **$2.50–$5** depending on price, not a flat $5. Operator wants to set any clip and still have small orders place. So instead of forbidding small caps, the bot now **rounds any sub-minimum order up to exactly the venue minimum** so it always places.

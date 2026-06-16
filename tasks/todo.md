@@ -1,3 +1,23 @@
+# #89 — Set trade size in SHARES from the CONTROLS panel (2026-06-17)
+
+**Issue:** #89. **Branch:** `feature/89-share-denominated-sizing` off `develop`.
+
+## Ask (operator)
+Set trade size in shares (not $) from the CONTROLS panel; see the $ value of the selected shares; infographic that the minimum order is 5 shares; the share setting drives sizing everywhere.
+
+## Done (committed incrementally — see note)
+- `gate.py`: `btc_runtime.trade_shares` knob; `effective_max_trade_usd` = trade_shares when set (N shares ≤ ~$N); `_read_positive` DRY. Tests.
+- `paper.py`: `_share_sized_notional()` → notional = shares × side ask when set. Test.
+- `app.py`: `/api/runtime-config` key `trade_shares` (5 ≤ v ≤ 1000). Tests.
+- `controls.py` + `ems.py`: shares input (min 5), live ≈$ value (favourite ask), $ range, 5-share infographic, hint. `strategy.py` sizing line shows shares.
+- `dashboard.js` (`setTradeShares`/`updateShareValue`) + `style.css` infographic.
+- **555 green; ruff clean; no new mypy.** CHANGELOG v0.4.8.
+
+## ⚠️ Note — incremental commits
+Mid-task, an external `git checkout develop` silently discarded uncommitted edits (reflog HEAD@{0}; not a hook — hooks only run gen_docs). Mitigation: committed after every chunk so work can't be wiped. If this recurs, investigate what runs `git checkout` (another session / scheduled task).
+
+---
+
 # #87 — Auto-bump sub-minimum orders to the venue share minimum (2026-06-17)
 
 **Issue:** #87. **Branch:** `feature/87-auto-bump-min-order` off `develop`. **Supersedes #85's $5 floor.**

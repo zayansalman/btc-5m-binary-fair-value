@@ -24,7 +24,7 @@ _Status: `WIRED` = has non-test importers; `DEAD?` = no importers found (investi
 | `btc_5m_fv/core/types.py` | WIRED | 10 | All domain types and enums for the BTC 5m Binary Fair Value trading system. |
 | `btc_5m_fv/execution/__init__.py` | pkg | 0 | Paper and live execution managers. |
 | `btc_5m_fv/execution/gate.py` | WIRED | 4 | Venue-independent pre-trade risk gate (issue #64). |
-| `btc_5m_fv/execution/live.py` | WIRED | 5 | Live execution on the Polymarket CLOB via py-clob-client. |
+| `btc_5m_fv/execution/live.py` | WIRED | 6 | Live execution on the Polymarket CLOB via py-clob-client. |
 | `btc_5m_fv/execution/paper.py` | WIRED | 1 | Paper execution manager — explicit order lifecycle with SQLite persistence. |
 | `btc_5m_fv/execution/risk.py` | WIRED | 1 | Venue-independent risk service — pre-trade and post-trade risk controls. |
 | `btc_5m_fv/ops/__init__.py` | pkg | 0 | Operator controls and telemetry. |
@@ -36,7 +36,7 @@ _Status: `WIRED` = has non-test importers; `DEAD?` = no importers found (investi
 | `btc_5m_fv/ops/dashboard/panels/_data.py` | WIRED | 1 | Read-only SQLite loaders for dashboard panels. |
 | `btc_5m_fv/ops/dashboard/panels/_shared.py` | DEAD? | 0 | Shared rendering primitives for dashboard panels. |
 | `btc_5m_fv/ops/dashboard/panels/blotter.py` | WIRED | 1 | Trade blotter: open positions on top, last 12 closed below, mode chip per row. |
-| `btc_5m_fv/ops/dashboard/panels/controls.py` | WIRED | 1 | Operator runtime controls (#50): live-editable risk knobs. |
+| `btc_5m_fv/ops/dashboard/panels/controls.py` | WIRED | 1 | Operator runtime controls (#50, #89): live-editable risk knobs. |
 | `btc_5m_fv/ops/dashboard/panels/decision_engine.py` | WIRED | 1 | Decision engine panel: inputs → computation → gates → final banner + tail. |
 | `btc_5m_fv/ops/dashboard/panels/guardrails.py` | WIRED | 1 | Risk guardrails: daily spend, loss-halt, bot state, recent BLOCKED entries. |
 | `btc_5m_fv/ops/dashboard/panels/market.py` | WIRED | 1 | Live market panel: probability gauge, UP/DOWN book, basis. |
