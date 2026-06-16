@@ -38,7 +38,28 @@ jobs:
         run: pip install ruff mypy
 
       - name: Ruff check
-        run: ruff check btc_5m_fv/ tests/
+        run: ruff check btc_5m_fv/ btc_bot/ tests/
 
       - name: Mypy check
         run: mypy btc_5m_fv/ --ignore-missing-imports
+
+  docs-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install package
+        run: pip install -e ".[test]"
+
+      - name: Regenerate docs and fail on drift
+        run: python tools/gen_docs.py --check
+
+      - name: Fail on banned stale strings
+        run: |
+          ! grep -rn -e "No live orders" -e "no private key required" \
+            -e "321 tests" -e "gradio.Blocks" -e "live trading is intentionally absent" \
+            README.md AGENTS.md CLAUDE.md docs/
