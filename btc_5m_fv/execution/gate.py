@@ -32,20 +32,27 @@ from db import get_config, set_config  # type: ignore[import-untyped]
 # Current keys (issue #64). Generic — fed by paper closes and live closes.
 _RISK_DATE_KEY = "btc_risk.date"
 _RISK_NOTIONAL_KEY = "btc_risk.daily_buy_notional"
-# Split counters (issue #67): paper bypass mode would otherwise pollute the
-# operator's view of real-money PnL. The gate halts on the SUM (live+paper)
-# for parity, so paper losses still drive the halt in non-bypass mode; the
-# dashboard reads each leg separately to label live vs study clearly.
+# Split counters (issue #67; halt scope changed in #76). Live and paper
+# realized PnL are tracked separately. The halt now fires on the MODE'S OWN
+# leg — live halts on real-money PnL, paper on study PnL — so paper-study
+# losses no longer halt live trading. ``daily_realized_pnl`` keeps the combined
+# sum as a reporting/back-compat surface only.
 _RISK_LIVE_PNL_KEY = "btc_risk.live_realized_pnl"
 _RISK_PAPER_PNL_KEY = "btc_risk.paper_realized_pnl"
 # Pre-split combined key (issue #64). Read once on migration into the live
 # bucket — by far the most common pre-split scenario was a live-only counter.
 _RISK_COMBINED_PNL_KEY = "btc_risk.daily_realized_pnl"
 
-# Paper-only study overrides (#65). Only honoured when the gate was built
-# with ``allow_money_overrides=True`` — live's gate ignores them by
-# construction so nobody can ever disable a hard money limit via the UI.
+# Operator loss-halt bypass (#65, generalised #76). Originally paper-only; now
+# an operator runtime knob honoured in BOTH modes — the old "live can never
+# disable a hard money limit from the UI" invariant was removed at the
+# operator's explicit request. Re-read every tick via ``refresh_overrides``.
+# The persisted key name is kept as-is to avoid migrating stored state.
 _BYPASS_LOSS_HALT_KEY = "btc_risk.paper_bypass_loss_halt"
+# One-shot migration sentinel (#76): set once the stale paper-era bypass flag
+# has been cleared so live starts halt-ON; presence of the sentinel guarantees
+# a later deliberate bypass is never wiped.
+_BYPASS_MIGRATED_KEY = "btc_risk.bypass_migrated_v76"
 
 # Operator runtime risk knobs (#50). Unlike the paper-only bypass above, these
 # are tuning controls that apply in BOTH modes (the operator wants to resize
@@ -108,8 +115,12 @@ class RiskGate:
     silently grants a fresh bankroll when the cap is enabled.
     """
 
-    def __init__(self, cfg: GateConfig, *, allow_overrides: bool = False) -> None:
+    def __init__(self, cfg: GateConfig, *, is_live: bool = False) -> None:
         self.cfg = cfg
+        # Which leg drives THIS gate's loss halt (#76): the live gate halts on
+        # real-money PnL, the paper gate on study PnL. Set True by the live
+        # executor; the paper loop leaves it False.
+        self.is_live = is_live
         self._date = self._today()
         # Split PnL counters (issue #67). Gate halts on the SUM; dashboard
         # shows each leg separately so the operator can tell real-money PnL
@@ -119,13 +130,9 @@ class RiskGate:
         self._daily_buy_notional: float = 0.0
         self._kill_handled = False
         self._loaded = False
-        # Paper builds with True (lets the operator disable the loss halt for
-        # study runs); live builds with False so the override is structurally
-        # impossible to apply to real funds.
-        self.allow_overrides = allow_overrides
-        # Cached override state — refreshed by ``refresh_overrides`` on each
-        # tick so the dashboard toggle takes effect immediately without
-        # restarting the loop.
+        # Cached loss-halt bypass (#76) — refreshed by ``refresh_overrides`` on
+        # each tick so the dashboard toggle takes effect immediately without a
+        # restart. Applies in BOTH modes.
         self._bypass_loss_halt = False
         # Operator runtime per-trade cap override (#50). None → use the env
         # default (cfg.max_trade_usd). Refreshed every tick by
@@ -195,23 +202,34 @@ class RiskGate:
         await set_config(_RISK_NOTIONAL_KEY, repr(self._daily_buy_notional))
 
     async def refresh_overrides(self) -> None:
-        """Re-read paper-only override flags from SQLite (no-op when disabled)."""
-        if not self.allow_overrides:
-            self._bypass_loss_halt = False
-            return
+        """Re-read the operator loss-halt bypass from SQLite (BOTH modes, #76)."""
         self._bypass_loss_halt = (await get_config(_BYPASS_LOSS_HALT_KEY)) == "1"
 
     @property
     def bypass_loss_halt(self) -> bool:
-        """Live always sees False; paper sees whatever the toggle is set to."""
-        return self.allow_overrides and self._bypass_loss_halt
+        """Operator loss-halt bypass (#76) — applies to paper AND live."""
+        return self._bypass_loss_halt
+
+    @property
+    def halt_pnl(self) -> float:
+        """The realized-loss leg that drives THIS gate's halt (#76): live money
+        in live mode, study PnL in paper mode."""
+        self._roll_daily_window()
+        return self._live_pnl if self.is_live else self._paper_pnl
+
+    def loss_halt_breached(self) -> bool:
+        """True when this mode's own realized-loss leg is at/below the daily
+        halt and the bypass is off. The loop uses this to STOP the bot (#76)."""
+        if self._bypass_loss_halt:
+            return False
+        return self.halt_pnl <= -self.cfg.daily_loss_halt_usd
 
     async def refresh_runtime_limits(self) -> None:
         """Re-read operator runtime risk knobs from SQLite (BOTH paper and live).
 
-        Distinct from ``refresh_overrides``: that gates a paper-only,
-        safety-loosening toggle behind ``allow_overrides``. The per-trade cap
-        is a tuning knob the operator expects to apply everywhere, so this runs
+        Distinct from ``refresh_overrides``: that reads the loss-halt bypass
+        (a safety-loosening operator toggle, #76). The per-trade cap is a
+        tuning knob the operator expects to apply everywhere, so this runs
         regardless of mode. A blank / unset / non-numeric / ≤0 value clears the
         override and the gate falls back to the env default.
         """
@@ -246,9 +264,9 @@ class RiskGate:
         """Add realized PnL to the right bucket. Both feed the halt sum.
 
         ``is_live`` is the only call-site distinction — paper closes pass
-        False so their PnL stays separated for dashboard reporting. The halt
-        decision uses the SUM so paper losses still count toward the halt
-        in non-bypass mode (preserves #64 parity).
+        False so their PnL stays separated. The halt decision uses the gate's
+        OWN leg (live or paper) per its ``is_live`` (#76), so paper losses no
+        longer drive the live halt.
         """
         self._roll_daily_window()
         if is_live:
@@ -274,7 +292,8 @@ class RiskGate:
 
     @property
     def daily_realized_pnl(self) -> float:
-        """Combined PnL — drives the halt decision; backwards-compat surface."""
+        """Combined live+paper PnL. Reporting/back-compat surface only — the
+        halt decision uses the per-mode leg (``halt_pnl``) since #76."""
         self._roll_daily_window()
         return self._live_pnl + self._paper_pnl
 
@@ -313,13 +332,10 @@ class RiskGate:
         if self.kill_switch_active():
             return f"KILL switch active at {self.cfg.kill_switch_path}"
         self._roll_daily_window()
-        combined_pnl = self._live_pnl + self._paper_pnl
-        if (
-            not self.bypass_loss_halt
-            and combined_pnl <= -self.cfg.daily_loss_halt_usd
-        ):
+        if self.loss_halt_breached():
+            leg = "live" if self.is_live else "paper"
             return (
-                f"daily loss halt: realized {combined_pnl:+.2f} USD "
+                f"daily loss halt: {leg} realized {self.halt_pnl:+.2f} USD "
                 f"breaches -{self.cfg.daily_loss_halt_usd:.2f} USD"
             )
         if req.position_open or req.entry_order_resting:
@@ -362,16 +378,15 @@ class RiskGate:
 # ---------------------------------------------------------------------------
 
 
-def build_gate_from_config(*, allow_overrides: bool = False) -> RiskGate:
+def build_gate_from_config(*, is_live: bool = False) -> RiskGate:
     """Build a RiskGate from the global ``config`` module.
 
     The single source of truth: paper and live both use this so their gate
     configs cannot drift. The persisted state is NOT loaded here — callers
     must ``await gate.load()`` once before the first ``block_reason()``.
 
-    ``allow_overrides=True`` is paper-mode only: it lets the dashboard
-    operator disable specific gates for study runs. Live always passes
-    ``False`` so paper toggles can never affect real funds.
+    ``is_live`` selects which realized-loss leg drives the halt (#76): the live
+    gate halts on real-money PnL, the paper gate on study PnL.
     """
     import config as _config  # type: ignore[import-untyped]
 
@@ -382,16 +397,28 @@ def build_gate_from_config(*, allow_overrides: bool = False) -> RiskGate:
         max_entry_slippage=_config.BTC_TRADE_MAX_ENTRY_SLIPPAGE,
         kill_switch_path=Path(_config.KILL_SWITCH_PATH),
     )
-    return RiskGate(cfg, allow_overrides=allow_overrides)
+    return RiskGate(cfg, is_live=is_live)
 
 
-async def set_paper_bypass_loss_halt(enabled: bool) -> None:
-    """Persist the paper-mode loss-halt bypass (no effect in live mode)."""
+async def set_loss_halt_bypass(enabled: bool) -> None:
+    """Persist the operator loss-halt bypass (#76; applies to paper AND live)."""
     await set_config(_BYPASS_LOSS_HALT_KEY, "1" if enabled else "0")
 
 
-async def get_paper_bypass_loss_halt() -> bool:
+async def get_loss_halt_bypass() -> bool:
     return (await get_config(_BYPASS_LOSS_HALT_KEY)) == "1"
+
+
+async def migrate_clear_stale_bypass_v76() -> None:
+    """One-shot (#76): the loss-halt bypass used to be paper-only and was
+    structurally ignored in live. It now applies to live too, so a flag left ON
+    from a paper study would silently disable the real-money halt. Clear it once
+    so live starts halt-ON; the sentinel makes this idempotent and guarantees a
+    later deliberate operator bypass is never wiped."""
+    if (await get_config(_BYPASS_MIGRATED_KEY)) == "1":
+        return
+    await set_config(_BYPASS_LOSS_HALT_KEY, "0")
+    await set_config(_BYPASS_MIGRATED_KEY, "1")
 
 
 async def set_runtime_max_trade_usd(value: float | None) -> None:

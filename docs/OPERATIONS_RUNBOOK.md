@@ -147,13 +147,41 @@ the funder address** — no key export needed anywhere.
 | Entry slippage guard (ask vs signal) | `BTC_LIVE_MAX_ENTRY_SLIPPAGE` | 0.02 |
 | Exit fill wait before cancel/retry | `BTC_LIVE_EXIT_FILL_TIMEOUT_SECONDS` | 10s |
 
-The daily loss halt is always on. The daily bankroll cap is **opt-in** as of
+The daily loss halt is on by default but is now operator-controllable from the
+dashboard — see **Loss-halt operator controls (#76)** below. As of #76 the live
+halt fires on the **live (real-money) leg only**; paper-study losses no longer
+halt live trading. The daily bankroll cap is **opt-in** as of
 v0.4.4: leave `BTC_LIVE_BANKROLL_CAP_USD` blank/unset and the cap gate is
 bypassed (the spend counter still increments so the dashboard can show daily
 throughput). When set to a positive dollar amount it behaves as before —
 persisted in SQLite, restart-safe within the UTC day. Realized PnL feeds the
 halt from CONFIRMED exit fills at the executed order's limit price, never from
 paper-price estimates at submission time.
+
+### Loss-halt operator controls (#76)
+
+The LOSS HALT panel exposes two one-click controls that work in **both paper and
+live** (the old "live halt can never be disabled from the UI" lock was removed):
+
+- **STATUS pill (button)** — toggles the loss-halt **bypass**. `OK`/`HALTED` →
+  click to disable the halt and keep trading past the limit; `BYPASS` → click to
+  re-enable. In live this affects **real money**. Re-read by the loop every tick,
+  so it takes effect without a restart.
+- **Reset halt** — zeroes today's realized-loss tally so the halt clears. It is
+  **stopped-only** (disabled while running, and the endpoint rejects a running
+  bot) because the loop holds the counters in memory; the bankroll-cap notional
+  is left untouched.
+
+When the halt trips with bypass OFF, the bot now **auto-stops** (cancel + flatten,
+same path as the kill switch) and the LAST DETAIL reads e.g. *"Daily loss halt:
+live realized −$12.40 ≤ −$10.00. Bot stopped & flattened — Reset the halt, then
+Start to resume."* Operator workflow after a halt: **Reset halt → Start**.
+Pressing Start without resetting re-trips on the first tick and stops again.
+
+Every bypass/reset is journaled to `notification_feed` (`btc_loss_halt_bypass`,
+`btc_loss_halt_reset`, `btc_loss_halt_stop`). On the first dashboard boot after
+this change, a one-shot migration clears any stale paper-era bypass flag so live
+starts halt-ON.
 
 A malformed risk-limit env value (e.g. `BTC_LIVE_MAX_TRADE_USD=O.50`) makes
 live boot REFUSE with the exact parse error instead of silently falling back

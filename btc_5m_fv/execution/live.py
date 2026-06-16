@@ -219,7 +219,8 @@ class LiveExecutor:
                 else _config.KILL_SWITCH_PATH
             ),
         )
-        self.gate = RiskGate(gate_cfg)
+        # is_live=True → the gate halts on the live (real-money) leg (#76).
+        self.gate = RiskGate(gate_cfg, is_live=True)
         self.exit_fill_timeout_seconds = (
             exit_fill_timeout_seconds
             if exit_fill_timeout_seconds is not None

@@ -3,6 +3,7 @@
 - **Issue:** #76
 - **Branch:** `feature/76-loss-halt-operator-controls` (off `develop`)
 - **Date:** 2026-06-16
+- **Status:** Implemented (gate + loop + endpoints + panel + migration + tests; 541 passing)
 
 ## Problem
 

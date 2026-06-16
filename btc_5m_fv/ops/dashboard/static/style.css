@@ -90,6 +90,10 @@ body {
 .pill.on { background: rgba(43,212,125,.13); color: var(--green); border-color: rgba(43,212,125,.35); }
 .pill.off { background: rgba(127,138,163,.1); color: var(--dim); }
 .pill.warn { background: rgba(255,180,84,.14); color: var(--amber); border-color: rgba(255,180,84,.4); }
+.pill.down { background: rgba(255,84,112,.14); color: var(--red); border-color: rgba(255,84,112,.4); }
+/* STATUS pill rendered as a clickable button — toggles the loss-halt bypass (#76). */
+.pill.gr-pill-btn { cursor: pointer; font-family: var(--mono); line-height: 1.2; }
+.pill.gr-pill-btn:hover { filter: brightness(1.18); }
 
 .feeds { display: flex; gap: 6px; align-items: center; }
 .feed { font-family: var(--mono); font-size: 9.5px; letter-spacing: .5px; padding: 2px 6px; border-radius: 4px; }
