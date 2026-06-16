@@ -222,6 +222,7 @@ body {
   background: var(--bg); color: var(--fg); text-align: center;
 }
 .gr-btn:hover { filter: brightness(1.15); }
+.gr-btn:disabled { opacity: .45; cursor: not-allowed; filter: none; }
 .gr-btn.btn-warn { border-color: var(--warn, #c98a3a); color: var(--warn, #c98a3a); }
 .gr-btn.btn-ok { border-color: var(--up, #6ad07b); color: var(--up, #6ad07b); }
 .gr-toggle-hint {
@@ -250,6 +251,7 @@ body {
 .perf-mini-row b { font-family: var(--mono); font-weight: 600; }
 .perf-mini-row b em { color: var(--faint); font-style: normal; font-size: 10px; margin-left: 4px; }
 .perf-mini-empty { color: var(--faint); font-family: var(--mono); font-size: 10.5px; padding: 8px 0; }
+.perf-mini-sub { color: var(--faint); font-family: var(--mono); font-size: 9.5px; letter-spacing: .3px; text-transform: lowercase; margin-left: auto; }
 
 /* ── TCA / calibration ── */
 .calib-wrap { margin-top: 13px; display: flex; align-items: center; gap: 14px; }

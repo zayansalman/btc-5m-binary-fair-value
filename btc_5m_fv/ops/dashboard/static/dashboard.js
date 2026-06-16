@@ -71,7 +71,10 @@ function setButtonsDisabled(disabled) {
 }
 
 function setMode(mode) {
-  if (mode === 'live' && !confirm('Switch to LIVE? This places REAL orders with real funds on Polymarket.')) {
+  if (mode === 'live' && !confirm(
+    'Switch to LIVE mode? The bot will be STOPPED. ' +
+    'You must press Start to begin trading with real funds on Polymarket.'
+  )) {
     return;
   }
   fetch('/api/mode', {
