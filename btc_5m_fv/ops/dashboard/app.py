@@ -640,6 +640,51 @@ async def api_paper_bypass_loss_halt(request: Request) -> dict[str, Any]:
     return {"status": "ok", "bypass_loss_halt": enabled}
 
 
+# Hard sanity bound on the operator runtime per-trade cap. Generous enough for
+# any realistic clip on this bankroll, low enough to catch a fat-fingered entry.
+_MAX_TRADE_USD_CEILING = 1000.0
+
+
+@app.post("/api/runtime-config")
+async def api_runtime_config(request: Request) -> dict[str, Any]:
+    """Set an operator runtime risk knob, persisted and read by the bot each tick.
+
+    Currently supports ``key="max_trade_usd"`` — the unified per-trade cap that
+    governs both the sizing ceiling and the gate cap, in paper AND live, taking
+    effect on the next tick without a restart (#50). Validated and audited to
+    ``notification_feed``. The shape is generic so position-mode / max-positions
+    controls can register here later.
+    """
+    from db import notify  # type: ignore[import-untyped]
+    from btc_5m_fv.execution.gate import set_runtime_max_trade_usd
+
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    key = (body or {}).get("key", "")
+    if key == "max_trade_usd":
+        try:
+            value = float((body or {}).get("value"))
+        except (TypeError, ValueError):
+            return {"status": "error", "detail": "value must be a number"}
+        if not (0 < value <= _MAX_TRADE_USD_CEILING):
+            return {
+                "status": "error",
+                "detail": f"max trade size must be between $0 and ${_MAX_TRADE_USD_CEILING:.0f}",
+            }
+        value = round(value, 2)
+        await set_runtime_max_trade_usd(value)
+        await notify(
+            "btc_runtime_config",
+            f"Operator set max trade size to ${value:.2f} (paper+live, runtime — no restart)",
+            {"key": key, "value": value},
+        )
+        log.info("btc.runtime_config_set", key=key, value=value)
+        return {"status": "ok", "key": key, "value": value}
+    return {"status": "error", "detail": f"unknown runtime key {key!r}"}
+
+
 
 
 async def _runtime_state() -> dict[str, str]:

@@ -229,6 +229,17 @@ body {
   font-family: var(--mono); font-size: 9.5px; color: var(--faint);
   font-style: italic;
 }
+
+/* ── runtime controls (operator-editable risk knobs) ── */
+.ctl-row { display: flex; gap: 8px; align-items: center; margin: 10px 0 6px; }
+.ctl-input {
+  font-family: var(--mono); font-size: 12px; padding: 6px 8px; width: 92px;
+  border-radius: 4px; border: 1px solid var(--line);
+  background: var(--panel-2); color: var(--text);
+}
+.ctl-input:focus { outline: none; border-color: var(--accent); }
+.ctl-input::-webkit-outer-spin-button,
+.ctl-input::-webkit-inner-spin-button { opacity: 1; }
 @media (max-width: 1100px) {
   .gr-grid { grid-template-columns: repeat(2, 1fr); }
 }

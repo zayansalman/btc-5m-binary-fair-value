@@ -133,9 +133,15 @@ def _strategy_params() -> StrategyParams:
     the file read is cheap and survives operator updates without a restart.
     """
     a = _params.load_active()
+    # Operator runtime per-trade cap (#50): when the dashboard control is set,
+    # it governs the sizing ceiling too (unified with the gate's effective cap),
+    # so the clip actually changes without a restart. Unset → env default, i.e.
+    # fully backward-compatible. The gate refreshed this value earlier this tick.
+    override = _risk_gate.runtime_max_trade_usd if _risk_gate is not None else None
+    max_trade_usd = override if override is not None else BTC_PAPER_MAX_TRADE_USD
     return StrategyParams(
         min_trade_usd=BTC_PAPER_MIN_TRADE_USD,
-        max_trade_usd=BTC_PAPER_MAX_TRADE_USD,
+        max_trade_usd=max_trade_usd,
         entry_edge_min=a.entry_edge_min,
         min_confidence=a.min_confidence,
         entry_min_remaining_seconds=a.min_remaining_seconds,
@@ -397,8 +403,12 @@ async def paper_tick_once() -> PaperSnapshot:
         kill_active = await _live_executor.enforce_kill_switch()
     # Re-read paper override toggles so dashboard changes take effect on the
     # very next tick without needing a Stop/Start. No-op in live mode.
+    # The runtime per-trade cap (#50) is re-read for BOTH modes — it is a
+    # tuning knob the operator sets from the dashboard, not a paper-only
+    # safety override.
     if _risk_gate is not None:
         await _risk_gate.refresh_overrides()
+        await _risk_gate.refresh_runtime_limits()
     async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
         snapshot = await _build_snapshot(client)
         await _log_tick(snapshot)

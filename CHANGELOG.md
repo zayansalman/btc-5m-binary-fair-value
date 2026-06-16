@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.4.5 — UI-settable max trade size (2026-06-16)
+
+Part of #50 (the max-trade-size slice). Resizing the clip required editing `.env` and restarting uvicorn; with `BTC_PAPER_MIN_TRADE_USD=BTC_PAPER_MAX_TRADE_USD=5` every trade went in at a fixed $5 with no way to tune it mid-session. Now the operator sets it from the dashboard and it takes effect on the next tick — paper AND live, no restart.
+
+### What
+- **`btc_5m_fv/execution/gate.py`**: new runtime per-trade cap override. `RiskGate.refresh_runtime_limits()` re-reads `btc_runtime.max_trade_usd` from the `config` table every tick (runs in BOTH modes — it's a tuning knob, not the paper-only loss-halt bypass). New `runtime_max_trade_usd` (raw override) and `effective_max_trade_usd` (override else env default) properties; `block_reason` enforces the **effective** cap. Module helpers `set_runtime_max_trade_usd` / `get_runtime_max_trade_usd` with validation.
+- **`btc_bot/paper.py`**: `paper_tick_once` calls `refresh_runtime_limits()` each tick; `_strategy_params()` uses the runtime override for the sizing ceiling when set (else env default — fully backward-compatible). So one knob governs both the sizing ceiling and the gate cap (unified). `notional_from_confidence` already clamps to `[min, max]`, so a value below min gives a smaller fixed clip and above min re-enables confidence-scaled sizing — no `min` changes needed.
+- **Dashboard CONTROLS card** (`btc_5m_fv/ops/dashboard/panels/controls.py`, new; wired in `ems.py`, first grid row after RISK GUARDRAILS): shows current max (operator vs env default), a number input + Apply. `POST /api/runtime-config` (`app.py`) validates (0 < v ≤ $1000), persists via the gate setter, audits to `notification_feed`. `setMaxTradeSize()` in `dashboard.js`; `.ctl-input`/`.ctl-row` theme CSS. STRATEGY card's sizing line now reflects the effective cap.
+- **Tests**: `test_risk_gate.py` (override applies in both modes, refresh fallback, clear, set/get round-trip, invalid-value handling); `test_runtime_config.py` (endpoint persists + validates against an isolated DB); `test_dashboard.py` (CONTROLS card + handler render). Full suite green (503 tests, +15 new).
+
+### Why this shape
+- Mirrors the existing per-tick `refresh_overrides` + `config`-table pattern (#65), so no new machinery and no restart. Unset key = exact prior behaviour (backward-compatible). The UI follows the existing panel architecture (pure `render()` panel, data in `ems.py`, POST + `refreshAll`, theme CSS) — no bespoke surface.
+- Singleton position mode and multi-position were deliberately left untouched (deferred at operator request); `EntryRequest` / `GateConfig` / `LiveExecutor` single-position state are unchanged.
+
 ## v0.4.4 — Bankroll Cap Opt-In + RISK GUARDRAILS Panel (2026-06-15)
 
 Closes #61. Investigation of "why did the bot stop trading after lunch?" surfaced a UX gap: the daily $30 bankroll cap had been silently rejecting every entry from 10:46 UTC onward (43 BLOCKED entries journaled in `btc_live_orders`), but nothing on the dashboard showed it. Operator had to grep logs and query SQLite to figure out the cap was hit.

@@ -124,6 +124,35 @@ function handleStop() {
     .finally(function() { setButtonsDisabled(false); });
 }
 
+function setMaxTradeSize() {
+  var el = document.getElementById('ctl-max-trade');
+  if (!el) return;
+  var v = parseFloat(el.value);
+  if (!(v > 0)) {
+    showToast('Enter a positive max trade size', 'error');
+    return;
+  }
+  if (!confirm('Set max trade size to $' + v.toFixed(2) +
+      '? Applies to paper + live on the next tick.')) {
+    return;
+  }
+  fetch('/api/runtime-config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key: 'max_trade_usd', value: v })
+  })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.status === 'ok') {
+        showToast('Max trade size → $' + Number(data.value).toFixed(2), 'success');
+      } else {
+        showToast('Update failed: ' + (data.detail || 'unknown error'), 'error');
+      }
+      setTimeout(refreshAll, 300);
+    })
+    .catch(function(err) { showToast('Update failed: ' + err.message, 'error'); });
+}
+
 function handleRefresh() {
   setButtonsDisabled(true);
   showToast('Refreshing...', 'info');

@@ -217,3 +217,81 @@ class TestPaperOverrideStructurallyIgnoredInLive:
         # Other gates STILL run (per-trade cap, slippage, singleton).
         msg = paper.block_reason(_req(notional_usd=999.0))
         assert msg is not None and "per-trade cap" in msg
+
+
+class TestRuntimeMaxTradeOverride:
+    """Operator runtime per-trade cap (#50): applies in BOTH modes, no restart.
+
+    Distinct from the paper-only loss-halt bypass — this is a tuning knob, so
+    it is honoured whether or not the gate was built with allow_overrides.
+    """
+
+    def test_effective_defaults_to_cfg(self) -> None:
+        gate = RiskGate(_cfg(max_trade_usd=5.0))
+        assert gate.runtime_max_trade_usd is None
+        assert gate.effective_max_trade_usd == 5.0
+
+    @pytest.mark.asyncio
+    async def test_override_lowers_cap(self) -> None:
+        from btc_5m_fv.execution.gate import set_runtime_max_trade_usd
+
+        gate = RiskGate(_cfg(max_trade_usd=5.0))
+        await set_runtime_max_trade_usd(2.0)
+        await gate.refresh_runtime_limits()
+        assert gate.effective_max_trade_usd == 2.0
+        msg = gate.block_reason(_req(notional_usd=3.0))
+        assert msg is not None and "per-trade cap" in msg and "2.00" in msg
+
+    @pytest.mark.asyncio
+    async def test_override_raises_cap_for_both_modes(self) -> None:
+        from btc_5m_fv.execution.gate import set_runtime_max_trade_usd
+
+        # The override applies regardless of allow_overrides (paper or live).
+        paper = RiskGate(_cfg(max_trade_usd=3.0), allow_overrides=True)
+        live = RiskGate(_cfg(max_trade_usd=3.0), allow_overrides=False)
+        # Without override, $5 trips the $3 env cap in both.
+        assert paper.block_reason(_req(notional_usd=5.0)) is not None
+        assert live.block_reason(_req(notional_usd=5.0)) is not None
+        await set_runtime_max_trade_usd(8.0)
+        await paper.refresh_runtime_limits()
+        await live.refresh_runtime_limits()
+        assert paper.effective_max_trade_usd == 8.0
+        assert live.effective_max_trade_usd == 8.0
+        assert paper.block_reason(_req(notional_usd=5.0)) is None
+        assert live.block_reason(_req(notional_usd=5.0)) is None
+
+    @pytest.mark.asyncio
+    async def test_override_cleared_falls_back_to_env(self) -> None:
+        from btc_5m_fv.execution.gate import set_runtime_max_trade_usd
+
+        gate = RiskGate(_cfg(max_trade_usd=5.0))
+        await set_runtime_max_trade_usd(2.0)
+        await gate.refresh_runtime_limits()
+        assert gate.effective_max_trade_usd == 2.0
+        await set_runtime_max_trade_usd(None)  # clear
+        await gate.refresh_runtime_limits()
+        assert gate.runtime_max_trade_usd is None
+        assert gate.effective_max_trade_usd == 5.0
+
+    @pytest.mark.asyncio
+    async def test_set_get_round_trip(self) -> None:
+        from btc_5m_fv.execution.gate import (
+            get_runtime_max_trade_usd,
+            set_runtime_max_trade_usd,
+        )
+
+        assert await get_runtime_max_trade_usd() is None
+        await set_runtime_max_trade_usd(4.5)
+        assert await get_runtime_max_trade_usd() == 4.5
+        await set_runtime_max_trade_usd(0)  # ≤0 clears
+        assert await get_runtime_max_trade_usd() is None
+
+    @pytest.mark.asyncio
+    async def test_invalid_persisted_value_ignored(self) -> None:
+        import db as _db
+
+        gate = RiskGate(_cfg(max_trade_usd=5.0))
+        await _db.set_config("btc_runtime.max_trade_usd", "not-a-number")
+        await gate.refresh_runtime_limits()
+        assert gate.runtime_max_trade_usd is None
+        assert gate.effective_max_trade_usd == 5.0
