@@ -39,6 +39,86 @@ def test_import_graph_flags_dead(tmp_path):
     assert by["pkg/beta.py"].status == "DEAD?"     # only a test imports it
 
 
+def test_status_taxonomy_pkg_cli_wired_dead(tmp_path):
+    """pkg / cli / WIRED / DEAD? precedence resolves correctly."""
+    root = tmp_path
+    pkg = root / "pkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text('"""Pkg root."""\n')  # -> pkg
+    (pkg / "wired.py").write_text('"""Wired module."""\nX = 1\n')  # imported below -> WIRED
+    (pkg / "user.py").write_text('"""Imports wired."""\nfrom pkg.wired import X\n')
+    (pkg / "lonely.py").write_text('"""Nobody imports me."""\nY = 2\n')  # -> DEAD?
+    tools = root / "tools"
+    tools.mkdir()
+    (tools / "script.py").write_text(
+        '"""A CLI script."""\n\n\ndef main():\n    pass\n\n\nif __name__ == "__main__":\n    main()\n'
+    )  # under tools/ and has __main__ guard -> cli
+
+    mods = gd.collect_modules(
+        root, source_roots=["pkg", "tools"], toplevel=[]
+    )
+    gd.annotate_importers(root, mods, test_dirs=["tests"])
+    by = {m.path: m for m in mods}
+    assert by["pkg/__init__.py"].status == "pkg"
+    assert by["tools/script.py"].status == "cli"
+    assert by["pkg/wired.py"].status == "WIRED"
+    assert by["pkg/user.py"].status == "DEAD?"   # imports but nobody imports it
+    assert by["pkg/lonely.py"].status == "DEAD?"
+
+
+def test_main_guard_outside_tools_is_cli(tmp_path):
+    """A __main__ guard alone (not under tools/) still yields cli."""
+    root = tmp_path
+    pkg = root / "pkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (pkg / "runme.py").write_text(
+        '"""Runnable."""\nif __name__ == "__main__":\n    print("hi")\n'
+    )
+    mods = gd.collect_modules(root, source_roots=["pkg"], toplevel=[])
+    gd.annotate_importers(root, mods, test_dirs=["tests"])
+    by = {m.path: m for m in mods}
+    assert by["pkg/runme.py"].status == "cli"
+
+
+def test_summary_dead_list_excludes_pkg_and_cli(tmp_path):
+    """render_summary dead-list must contain only genuine DEAD? modules."""
+    root = tmp_path
+    pkg = root / "pkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text('"""Pkg."""\n')  # pkg
+    (pkg / "lonely.py").write_text('"""Dead."""\nY = 2\n')  # DEAD?
+    tools = root / "tools"
+    tools.mkdir()
+    (tools / "script.py").write_text(
+        '"""CLI."""\nif __name__ == "__main__":\n    pass\n'
+    )  # cli
+    mods = gd.collect_modules(root, source_roots=["pkg", "tools"], toplevel=[])
+    gd.annotate_importers(root, mods, test_dirs=["tests"])
+    dead = [m.path for m in mods if m.status == "DEAD?"]
+    assert dead == ["pkg/lonely.py"]
+    assert "pkg/__init__.py" not in dead
+    assert "tools/script.py" not in dead
+
+
+def test_collect_env_knobs_canonical_and_sorted(tmp_path):
+    cfg = (
+        '"""config."""\n'
+        "import os\n"
+        'A = os.environ.get("BTC_TRADE_MAX_USD", "5")\n'
+        'B = os.environ.get("BTC_LIVE_MAX_USD", "10")\n'
+        'NOT_A_KNOB = os.environ.get("PATH", "")\n'
+        'lowercase = "btc_not_upper"\n'
+    )
+    (tmp_path / "config.py").write_text(cfg)
+    knobs = gd.collect_env_knobs(tmp_path)
+    assert "BTC_TRADE_MAX_USD" in knobs
+    assert "BTC_LIVE_MAX_USD" in knobs
+    assert "PATH" not in knobs
+    assert "btc_not_upper" not in knobs
+    assert knobs == sorted(knobs)
+
+
 def test_real_tree_wiring_truth():
     """The load-bearing facts the docs must never get wrong."""
     mods = gd.collect_modules(gd.REPO)

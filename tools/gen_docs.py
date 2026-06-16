@@ -27,12 +27,27 @@ WIRED_ALLOWLIST = {"main.py", "config.py", "db.py", "logging_setup.py"}
 
 @dataclass
 class Module:
-    path: str           # repo-relative posix path
-    role: str           # first line of top docstring, or NO_DOCSTRING
-    importers: int = 0  # count of non-test modules importing this one
+    path: str               # repo-relative posix path
+    role: str               # first line of top docstring, or NO_DOCSTRING
+    importers: int = 0      # count of non-test modules importing this one
+    has_main: bool = False  # has an `if __name__ == "__main__":` guard
 
     @property
     def status(self) -> str:
+        """Resolve status by precedence: pkg → cli → WIRED → DEAD?.
+
+        - `pkg`:   package marker (`__init__.py`); imported via the package,
+                   not by dotted path, so a zero importer count is expected.
+        - `cli`:   entrypoint script (under `tools/` or carries a `__main__`
+                   guard); run directly, never imported, so also not alarming.
+        - `WIRED`: in the allowlist or has at least one non-test importer.
+        - `DEAD?`: built but no importers found — investigate before relying on it.
+        """
+        name = self.path.rsplit("/", 1)[-1]
+        if name == "__init__.py":
+            return "pkg"
+        if self.path.startswith("tools/") or self.has_main:
+            return "cli"
         if self.path in WIRED_ALLOWLIST or self.importers > 0:
             return "WIRED"
         return "DEAD?"
@@ -49,12 +64,52 @@ def _role_from_source(text: str) -> str:
     return doc.strip().splitlines()[0].strip()
 
 
+def _has_main_guard(text: str) -> bool:
+    """True if the source has an `if __name__ == "__main__":` guard (AST-based)."""
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        # Fall back to a substring probe so unparsable files still classify.
+        return 'if __name__ == "__main__"' in text
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.If):
+            continue
+        test = node.test
+        if not isinstance(test, ast.Compare):
+            continue
+        left = test.left
+        comparators = test.comparators
+        names = []
+        if isinstance(left, ast.Name):
+            names.append(left.id)
+        for c in comparators:
+            if isinstance(c, ast.Constant) and isinstance(c.value, str):
+                names.append(c.value)
+        if "__name__" in names and "__main__" in names:
+            return True
+    return False
+
+
+def _read_text(p: Path) -> str:
+    """Read a file tolerantly so odd bytes can't crash doc generation."""
+    return p.read_text(encoding="utf-8", errors="replace")
+
+
+def _make_module(root: Path, p: Path, rel: str) -> Module:
+    text = _read_text(p)
+    return Module(
+        path=rel,
+        role=_role_from_source(text),
+        has_main=_has_main_guard(text),
+    )
+
+
 def collect_modules(root: Path, source_roots=SOURCE_ROOTS, toplevel=TOPLEVEL_MODULES):
     mods: list[Module] = []
     for rel in toplevel:
         p = root / rel
         if p.exists():
-            mods.append(Module(path=rel, role=_role_from_source(p.read_text())))
+            mods.append(_make_module(root, p, rel))
     for sr in source_roots:
         base = root / sr
         if not base.exists():
@@ -63,7 +118,7 @@ def collect_modules(root: Path, source_roots=SOURCE_ROOTS, toplevel=TOPLEVEL_MOD
             if "__pycache__" in p.parts:
                 continue
             rel = p.relative_to(root).as_posix()
-            mods.append(Module(path=rel, role=_role_from_source(p.read_text())))
+            mods.append(_make_module(root, p, rel))
     return sorted(mods, key=lambda m: m.path)
 
 
@@ -102,30 +157,38 @@ def annotate_importers(root: Path, mods, test_dirs=("tests",)) -> None:
         rel = src.relative_to(root).as_posix()
         if any(rel.startswith(td + "/") or rel == td for td in test_dirs):
             continue  # test importers don't count toward "wired"
-        for tgt in _imported_targets(src.read_text()):
+        for tgt in _imported_targets(_read_text(src)):
             mod = known.get(tgt)
             if mod is not None and mod.path != rel:
                 mod.importers += 1
 
 
 def count_tests(root: Path) -> int:
-    out = subprocess.run(
-        [sys.executable, "-m", "pytest", "tests/", "--collect-only", "-q"],
-        cwd=root, capture_output=True, text=True,
-    )
+    try:
+        out = subprocess.run(
+            [sys.executable, "-m", "pytest", "tests/", "--collect-only", "-q"],
+            cwd=root, capture_output=True, text=True, timeout=120,
+        )
+    except subprocess.TimeoutExpired:
+        return 0  # fail soft — a hung collection must not break doc generation
+    if out.returncode != 0:
+        return 0
     # pytest prints a trailing summary line like "488 tests collected in 1.2s"
     for line in reversed(out.stdout.splitlines()):
         line = line.strip()
-        if "test" in line and line.split()[0].isdigit():
+        if "test" in line and line.split() and line.split()[0].isdigit():
             return int(line.split()[0])
     return 0
 
 
 def entrypoint_ok(root: Path) -> bool:
-    res = subprocess.run(
-        [sys.executable, "-c", "import btc_5m_fv.ops.dashboard.app"],
-        cwd=root, capture_output=True, text=True,
-    )
+    try:
+        res = subprocess.run(
+            [sys.executable, "-c", "import btc_5m_fv.ops.dashboard.app"],
+            cwd=root, capture_output=True, text=True, timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        return False  # fail soft — treat a hung import as "not ok"
     return res.returncode == 0
 
 
@@ -135,7 +198,7 @@ def collect_env_knobs(root: Path):
     Returns sorted list of (canonical, default, deprecated_alias|''). Best-effort:
     reads the literal os.environ.get / _trade_knob string args via AST.
     """
-    cfg = (root / "config.py").read_text()
+    cfg = _read_text(root / "config.py")
     tree = ast.parse(cfg)
     knobs: dict[str, str] = {}
     for node in ast.walk(tree):
@@ -166,10 +229,17 @@ def _table(mods) -> str:
     return "\n".join(rows)
 
 
+FILE_MAP_LEGEND = (
+    "_Status: `WIRED` = has non-test importers; `DEAD?` = no importers found "
+    "(investigate); `pkg` = package marker; `cli` = entrypoint script "
+    "(run directly)._"
+)
+
+
 def render_file_map(root: Path) -> str:
     mods = collect_modules(root)
     annotate_importers(root, mods)
-    return f"{GEN_HEADER}\n\n# File Map\n\n{_table(mods)}\n"
+    return f"{GEN_HEADER}\n\n# File Map\n\n{FILE_MAP_LEGEND}\n\n{_table(mods)}\n"
 
 
 def render_summary(root: Path, with_test_count: bool = True) -> str:
@@ -203,7 +273,7 @@ def _write_generated(root: Path, fast: bool) -> None:
         p = root / rel
         if not p.exists():
             continue
-        doc = p.read_text()
+        doc = _read_text(p)
         for name, body in blocks.items():
             if fast and name == "summary":
                 # don't clobber the test-count line on fast runs
@@ -227,9 +297,9 @@ def main(argv=None) -> int:
         return 0
 
     if args.check:
-        before = {p: (REPO / p).read_text() for p in ["docs/FILE_MAP.md", "AGENTS.md", "docs/CODE_MAP.md"] if (REPO / p).exists()}
+        before = {p: _read_text(REPO / p) for p in ["docs/FILE_MAP.md", "AGENTS.md", "docs/CODE_MAP.md"] if (REPO / p).exists()}
         _write_generated(REPO, fast=False)
-        changed = [p for p, txt in before.items() if (REPO / p).read_text() != txt]
+        changed = [p for p, txt in before.items() if _read_text(REPO / p) != txt]
         if changed:
             print("DOC DRIFT — regenerate with `python tools/gen_docs.py`:\n  " + "\n  ".join(changed), file=sys.stderr)
             return 1
