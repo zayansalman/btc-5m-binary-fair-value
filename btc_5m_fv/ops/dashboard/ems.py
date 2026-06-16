@@ -15,6 +15,7 @@ from db import get_config
 from btc_5m_fv.ops.dashboard.panels import _data as data
 from btc_5m_fv.ops.dashboard.panels import (
     blotter,
+    controls,
     decision_engine,
     guardrails,
     market,
@@ -78,8 +79,21 @@ async def ems_html() -> str:
     is_live = mode == "live"
 
     # ---- panels ----
-    from btc_5m_fv.execution.gate import get_paper_bypass_loss_halt
+    from btc_5m_fv.execution.gate import (
+        get_paper_bypass_loss_halt,
+        get_runtime_max_trade_usd,
+    )
     bypass_loss_halt = await get_paper_bypass_loss_halt()
+    # Operator runtime per-trade cap (#50): None when unset → bot uses the env
+    # default. Used by the CONTROLS card and the STRATEGY sizing line so the UI
+    # reflects the value the loop is actually enforcing this tick.
+    max_trade_current = await get_runtime_max_trade_usd()
+    max_trade_env = (
+        _config.BTC_LIVE_MAX_TRADE_USD if is_live else _config.BTC_PAPER_MAX_TRADE_USD
+    )
+    max_trade_effective = (
+        max_trade_current if max_trade_current is not None else max_trade_env
+    )
 
     # Active params shape the decision-engine gate eval — same thresholds the
     # live loop uses, so the gate column never lies.
@@ -126,8 +140,17 @@ async def ems_html() -> str:
         mode=mode,
         bypass_loss_halt=bypass_loss_halt,
     )
+    controls_html = controls.render(
+        max_trade_current=max_trade_current,
+        max_trade_env=max_trade_env,
+        min_trade=_config.BTC_PAPER_MIN_TRADE_USD,
+    )
     strategy_html = strategy.render(
-        style=style, is_live=is_live, paused=paused, pause_reason=pause_reason
+        style=style,
+        is_live=is_live,
+        paused=paused,
+        pause_reason=pause_reason,
+        max_trade=max_trade_effective,
     )
     market_html = market.render(tick)
     decision_html = decision_engine.render(
@@ -144,6 +167,7 @@ async def ems_html() -> str:
         + ribbon_html
         + "<div class='ems-grid'>"
         + guardrails_html
+        + controls_html
         + strategy_html
         + market_html
         + decision_html

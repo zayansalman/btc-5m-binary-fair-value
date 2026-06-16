@@ -24,6 +24,7 @@ Open the dashboard at `http://127.0.0.1:7860`.
 5. Manages positions with dynamic exits (target, stop, time decay, band reentry)
 6. Records every tick to SQLite for deterministic replay backtesting
 7. Provides a real-time operator dashboard with health telemetry and incident tracking
+8. Exposes operator runtime controls (e.g. **max trade size**) that the loop reads every tick — adjustable from the dashboard CONTROLS card without a restart, in paper and live
 
 No live orders are placed. No private key is required.
 

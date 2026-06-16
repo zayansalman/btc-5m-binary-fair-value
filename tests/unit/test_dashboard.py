@@ -61,6 +61,12 @@ class TestDashboardPage:
         assert "handleStart()" in text
         assert "handleStop()" in text
 
+    def test_has_runtime_controls_card(self, client: TestClient):
+        text = client.get("/").text
+        assert "CONTROLS" in text
+        assert "ctl-max-trade" in text
+        assert "setMaxTradeSize()" in text
+
     def test_has_secondary_panels(self, client: TestClient):
         text = client.get("/").text
         assert "ACTIVITY LOG" in text
@@ -96,6 +102,12 @@ class TestStaticFiles:
 
     def test_js_swaps_ems_content(self, client: TestClient):
         assert "ems-content" in client.get("/static/dashboard.js").text
+
+    def test_js_has_runtime_control_handler(self, client: TestClient):
+        assert "setMaxTradeSize" in client.get("/static/dashboard.js").text
+
+    def test_css_has_control_input(self, client: TestClient):
+        assert ".ctl-input" in client.get("/static/style.css").text
 
 
 class TestApiData:

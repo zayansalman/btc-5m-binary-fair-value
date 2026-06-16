@@ -1,3 +1,56 @@
+# Plan — UI-settable max trade size (2026-06-16)
+
+**Issue:** #50 (runtime config controls — the max-trade-size slice only).
+**Branch:** `feature/50-runtime-max-trade-size` off `develop`.
+**Scope (confirmed):** ONE runtime-settable **unified max trade size**, editable from the dashboard, read **every tick** (no restart). Position mode / multi-position is OUT — leave singleton, revisit later.
+
+**Current behaviour:** operator `.env` has `BTC_PAPER_MIN_TRADE_USD=5`, `BTC_PAPER_MAX_TRADE_USD=5`, `BTC_LIVE_MAX_TRADE_USD=5` → fixed $5 clip. Goal: reduce/increase that $5 from the UI.
+
+## Decisions
+- New runtime knob `btc_runtime.max_trade_usd` in the `config` table, read every tick, **runtime → env** fallback (unset = current behaviour, fully backward-compatible).
+- When set it governs BOTH the sizing ceiling (`_strategy_params().max_trade_usd`) and the gate per-trade cap (`effective_max_trade_usd`) → unified. `notional_from_confidence` already clamps to `[min,max]`, so values below min give a smaller fixed clip; above min re-enable confidence-scaled sizing — no `min` changes needed.
+- UI follows the existing panel architecture: pure `render()` panel in `panels/`, data via `ems.py`, POST endpoint + `refreshAll`, theme CSS vocab. No bespoke UI.
+- Singleton enforcement, `EntryRequest`, `GateConfig` position fields, `LiveExecutor` scalar state: **untouched**.
+
+## Tasks
+### 1. Gate (`btc_5m_fv/execution/gate.py`)
+- [ ] `_runtime_max_trade_usd` state + `refresh_runtime_limits()` (both modes) reading `btc_runtime.max_trade_usd`.
+- [ ] Properties `runtime_max_trade_usd` (raw override) + `effective_max_trade_usd` (override else `cfg.max_trade_usd`).
+- [ ] `block_reason`: per-trade cap uses `effective_max_trade_usd`.
+- [ ] Module helpers `set_runtime_max_trade_usd` / `get_runtime_max_trade_usd` + key const + validation.
+
+### 2. Loop (`btc_bot/paper.py`)
+- [ ] `paper_tick_once`: `await _risk_gate.refresh_runtime_limits()` each tick (both modes).
+- [ ] `_strategy_params()`: `max_trade_usd = gate.runtime_max_trade_usd if set else BTC_PAPER_MAX_TRADE_USD`.
+
+### 3. Dashboard (respect existing panel architecture)
+- [ ] `POST /api/runtime-config` (`{key:'max_trade_usd', value}`): validate (0 < v ≤ 1000), persist via gate setter, audit via `notify`.
+- [ ] `panels/controls.py` CONTROLS card: current max (operator vs env), number input + Apply. Built for mode/positions to be added later.
+- [ ] `ems.py`: load current value + render the card in the grid. `strategy.py`: show effective max.
+- [ ] `dashboard.js`: `setMaxTradeSize()` (confirm → POST → toast → refreshAll). `style.css`: `.ctl-row`/`.ctl-input` matching theme.
+
+### 4. Tests + ship
+- [x] gate: effective override set/cleared; `refresh_runtime_limits` fallback; per-trade cap uses effective; set/get round-trip + validation.
+- [x] dashboard: endpoint persists + validates; controls panel renders.
+- [x] `pytest tests/` green (503, +15 new); my changed files add zero new `ruff`/`mypy` errors (pre-existing develop debt untouched).
+- [x] README/CHANGELOG note. Commit + push to **develop** (never main).
+
+## Review (2026-06-16)
+**Done.** Operator can now set the unified max trade size from the dashboard CONTROLS card; the loop reads `btc_runtime.max_trade_usd` every tick (paper + live), no restart. Unset = prior behaviour.
+
+- **Gate** (`gate.py`): `refresh_runtime_limits()` + `runtime_max_trade_usd`/`effective_max_trade_usd`; `block_reason` uses the effective cap; `set/get_runtime_max_trade_usd` helpers.
+- **Loop** (`paper.py`): per-tick refresh; `_strategy_params()` honours the override for the sizing ceiling. One knob = sizing ceiling + gate cap (unified).
+- **Dashboard**: new `panels/controls.py` CONTROLS card, `POST /api/runtime-config` (validated, audited), `setMaxTradeSize()` JS, `.ctl-*` theme CSS, STRATEGY sizing line override-aware — all following the existing panel architecture.
+- **Verified**: 503 tests green (+15). Browser round-trip confirmed: set $3 → card "operator", STRATEGY "$3/clip", out-of-range rejected; restored to env default $5 after.
+- **Out of scope (deferred):** singleton/multiple mode + max positions + LiveExecutor multi-position refactor — left intact for later.
+
+---
+
+# (Superseded) Plan — singleton/multiple position mode + max live positions
+Deferred at operator request (2026-06-16): keep singleton for now; revisit multi-position + the LiveExecutor scalar→map refactor later. Full design preserved in session history / memory.
+
+---
+
 # Plan — Unified RiskGate: paper as a faithful preview of live (2026-06-15)
 
 ## Goal

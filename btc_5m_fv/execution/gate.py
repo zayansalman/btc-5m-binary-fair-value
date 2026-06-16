@@ -47,6 +47,13 @@ _RISK_COMBINED_PNL_KEY = "btc_risk.daily_realized_pnl"
 # construction so nobody can ever disable a hard money limit via the UI.
 _BYPASS_LOSS_HALT_KEY = "btc_risk.paper_bypass_loss_halt"
 
+# Operator runtime risk knobs (#50). Unlike the paper-only bypass above, these
+# are tuning controls that apply in BOTH modes (the operator wants to resize
+# the clip mid-session without a restart). Persisted in the config table and
+# re-read every tick via ``refresh_runtime_limits``. Unset → fall back to the
+# env/config default, so absence is fully backward-compatible.
+_RUNTIME_MAX_TRADE_KEY = "btc_runtime.max_trade_usd"
+
 # Legacy keys, written by the live-only counter before issue #64. Read once at
 # boot if the new keys are absent, then never touched again — the next persist
 # writes the new keys exclusively.
@@ -120,6 +127,12 @@ class RiskGate:
         # tick so the dashboard toggle takes effect immediately without
         # restarting the loop.
         self._bypass_loss_halt = False
+        # Operator runtime per-trade cap override (#50). None → use the env
+        # default (cfg.max_trade_usd). Refreshed every tick by
+        # ``refresh_runtime_limits`` so the dashboard control applies without a
+        # restart, in BOTH paper and live (this is a tuning knob, not a
+        # safety-loosening override like the loss-halt bypass).
+        self._runtime_max_trade_usd: float | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -192,6 +205,38 @@ class RiskGate:
     def bypass_loss_halt(self) -> bool:
         """Live always sees False; paper sees whatever the toggle is set to."""
         return self.allow_overrides and self._bypass_loss_halt
+
+    async def refresh_runtime_limits(self) -> None:
+        """Re-read operator runtime risk knobs from SQLite (BOTH paper and live).
+
+        Distinct from ``refresh_overrides``: that gates a paper-only,
+        safety-loosening toggle behind ``allow_overrides``. The per-trade cap
+        is a tuning knob the operator expects to apply everywhere, so this runs
+        regardless of mode. A blank / unset / non-numeric / ≤0 value clears the
+        override and the gate falls back to the env default.
+        """
+        raw = await get_config(_RUNTIME_MAX_TRADE_KEY)
+        if raw is None or raw.strip() == "":
+            self._runtime_max_trade_usd = None
+            return
+        try:
+            value = float(raw)
+        except ValueError:
+            self._runtime_max_trade_usd = None
+            return
+        self._runtime_max_trade_usd = value if value > 0 else None
+
+    @property
+    def runtime_max_trade_usd(self) -> float | None:
+        """The operator-set per-trade cap override, or None when unset (raw)."""
+        return self._runtime_max_trade_usd
+
+    @property
+    def effective_max_trade_usd(self) -> float:
+        """The per-trade cap in force: runtime override when set, else env default."""
+        if self._runtime_max_trade_usd is not None:
+            return self._runtime_max_trade_usd
+        return self.cfg.max_trade_usd
 
     # ------------------------------------------------------------------
     # Counters — fed by BOTH paper closes and live closes
@@ -281,10 +326,11 @@ class RiskGate:
             return "an open position/order already exists (max 1)"
         if req.notional_usd <= 0:
             return "notional must be positive"
-        if req.notional_usd > self.cfg.max_trade_usd:
+        cap = self.effective_max_trade_usd
+        if req.notional_usd > cap:
             return (
                 f"per-trade cap: {req.notional_usd:.2f} USD exceeds "
-                f"{self.cfg.max_trade_usd:.2f} USD"
+                f"{cap:.2f} USD"
             )
         if (
             self.cfg.bankroll_cap_usd is not None
@@ -346,5 +392,30 @@ async def set_paper_bypass_loss_halt(enabled: bool) -> None:
 
 async def get_paper_bypass_loss_halt() -> bool:
     return (await get_config(_BYPASS_LOSS_HALT_KEY)) == "1"
+
+
+async def set_runtime_max_trade_usd(value: float | None) -> None:
+    """Persist the operator runtime per-trade cap (#50).
+
+    ``None`` (or ≤0) clears the override so the gate falls back to the env
+    default. The live loop re-reads this every tick, so the change takes effect
+    without a restart, in both paper and live.
+    """
+    if value is None or value <= 0:
+        await set_config(_RUNTIME_MAX_TRADE_KEY, "")
+    else:
+        await set_config(_RUNTIME_MAX_TRADE_KEY, repr(float(value)))
+
+
+async def get_runtime_max_trade_usd() -> float | None:
+    """The persisted runtime per-trade cap, or None when unset/invalid."""
+    raw = await get_config(_RUNTIME_MAX_TRADE_KEY)
+    if raw is None or raw.strip() == "":
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        return None
+    return value if value > 0 else None
 
 

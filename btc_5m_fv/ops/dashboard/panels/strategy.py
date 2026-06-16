@@ -8,7 +8,14 @@ from btc_bot import calibration as _calibration
 from btc_bot import params as _params
 
 
-def render(*, style: str, is_live: bool, paused: bool, pause_reason: str) -> str:
+def render(
+    *,
+    style: str,
+    is_live: bool,
+    paused: bool,
+    pause_reason: str,
+    max_trade: float | None = None,
+) -> str:
     active = _params.load_active()
     proposed = _params.load_proposed()
     if active.source == "applied":
@@ -55,7 +62,7 @@ def render(*, style: str, is_live: bool, paused: bool, pause_reason: str) -> str
         f"<div><span>Style</span><b>{escape(style)} (1 entry/window, hold→resolution)</b></div>"
         f"<div><span>Edge band</span><b>{_config.BTC_PAPER_ENTRY_EDGE_MIN:.3f} – {_config.BTC_PAPER_ENTRY_EDGE_MAX:.3f}</b></div>"
         f"<div><span>Entry floor</span><b>≥ {_config.BTC_PAPER_MIN_ENTRY_PRICE:.2f} (favorites)</b></div>"
-        f"<div><span>Sizing</span><b>${_config.BTC_LIVE_MAX_TRADE_USD if is_live else _config.BTC_PAPER_MAX_TRADE_USD:.0f}/clip · 1 pos max</b></div>"
+        f"<div><span>Sizing</span><b>${(max_trade if max_trade is not None else (_config.BTC_LIVE_MAX_TRADE_USD if is_live else _config.BTC_PAPER_MAX_TRADE_USD)):.0f}/clip · 1 pos max</b></div>"
         f"<div><span>Settlement</span><b>Chainlink BTC/USD · ≥ ⇒ Up</b></div>"
         f"<div><span>Params</span>{params_html}</div>"
         f"{proposed_html}"
