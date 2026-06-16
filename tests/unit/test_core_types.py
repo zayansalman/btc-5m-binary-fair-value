@@ -21,7 +21,6 @@ from btc_5m_fv.core.types import (
     ExitReason,
     MarketWindow,
     OrderState,
-    PaperOrder,
     PaperPosition,
     PaperSnapshot,
     PaperSummary,

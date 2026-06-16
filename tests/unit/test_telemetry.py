@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
-import math
-from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
-from btc_5m_fv.ops.telemetry import FeedHealth, FeedHealthTracker, LatencyTracker
+from btc_5m_fv.ops.telemetry import FeedHealthTracker, LatencyTracker
 
 
 # ---------------------------------------------------------------------------

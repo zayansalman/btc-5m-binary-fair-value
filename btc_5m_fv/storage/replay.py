@@ -8,8 +8,7 @@ is used by backtest harnesses to simulate execution.
 
 from __future__ import annotations
 
-import random
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any, Awaitable, Callable
 
 from btc_5m_fv.core.interfaces import AbstractSignalGenerator
 from btc_5m_fv.core.types import MarketWindow, Signal, Tick

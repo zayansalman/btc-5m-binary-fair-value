@@ -31,7 +31,6 @@ from btc_5m_fv.core.types import (
     BtcBotStatus,
     ExitReason,
     OrderState,
-    PaperOrder,
     PaperPosition,
     SignalAction,
     StrategyParams,
@@ -214,7 +213,6 @@ class BotController:
         self, position: PaperPosition, tick: Tick, reason: ExitReason
     ) -> None:
         """Close a single position and update risk tracking."""
-        db = getattr(self.execution_manager, "_db", None)
         # Use the execution manager to close by updating the DB directly
         # For the paper execution manager, we update via the DB
         em = self.execution_manager

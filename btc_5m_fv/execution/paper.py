@@ -9,10 +9,9 @@ from __future__ import annotations
 
 import asyncio
 import random
-from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import AsyncIterator, Optional
+from typing import Optional
 
 import aiosqlite
 

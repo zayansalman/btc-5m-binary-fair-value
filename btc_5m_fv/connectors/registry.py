@@ -8,7 +8,6 @@ results for observability.
 from __future__ import annotations
 
 from collections import deque
-from typing import Optional
 
 from btc_5m_fv.core.interfaces import AbstractMarketConnector, AbstractPriceConnector
 

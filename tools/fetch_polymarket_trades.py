@@ -24,7 +24,6 @@ from __future__ import annotations
 import argparse
 import csv
 import sys
-import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any

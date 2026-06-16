@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Optional
 
 from btc_5m_fv.core.types import Side, Signal, SignalAction, StrategyParams
 

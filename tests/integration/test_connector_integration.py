@@ -173,7 +173,7 @@ async def test_health_check_history_accumulation():
 
     # Run three rounds of health checks
     r1 = await registry.health_check_all()
-    r2 = await registry.health_check_all()
+    await registry.health_check_all()
     r3 = await registry.health_check_all()
 
     # Verify aggregated results
