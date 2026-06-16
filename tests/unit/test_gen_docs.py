@@ -52,3 +52,12 @@ def test_real_tree_wiring_truth():
     assert by["btc_5m_fv/execution/live.py"].status == "WIRED"
     # Known dead-in-active-tree module is flagged.
     assert by["btc_5m_fv/ops/controller.py"].status == "DEAD?"
+
+
+def test_test_count_is_positive_int():
+    n = gd.count_tests(gd.REPO)
+    assert isinstance(n, int) and n > 300  # currently ~488
+
+
+def test_entrypoint_importable():
+    assert gd.entrypoint_ok(gd.REPO) is True  # btc_5m_fv.ops.dashboard.app imports

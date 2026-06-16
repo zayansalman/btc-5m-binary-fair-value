@@ -105,3 +105,41 @@ def annotate_importers(root: Path, mods, test_dirs=("tests",)) -> None:
             mod = known.get(tgt)
             if mod is not None and mod.path != rel:
                 mod.importers += 1
+
+
+def count_tests(root: Path) -> int:
+    out = subprocess.run(
+        [sys.executable, "-m", "pytest", "tests/", "--collect-only", "-q"],
+        cwd=root, capture_output=True, text=True,
+    )
+    # pytest prints a trailing summary line like "488 tests collected in 1.2s"
+    for line in reversed(out.stdout.splitlines()):
+        line = line.strip()
+        if "test" in line and line.split()[0].isdigit():
+            return int(line.split()[0])
+    return 0
+
+
+def entrypoint_ok(root: Path) -> bool:
+    res = subprocess.run(
+        [sys.executable, "-c", "import btc_5m_fv.ops.dashboard.app"],
+        cwd=root, capture_output=True, text=True,
+    )
+    return res.returncode == 0
+
+
+def collect_env_knobs(root: Path):
+    """Parse config.py for BTC_* knob names + their deprecated aliases.
+
+    Returns sorted list of (canonical, default, deprecated_alias|''). Best-effort:
+    reads the literal os.environ.get / _trade_knob string args via AST.
+    """
+    cfg = (root / "config.py").read_text()
+    tree = ast.parse(cfg)
+    knobs: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            v = node.value
+            if v.startswith("BTC_") and v.isupper():
+                knobs.setdefault(v, "")
+    return sorted(knobs)
