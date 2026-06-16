@@ -175,11 +175,6 @@ BTC_TRADE_BANKROLL_CAP_USD: float | None = _trade_optional(
 BTC_TRADE_MAX_ENTRY_SLIPPAGE = _trade_knob(
     "BTC_TRADE_MAX_ENTRY_SLIPPAGE", "BTC_LIVE_MAX_ENTRY_SLIPPAGE", 0.02
 )
-# UTC-hour trading window (issue #67). The April backtest validated 05-12 UTC
-# only — anything outside that is out-of-sample. Set to e.g. "05-12" or
-# "05-07,11-14"; empty / "*" / "24/7" means trade any hour. Paper-mode toggle
-# can bypass this for study runs (live's gate ignores the bypass).
-BTC_TRADE_HOURS_UTC = os.getenv("BTC_TRADE_HOURS_UTC", "")
 
 # Legacy aliases — kept as module attributes for one release so external
 # tooling that reads ``config.BTC_LIVE_*`` continues to work.

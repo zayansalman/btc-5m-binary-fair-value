@@ -33,7 +33,6 @@ def _cfg(
     bankroll_cap_usd: Optional[float] = None,
     max_entry_slippage: float = 0.02,
     kill_switch_path: Path | None = None,
-    trading_hours_utc: Optional[frozenset[int]] = None,
 ) -> GateConfig:
     return GateConfig(
         max_trade_usd=max_trade_usd,
@@ -41,7 +40,6 @@ def _cfg(
         bankroll_cap_usd=bankroll_cap_usd,
         max_entry_slippage=max_entry_slippage,
         kill_switch_path=kill_switch_path or Path("/does/not/exist"),
-        trading_hours_utc=trading_hours_utc,
     )
 
 
@@ -186,81 +184,6 @@ class TestPnlSplit:
         # Combined -11 USD breaches the -10 halt.
         msg = gate.block_reason(_req())
         assert msg is not None and "daily loss halt" in msg
-
-
-class TestTradingHoursWindow:
-    """Issue #67: UTC-hour gate."""
-
-    def test_parse_range(self) -> None:
-        from btc_5m_fv.execution.gate import _parse_trading_hours
-        assert _parse_trading_hours("05-12") == frozenset(range(5, 13))
-        assert _parse_trading_hours("05-07,11-14") == frozenset({5, 6, 7, 11, 12, 13, 14})
-        assert _parse_trading_hours("5,6,7") == frozenset({5, 6, 7})
-        assert _parse_trading_hours("*") is None
-        assert _parse_trading_hours("") is None
-        assert _parse_trading_hours(None) is None
-        # Out-of-range silently dropped.
-        assert _parse_trading_hours("25-30") == None
-        # Reversed range silently dropped (not "wrap").
-        assert _parse_trading_hours("12-05") == None
-
-    def test_unbounded_passes(self) -> None:
-        gate = RiskGate(_cfg(trading_hours_utc=None))
-        assert gate.block_reason(_req()) is None
-
-    def test_inside_window_passes(self, monkeypatch) -> None:
-        from btc_5m_fv.execution import gate as gate_mod
-        from datetime import datetime, UTC
-
-        class FixedDT:
-            @classmethod
-            def now(cls, tz=None):
-                return datetime(2026, 6, 16, 7, 30, tzinfo=UTC)
-        monkeypatch.setattr(gate_mod, "datetime", FixedDT)
-        gate = RiskGate(_cfg(trading_hours_utc=frozenset(range(5, 13))))
-        assert gate.block_reason(_req()) is None
-
-    def test_outside_window_blocks(self, monkeypatch) -> None:
-        from btc_5m_fv.execution import gate as gate_mod
-        from datetime import datetime, UTC
-
-        class FixedDT:
-            @classmethod
-            def now(cls, tz=None):
-                return datetime(2026, 6, 16, 19, 30, tzinfo=UTC)
-        monkeypatch.setattr(gate_mod, "datetime", FixedDT)
-        gate = RiskGate(_cfg(trading_hours_utc=frozenset(range(5, 13))))
-        msg = gate.block_reason(_req())
-        assert msg is not None and "outside trading window" in msg
-
-    @pytest.mark.asyncio
-    async def test_paper_bypass_works_live_doesnt(self, monkeypatch) -> None:
-        from btc_5m_fv.execution import gate as gate_mod
-        from btc_5m_fv.execution.gate import set_paper_bypass_trading_hours
-        from datetime import datetime, UTC
-
-        class FixedDT:
-            @classmethod
-            def now(cls, tz=None):
-                return datetime(2026, 6, 16, 19, 30, tzinfo=UTC)
-        monkeypatch.setattr(gate_mod, "datetime", FixedDT)
-        await set_paper_bypass_trading_hours(True)
-
-        # Paper bypasses.
-        paper = RiskGate(
-            _cfg(trading_hours_utc=frozenset(range(5, 13))),
-            allow_overrides=True,
-        )
-        await paper.refresh_overrides()
-        assert paper.block_reason(_req()) is None
-        # Live still blocks despite the flag.
-        live = RiskGate(
-            _cfg(trading_hours_utc=frozenset(range(5, 13))),
-            allow_overrides=False,
-        )
-        await live.refresh_overrides()
-        msg = live.block_reason(_req())
-        assert msg is not None and "outside trading window" in msg
 
 
 class TestPaperOverrideStructurallyIgnoredInLive:
