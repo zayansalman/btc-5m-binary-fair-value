@@ -2,7 +2,7 @@
 
 **Project:** btc-5m-binary-fair-value (Polymarket BTC 5-minute binary fair-value trading bot)
 **Date:** 2026-06-16
-**Status:** Approved design → implementation plan next
+**Status:** Implemented on branch `feature/71-self-updating-agent-docs` (issue #71)
 **Author:** Zayan (byline only)
 
 ---
