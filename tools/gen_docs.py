@@ -257,11 +257,43 @@ def render_file_map(root: Path) -> str:
     return f"{GEN_HEADER}\n\n# File Map\n\n{FILE_MAP_LEGEND}\n\n{_table(mods)}\n"
 
 
-def render_summary(root: Path, with_test_count: bool = True) -> str:
-    mods = collect_modules(root)
+PLACEHOLDER_TEST_COUNT = "(see FILE_MAP)"
+_TEST_COUNT_RE = re.compile(r"- \*\*Tests:\*\* (\d+)\.")
+
+
+def _existing_test_count(doc_text: str) -> str | None:
+    """Extract the digits from an existing `- **Tests:** N.` line, else None.
+
+    Used by the `--fast` path to preserve a committed test count rather than
+    recomputing it (slow) or emitting the `(see FILE_MAP)` placeholder.
+    """
+    m = _TEST_COUNT_RE.search(doc_text)
+    return m.group(1) if m else None
+
+
+def render_summary(
+    root: Path,
+    with_test_count: bool = True,
+    test_count: str | None = None,
+    source_roots=SOURCE_ROOTS,
+    toplevel=TOPLEVEL_MODULES,
+) -> str:
+    """Render the orientation summary block.
+
+    Test-count resolution, in order:
+    - explicit `test_count` (string) → used verbatim in the Tests bullet;
+    - else `with_test_count=True` → compute the real count via `count_tests`;
+    - else → the `(see FILE_MAP)` placeholder.
+    """
+    mods = collect_modules(root, source_roots=source_roots, toplevel=toplevel)
     annotate_importers(root, mods)
     dead = [m.path for m in mods if m.status == "DEAD?"]
-    n = count_tests(root) if with_test_count else "(see FILE_MAP)"
+    if test_count is not None:
+        n = test_count
+    elif with_test_count:
+        n = count_tests(root)
+    else:
+        n = PLACEHOLDER_TEST_COUNT
     lines = [
         f"- **Trees:** `btc_bot/` = live loop + signal math; `btc_5m_fv/` = execution/connectors/dashboard/backtest; top-level `config.py`/`db.py`/`logging_setup.py` = foundation. Both ACTIVE, bidirectionally coupled.",
         f"- **Entry:** `python main.py` → FastAPI `btc_5m_fv/ops/dashboard/app.py`; loop starts on operator ▶ Start → `btc_bot/controller.py:request_start`.",
@@ -277,24 +309,42 @@ def _table_section(root: Path) -> str:
     return _table(mods)
 
 
-def _write_generated(root: Path, fast: bool) -> None:
+DEFAULT_TARGETS = (
+    ("AGENTS.md", ("summary",)),
+    ("docs/CODE_MAP.md", ("summary", "inventory")),
+)
+
+
+def _write_generated(
+    root: Path,
+    fast: bool,
+    source_roots=SOURCE_ROOTS,
+    toplevel=TOPLEVEL_MODULES,
+    targets=DEFAULT_TARGETS,
+) -> None:
     (root / "docs" / "FILE_MAP.md").write_text(render_file_map(root))
-    summary = render_summary(root, with_test_count=not fast)
     inv = _table_section(root)
-    for rel, blocks in (
-        ("AGENTS.md", {"summary": summary}),
-        ("docs/CODE_MAP.md", {"summary": summary, "inventory": inv}),
-    ):
+    # Non-fast: compute the real count once and inject it into ALL targets, so
+    # AGENTS.md and CODE_MAP.md get the SAME number (and `count_tests` — slow —
+    # runs only once). Fast: leave None and resolve per-target from its own doc.
+    full_count = None if fast else str(count_tests(root))
+    for rel, block_names in targets:
         p = root / rel
         if not p.exists():
             continue
         doc = _read_text(p)
-        for name, body in blocks.items():
-            if fast and name == "summary":
-                # don't clobber the test-count line on fast runs
-                body = render_summary(root, with_test_count=False)
+        if fast:
+            # Preserve the committed count; fall back to placeholder if absent.
+            count = _existing_test_count(doc) or PLACEHOLDER_TEST_COUNT
+        else:
+            count = full_count
+        summary = render_summary(
+            root, test_count=count, source_roots=source_roots, toplevel=toplevel
+        )
+        bodies = {"summary": summary, "inventory": inv}
+        for name in block_names:
             try:
-                doc = replace_block(doc, name, body)
+                doc = replace_block(doc, name, bodies[name])
             except ValueError:
                 pass  # block not present in this doc
         p.write_text(doc)
