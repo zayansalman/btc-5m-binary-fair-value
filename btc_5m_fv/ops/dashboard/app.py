@@ -640,20 +640,6 @@ async def api_paper_bypass_loss_halt(request: Request) -> dict[str, Any]:
     return {"status": "ok", "bypass_loss_halt": enabled}
 
 
-@app.post("/api/paper/bypass_trading_hours")
-async def api_paper_bypass_trading_hours(request: Request) -> dict[str, Any]:
-    """Paper-mode study toggle: bypass the UTC trading-hour window.
-
-    Same paper-only safety as bypass_loss_halt. Live ignores this flag.
-    """
-    from btc_5m_fv.execution.gate import set_paper_bypass_trading_hours
-    try:
-        body = await request.json()
-    except Exception:  # noqa: BLE001
-        body = {}
-    enabled = bool((body or {}).get("enabled", False))
-    await set_paper_bypass_trading_hours(enabled)
-    return {"status": "ok", "bypass_trading_hours": enabled}
 
 
 async def _runtime_state() -> dict[str, str]:

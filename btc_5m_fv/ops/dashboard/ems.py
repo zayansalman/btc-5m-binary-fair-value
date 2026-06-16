@@ -386,8 +386,6 @@ def _guardrails_panel(
     blocked: list[dict[str, Any]],
     mode: str = "paper",
     bypass_loss_halt: bool = False,
-    trading_hours: frozenset[int] | None = None,
-    bypass_trading_hours: bool = False,
 ) -> str:
     """Surface every silent stop condition: daily spend, loss-halt headroom,
     bot state + last loop error, and the tail of recent BLOCKED entries.
@@ -477,55 +475,6 @@ def _guardrails_panel(
         + "</div>"
     )
 
-    # ── TRADING WINDOW (UTC) ────────────────────────────────────────────
-    if trading_hours is not None:
-        now_h = datetime.now(UTC).hour
-        in_window = now_h in trading_hours
-        allowed = sorted(trading_hours)
-        # Compress consecutive runs into "a-b" segments for display.
-        segs: list[str] = []
-        start = allowed[0]; prev = start
-        for h in allowed[1:] + [None]:
-            if h is None or h != prev + 1:
-                segs.append(f"{start:02d}" if start == prev else f"{start:02d}-{prev:02d}")
-                if h is not None:
-                    start = h
-            if h is not None:
-                prev = h
-        if bypass_trading_hours and mode == "paper":
-            tw_pill = "<span class='pill warn' title='Paper study: window bypassed'>BYPASS</span>"
-        elif in_window:
-            tw_pill = "<span class='pill on'>OPEN</span>"
-        else:
-            tw_pill = "<span class='pill warn'>CLOSED</span>"
-        if mode == "paper":
-            tw_toggle = (
-                "<div class='gr-toggle'>"
-                + _toggle_button(
-                    "/api/paper/bypass_trading_hours",
-                    bypass_trading_hours,
-                    "Re-enable window",
-                    "Bypass window (study)",
-                )
-                + "<span class='gr-toggle-hint'>paper study only</span>"
-                "</div>"
-            )
-        else:
-            tw_toggle = ""
-        window_col = (
-            "<div class='de-col'>"
-            "<div class='de-h'>TRADING WINDOW (UTC)</div>"
-            "<div class='de-kv'>"
-            f"<div><span>Allowed hours</span><b class='mono'>{escape(','.join(segs))}</b></div>"
-            f"<div><span>Now</span><b class='mono'>{now_h:02d}:00</b></div>"
-            f"<div><span>Status</span>{tw_pill}</div>"
-            "</div>"
-            + tw_toggle
-            + "</div>"
-        )
-    else:
-        window_col = ""
-
     # ── BOT STATE + last error ──────────────────────────────────────────
     state_pill_cls = "on" if state == "running" else "off"
     detail_first = bot_detail.split("\n", 1)[0].strip()
@@ -594,16 +543,15 @@ def _guardrails_panel(
         "</div>"
     )
 
-    cols = [spend_col, halt_col]
-    if window_col:
-        cols.append(window_col)
-    cols.extend([state_col, blocked_col])
     return (
         "<section class='card wide'>"
         "<div class='card-h'>RISK GUARDRAILS"
         "<span class='win'>silent-stop surface</span></div>"
         "<div class='gr-grid'>"
-        + "".join(cols)
+        + spend_col
+        + halt_col
+        + state_col
+        + blocked_col
         + "</div></section>"
     )
 
@@ -1190,16 +1138,8 @@ async def ems_html() -> str:
         tick, _GateParams(), recent_ticks, paused, pause_reason
     )
 
-    from btc_5m_fv.execution.gate import (
-        _parse_trading_hours,
-        get_paper_bypass_loss_halt,
-        get_paper_bypass_trading_hours,
-    )
+    from btc_5m_fv.execution.gate import get_paper_bypass_loss_halt
     bypass_loss_halt = await get_paper_bypass_loss_halt()
-    bypass_trading_hours = await get_paper_bypass_trading_hours()
-    trading_hours = _parse_trading_hours(
-        getattr(_config, "BTC_TRADE_HOURS_UTC", None)
-    )
     current_mode = (await get_config("btc_bot.requested_mode", "paper")) or "paper"
     guardrails = _guardrails_panel(
         day_spend=day_notional,
@@ -1218,8 +1158,6 @@ async def ems_html() -> str:
         blocked=blocked_today,
         mode=current_mode,
         bypass_loss_halt=bypass_loss_halt,
-        trading_hours=trading_hours,
-        bypass_trading_hours=bypass_trading_hours,
     )
 
     return (

@@ -43,10 +43,9 @@ _RISK_PAPER_PNL_KEY = "btc_risk.paper_realized_pnl"
 _RISK_COMBINED_PNL_KEY = "btc_risk.daily_realized_pnl"
 
 # Paper-only study overrides (#65). Only honoured when the gate was built
-# with ``allow_overrides=True`` — live's gate ignores them by construction so
-# nobody can ever disable a hard limit on real funds via the UI.
+# with ``allow_money_overrides=True`` — live's gate ignores them by
+# construction so nobody can ever disable a hard money limit via the UI.
 _BYPASS_LOSS_HALT_KEY = "btc_risk.paper_bypass_loss_halt"
-_BYPASS_TRADING_HOURS_KEY = "btc_risk.paper_bypass_trading_hours"
 
 # Legacy keys, written by the live-only counter before issue #64. Read once at
 # boot if the new keys are absent, then never touched again — the next persist
@@ -70,45 +69,6 @@ class GateConfig:
     bankroll_cap_usd: Optional[float]  # None / ≤0 → cap disabled
     max_entry_slippage: float
     kill_switch_path: Path
-    # UTC-hour trading window (issue #67). ``None`` → 24/7. A set of allowed
-    # hours (0-23) restricts entries to those hours, matching the regime the
-    # April backtest validated (05:00-12:00 UTC). Exits are always allowed.
-    trading_hours_utc: Optional[frozenset[int]] = None
-
-
-def _parse_trading_hours(spec: str | None) -> Optional[frozenset[int]]:
-    """Parse ``"05-12"`` or ``"05-07,11-14"`` or ``"5,6,7,11"`` → frozenset of UTC hours.
-
-    Returns ``None`` for an empty / "*" / "24/7" spec, meaning trade any hour.
-    Single-hour entries are inclusive (`05-05` → just hour 5). Out-of-range
-    values are silently dropped — the gate fails open on a parse error,
-    consistent with the rest of config parsing.
-    """
-    if not spec or spec.strip() in ("", "*", "24/7", "any"):
-        return None
-    hours: set[int] = set()
-    for chunk in spec.split(","):
-        chunk = chunk.strip()
-        if not chunk:
-            continue
-        if "-" in chunk:
-            try:
-                a, b = (int(x) for x in chunk.split("-", 1))
-            except ValueError:
-                continue
-            if a > b:
-                continue
-            for h in range(a, b + 1):
-                if 0 <= h <= 23:
-                    hours.add(h)
-        else:
-            try:
-                h = int(chunk)
-            except ValueError:
-                continue
-            if 0 <= h <= 23:
-                hours.add(h)
-    return frozenset(hours) if hours else None
 
 
 @dataclass(frozen=True)
@@ -160,7 +120,6 @@ class RiskGate:
         # tick so the dashboard toggle takes effect immediately without
         # restarting the loop.
         self._bypass_loss_halt = False
-        self._bypass_trading_hours = False
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -226,20 +185,13 @@ class RiskGate:
         """Re-read paper-only override flags from SQLite (no-op when disabled)."""
         if not self.allow_overrides:
             self._bypass_loss_halt = False
-            self._bypass_trading_hours = False
             return
         self._bypass_loss_halt = (await get_config(_BYPASS_LOSS_HALT_KEY)) == "1"
-        self._bypass_trading_hours = (await get_config(_BYPASS_TRADING_HOURS_KEY)) == "1"
 
     @property
     def bypass_loss_halt(self) -> bool:
         """Live always sees False; paper sees whatever the toggle is set to."""
         return self.allow_overrides and self._bypass_loss_halt
-
-    @property
-    def bypass_trading_hours(self) -> bool:
-        """Live always sees False; paper sees whatever the toggle is set to."""
-        return self.allow_overrides and self._bypass_trading_hours
 
     # ------------------------------------------------------------------
     # Counters — fed by BOTH paper closes and live closes
@@ -325,16 +277,6 @@ class RiskGate:
                 f"daily loss halt: realized {combined_pnl:+.2f} USD "
                 f"breaches -{self.cfg.daily_loss_halt_usd:.2f} USD"
             )
-        # UTC-hour window (issue #67). Restricts entries to the regime the
-        # backtest validated; exits are always allowed (no early-flush risk).
-        if self.cfg.trading_hours_utc is not None and not self.bypass_trading_hours:
-            now_hour = datetime.now(UTC).hour
-            if now_hour not in self.cfg.trading_hours_utc:
-                allowed = sorted(self.cfg.trading_hours_utc)
-                return (
-                    f"outside trading window: hour {now_hour:02d} UTC not in "
-                    f"{','.join(f'{h:02d}' for h in allowed)}"
-                )
         if req.position_open or req.entry_order_resting:
             return "an open position/order already exists (max 1)"
         if req.notional_usd <= 0:
@@ -393,9 +335,6 @@ def build_gate_from_config(*, allow_overrides: bool = False) -> RiskGate:
         bankroll_cap_usd=_config.BTC_TRADE_BANKROLL_CAP_USD,
         max_entry_slippage=_config.BTC_TRADE_MAX_ENTRY_SLIPPAGE,
         kill_switch_path=Path(_config.KILL_SWITCH_PATH),
-        trading_hours_utc=_parse_trading_hours(
-            getattr(_config, "BTC_TRADE_HOURS_UTC", None)
-        ),
     )
     return RiskGate(cfg, allow_overrides=allow_overrides)
 
@@ -409,10 +348,3 @@ async def get_paper_bypass_loss_halt() -> bool:
     return (await get_config(_BYPASS_LOSS_HALT_KEY)) == "1"
 
 
-async def set_paper_bypass_trading_hours(enabled: bool) -> None:
-    """Persist the paper-mode trading-hours bypass (no effect in live mode)."""
-    await set_config(_BYPASS_TRADING_HOURS_KEY, "1" if enabled else "0")
-
-
-async def get_paper_bypass_trading_hours() -> bool:
-    return (await get_config(_BYPASS_TRADING_HOURS_KEY)) == "1"
