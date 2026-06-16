@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import random
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -14,7 +14,6 @@ from btc_5m_fv.core.types import (
     MarketWindow,
     OrderState,
     PaperOrder,
-    PaperPosition,
     Side,
     Signal,
     SignalAction,
@@ -539,7 +538,7 @@ async def test_get_closed_positions_limit(em: PaperExecutionManager, window: Mar
             down_price=0.48,
         )
         await em.submit_order(signal_enter_up, w)
-        open_positions = await em.get_open_positions()
+        await em.get_open_positions()
         # Close each position individually via force_close_all
         # Since force_close_all closes ALL open positions, we need to be careful
         # Actually it closes all at once. So we close after each one.
@@ -581,7 +580,6 @@ async def test_order_and_position_counts(em: PaperExecutionManager, window: Mark
 
 def _make_tick(window: MarketWindow, remaining_seconds: int, edge: float) -> Tick:
     """Build a minimal Tick for exit checking tests."""
-    now = datetime.now(UTC)
     # Compute ts so that remaining_seconds = window.end_ts - ts.timestamp()
     ts = datetime.fromtimestamp(window.end_ts - remaining_seconds, tz=UTC)
 

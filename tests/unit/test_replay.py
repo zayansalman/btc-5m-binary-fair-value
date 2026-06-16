@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Awaitable, Callable
 
 import pytest
 import pytest_asyncio
@@ -15,7 +14,6 @@ from btc_5m_fv.core.types import (
     Side,
     Signal,
     SignalAction,
-    StrategyParams,
     Tick,
 )
 from btc_5m_fv.storage.recorder import MarketDataRecorder
@@ -375,7 +373,7 @@ async def test_replay_range_with_callback(
         nonlocal call_count
         call_count += 1
 
-    results = await replay.replay_range(1700000000, 1700001200, callback=callback)
+    await replay.replay_range(1700000000, 1700001200, callback=callback)
     assert call_count == 6  # 2 windows * 3 ticks each
     await r.close()
 
