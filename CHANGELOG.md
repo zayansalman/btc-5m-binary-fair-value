@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.4.7 — Auto-bump sub-minimum orders to the venue share minimum (2026-06-17)
+
+Closes #87; **supersedes the v0.4.6 floor**. v0.4.6 stopped the operator from setting a clip below ~$5, which removed legitimate control — Polymarket's real constraint is **5 shares/order**, which at the ≥0.50 favourites floor costs only **$2.50–$5** depending on price, not a flat $5. Operator wants to set any clip and still have small orders place. So instead of forbidding small caps, the bot now **rounds any sub-minimum order up to exactly the venue minimum** so it always places.
+
+The "max trade size" cap becomes a **target, not a hard ceiling**: it may be exceeded only by what the venue minimum requires (e.g. a $3 clip at price 0.70 places 5 shares = ~$3.50), bounded so an abnormally large minimum can't overspend the bankroll.
+
+### What
+- **Reverted v0.4.6's floor** — `POST /api/runtime-config` accepts any `0 < v ≤ 1000` again; the gate no longer drops sub-floor overrides (`gate.py` back to `value if value > 0 else None`); the CONTROLS input `min` is `0.5` again and the hint explains auto-bump. Any positive clip is valid.
+- **`btc_5m_fv/execution/live.py`**: in `submit_entry`, when `size < min_size` the order size is bumped UP to `min_size` (the book's `min_order_size`, default 5) and placed, instead of blocked. `record_buy_notional` uses the bumped size; the bump is logged (`live_executor.entry_bumped_to_min`). Guard: if `min_size > MAX_AUTO_BUMP_SHARES` (= 2 × `DEFAULT_MIN_ORDER_SIZE` = 10) the order is BLOCKED rather than overspend — a venue minimum that large is too expensive for this bankroll.
+- **`btc_bot/paper.py`**: mirrors the bump (`shares = max(shares, DEFAULT_MIN_ORDER_SIZE)` before the top-of-book cap) so paper stays a faithful preview of live (#64).
+- **Tests**: `test_live_executor.py` — the old `test_entry_blocked_below_min_order_size` becomes `..._bumps_to_minimum` (places 5 shares), plus a new too-large-to-bump guard test. Dropped the v0.4.6 floor tests. Full suite green (542); ruff clean; no new mypy errors.
+
+### Why this shape
+- The 5-share minimum is the venue's, and the smallest *placeable* favourite order ($2.50) is well below $5 — a flat floor over-restricted the operator. Bumping to the exact minimum gives full size control while never blocking on "too small". The cap-as-target trade-off (slight overspend only when the venue forces it) is bounded to ≤ `MAX_AUTO_BUMP_SHARES × price` (~$10 worst case); the bankroll cap (when enabled) remains the dollar-level guard.
+- **Out of scope:** #83 (backtest leak) / #84 (signal overfit) — live *edge*, not placement.
+
 ## v0.4.6 — Enforce a min-trade floor on the runtime max-trade cap (2026-06-17)
 
 Closes #85. Live trading was **100% blocked**: the dashboard BLOCKED panel showed every entry rejected — `size 1.78 shares below Polymarket minimum 5.00 at price 0.5600`. The operator had set the runtime **Max trade size to $1.00** from the dashboard (#50). At the favourites-only entry floor (price ≥ 0.50), $1.00 buys < 2 shares — below Polymarket's **5-share venue minimum** — so `LiveExecutor.submit_entry` (`execution/live.py`) correctly refused every order, every window. Funds were untouched; the bot was stopped.

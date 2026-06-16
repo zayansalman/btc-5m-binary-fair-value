@@ -23,7 +23,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Optional
 
-import config as _config
 from db import get_config, set_config  # type: ignore[import-untyped]
 
 # ---------------------------------------------------------------------------
@@ -231,9 +230,8 @@ class RiskGate:
         Distinct from ``refresh_overrides``: that reads the loss-halt bypass
         (a safety-loosening operator toggle, #76). The per-trade cap is a
         tuning knob the operator expects to apply everywhere, so this runs
-        regardless of mode. A blank / unset / non-numeric / ≤0 / sub-floor value
-        clears the override and the gate falls back to the env default (#85 — a
-        cap below the min-trade size is unplaceable; see ``_runtime_override_or_none``).
+        regardless of mode. A blank / unset / non-numeric / ≤0 value clears the
+        override and the gate falls back to the env default.
         """
         raw = await get_config(_RUNTIME_MAX_TRADE_KEY)
         if raw is None or raw.strip() == "":
@@ -244,7 +242,7 @@ class RiskGate:
         except ValueError:
             self._runtime_max_trade_usd = None
             return
-        self._runtime_max_trade_usd = _runtime_override_or_none(value)
+        self._runtime_max_trade_usd = value if value > 0 else None
 
     @property
     def runtime_max_trade_usd(self) -> float | None:
@@ -423,23 +421,6 @@ async def migrate_clear_stale_bypass_v76() -> None:
     await set_config(_BYPASS_MIGRATED_KEY, "1")
 
 
-def _runtime_override_or_none(value: float | None) -> float | None:
-    """Normalise a raw per-trade cap override to a usable value or ``None``.
-
-    The cap is the ceiling of the confidence-sizing range, so it can never sit
-    below the min-trade size (``BTC_PAPER_MIN_TRADE_USD``): ``notional_from_confidence``
-    clamps every order to ``[min, max]``, so a cap below the floor pins every
-    order's notional to the floor — which at favourites (price ≥ 0.50) buys
-    fewer than Polymarket's 5-share venue minimum, blocking 100% of entries
-    (#85). A non-positive or sub-floor value is therefore invalid and is dropped
-    so the gate falls back to the (placeable) env default. The floor is read
-    from ``config`` at call time so an env/override change needs no restart.
-    """
-    if value is None or value <= 0 or value < _config.BTC_PAPER_MIN_TRADE_USD:
-        return None
-    return value
-
-
 async def set_runtime_max_trade_usd(value: float | None) -> None:
     """Persist the operator runtime per-trade cap (#50).
 
@@ -462,6 +443,6 @@ async def get_runtime_max_trade_usd() -> float | None:
         value = float(raw)
     except ValueError:
         return None
-    return _runtime_override_or_none(value)
+    return value if value > 0 else None
 
 

@@ -696,7 +696,6 @@ async def api_runtime_config(request: Request) -> dict[str, Any]:
     """
     from db import notify  # type: ignore[import-untyped]
     from btc_5m_fv.execution.gate import set_runtime_max_trade_usd
-    from config import BTC_PAPER_MIN_TRADE_USD  # read at call time (test-overridable)
 
     try:
         body = await request.json()
@@ -714,19 +713,6 @@ async def api_runtime_config(request: Request) -> dict[str, Any]:
                 "detail": f"max trade size must be between $0 and ${_MAX_TRADE_USD_CEILING:.0f}",
             }
         value = round(value, 2)
-        # Floor: the cap can never be below the min-trade size (#85). A smaller cap
-        # sizes every order below Polymarket's 5-share venue minimum, so the live
-        # executor blocks 100% of entries. Reject rather than silently break.
-        if value < BTC_PAPER_MIN_TRADE_USD:
-            return {
-                "status": "error",
-                "detail": (
-                    f"max trade size must be at least the "
-                    f"${BTC_PAPER_MIN_TRADE_USD:.2f} min trade size — a smaller cap "
-                    f"sizes every order below Polymarket's share minimum and "
-                    f"blocks all entries"
-                ),
-            }
         await set_runtime_max_trade_usd(value)
         await notify(
             "btc_runtime_config",

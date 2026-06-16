@@ -144,7 +144,6 @@ async def ems_html() -> str:
     controls_html = controls.render(
         max_trade_current=max_trade_current,
         max_trade_env=max_trade_env,
-        min_trade=_config.BTC_PAPER_MIN_TRADE_USD,
     )
     strategy_html = strategy.render(
         style=style,

@@ -14,7 +14,6 @@ from typing import Optional
 import pytest
 import pytest_asyncio
 
-import config as _config
 import db as _db
 from btc_5m_fv.execution.gate import EntryRequest, GateConfig, RiskGate
 
@@ -270,36 +269,6 @@ class TestLossHaltBreached:
 
 class TestRuntimeMaxTradeOverride:
     """Operator runtime per-trade cap (#50): applies in BOTH modes, no restart."""
-
-    @pytest.fixture(autouse=True)
-    def _pin_floor(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # #85: the gate now drops a stored override below the min-trade floor
-        # (``BTC_PAPER_MIN_TRADE_USD``). Pin the floor low so the override-mechanism
-        # tests below stay env-independent — the operator's real .env sets the floor
-        # to 5, CI uses the 1.0 default. The sub-floor test re-pins it explicitly.
-        monkeypatch.setattr(_config, "BTC_PAPER_MIN_TRADE_USD", 1.0)
-
-    @pytest.mark.asyncio
-    async def test_sub_floor_override_dropped_to_env_default(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        # The exact incident (#85): operator set a $1 clip; at favourites (price ≥
-        # 0.50) that sizes every order below Polymarket's 5-share minimum, blocking
-        # 100% of entries. A stored override below the min-trade size is invalid and
-        # must be ignored so the gate falls back to the (placeable) env default.
-        from btc_5m_fv.execution.gate import (
-            get_runtime_max_trade_usd,
-            set_runtime_max_trade_usd,
-        )
-
-        monkeypatch.setattr(_config, "BTC_PAPER_MIN_TRADE_USD", 5.0)
-        gate = RiskGate(_cfg(max_trade_usd=5.0))
-        await set_runtime_max_trade_usd(1.0)  # the blocking $1 clip
-        await gate.refresh_runtime_limits()
-        assert gate.runtime_max_trade_usd is None
-        assert gate.effective_max_trade_usd == 5.0
-        # The module reader heals it too, so the dashboard display agrees.
-        assert await get_runtime_max_trade_usd() is None
 
     def test_effective_defaults_to_cfg(self) -> None:
         gate = RiskGate(_cfg(max_trade_usd=5.0))

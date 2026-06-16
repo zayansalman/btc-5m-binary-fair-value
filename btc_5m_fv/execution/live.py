@@ -71,6 +71,11 @@ CONFIRM_PHRASE = "YES_I_UNDERSTAND"
 SIZE_DECIMALS = 2
 DEFAULT_TICK_SIZE = 0.01
 DEFAULT_MIN_ORDER_SIZE = 5.0
+# Auto-bump (#87): a configured clip too small to clear the venue's per-order
+# share minimum is rounded UP to that minimum so it still places. Refuse to bump
+# past this ceiling — a market demanding far more than the usual 5 shares would
+# overspend the bankroll, so block instead of silently buying a large position.
+MAX_AUTO_BUMP_SHARES = 2 * DEFAULT_MIN_ORDER_SIZE
 
 # get_order statuses meaning the order can never trade again.
 _TERMINAL_ORDER_STATUSES = {"matched", "canceled", "cancelled"}
@@ -660,16 +665,29 @@ class LiveExecutor:
         price = _round_price_to_tick(raw_price, tick)
         size = _round_size_down(notional_usd / price)
         if size < min_size:
-            reason = (
-                f"size {size:.2f} shares below Polymarket minimum {min_size:.2f} "
-                f"at price {price:.4f} (notional {notional_usd:.2f} USD)"
+            # Auto-bump (#87): round a sub-minimum clip UP to exactly the venue
+            # minimum so a small configured size still places. The per-trade cap is
+            # a target the venue minimum may exceed — bounded by MAX_AUTO_BUMP_SHARES
+            # so an abnormally large minimum blocks instead of overspending.
+            if min_size > MAX_AUTO_BUMP_SHARES:
+                reason = (
+                    f"venue minimum {min_size:.2f} shares exceeds the auto-bump "
+                    f"ceiling {MAX_AUTO_BUMP_SHARES:.2f} at price {price:.4f} "
+                    f"(would cost {min_size * price:.2f} USD)"
+                )
+                await self._journal_blocked(
+                    intent="ENTRY", side=BUY, reason=reason,
+                    window_slug=window_slug, token_id=token_id,
+                    price=price, size=size, notional_usd=notional_usd, mode="live",
+                )
+                return LiveOrderResult(ok=False, status="BLOCKED", reason=reason)
+            log.info(
+                "live_executor.entry_bumped_to_min",
+                requested_size=round(size, 2), bumped_size=min_size,
+                price=price, requested_notional=round(notional_usd, 2),
+                bumped_notional=round(min_size * price, 2),
             )
-            await self._journal_blocked(
-                intent="ENTRY", side=BUY, reason=reason,
-                window_slug=window_slug, token_id=token_id,
-                price=price, size=size, notional_usd=notional_usd, mode="live",
-            )
-            return LiveOrderResult(ok=False, status="BLOCKED", reason=reason)
+            size = min_size
 
         result = await self._place_order(
             intent="ENTRY", token_id=token_id, side=BUY,
