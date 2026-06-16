@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
 import math
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -16,8 +14,6 @@ from btc_5m_fv.core.interfaces import (
     AbstractExecutionManager,
     AbstractMarketConnector,
     AbstractPriceConnector,
-    AbstractRiskService,
-    AbstractSignalGenerator,
 )
 from btc_5m_fv.core.types import (
     BacktestParams,

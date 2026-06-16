@@ -169,7 +169,7 @@ def performance(closed: list[dict[str, Any]]) -> dict[str, Any]:
         run += p
         equity.append(run)
     # calibration (Brier + reliability buckets)
-    cal_pts, briers = [], []
+    briers = []
     bucket: dict[int, list[float]] = {}
     for c in closed:
         if c["edge"] is not None and c["entry_price"] is not None:
