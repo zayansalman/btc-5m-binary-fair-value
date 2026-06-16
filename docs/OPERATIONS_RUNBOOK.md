@@ -18,7 +18,7 @@ http://127.0.0.1:7860
 
 ## Paper Trading
 
-- Press **Start BTC Paper Bot** to begin the BTC 5-minute paper loop.
+- Press **▶ Start** to begin the BTC 5-minute paper loop (paper is the default mode).
 - Press **Stop** to halt new paper entries and force-close open simulated
   positions.
 - Use **Refresh** if you want an immediate dashboard update between timer ticks.
@@ -117,11 +117,20 @@ the funder address** — no key export needed anywhere.
 
    Do not launch on a NO-GO.
 
-3. Start the app and press **Start** on the dashboard:
+3. Arm live mode by setting **BOTH** env vars, then start the app and press
+   **Start** on the dashboard:
 
    ```bash
+   export BTC_BOT_MODE=live
+   export BTC_LIVE_CONFIRM=YES_I_UNDERSTAND
    ./.venv/bin/python main.py
    ```
+
+   > **Both vars are required.** Setting only `BTC_LIVE_CONFIRM` leaves the bot
+   > paper-trading while the UI may read armed — `BTC_BOT_MODE=live` is what
+   > actually routes orders to the live executor (see `btc_bot/controller.py`,
+   > `btc_bot/paper.py`). The private key + funder from step 1 and a clean config
+   > parse are the remaining gates; any missing one makes Start refuse.
 
 4. Verify the dashboard says **LIVE — orders are real** and the activity feed
    shows `btc_live_started`. If any boot gate is missing, Start refuses with

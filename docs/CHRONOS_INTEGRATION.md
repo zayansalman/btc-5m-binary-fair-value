@@ -39,18 +39,18 @@ density above the window reference to get P(close ≥ reference) = `fair_up_chro
    Binance 1s closes ────▶ │ chronos_signal.predict() │ ──▶ fair_up_chronos
                            └──────────────────────────┘
                                       │
-   Black-Scholes + tie ──▶ fair_up_raw           ┌─────────────────────┐
-                                      ├────────▶ │ ensemble (BTC_USE_  │ ──▶ fair_up_ensemble
-   isotonic calibrator ──▶ fair_up_cal          │  CHRONOS_ENSEMBLE)  │
-                                      └────────▶ │  weights from rolling │
-                                                 │  Brier over recent N │
-                                                 └─────────────────────┘
+   Black-Scholes + tie ──▶ fair_up_raw           ┌─────────────────────────┐
+                                      ├────────▶ │ apply_ensemble()        │ ──▶ fair_up_ensemble
+   isotonic calibrator ──▶ fair_up_cal          │  weights from rolling   │
+                                      └────────▶ │  Brier over recent N    │
+                                                 └─────────────────────────┘
 ```
 
-**Default behavior with the flag off:** `fair_up_ensemble = fair_up_cal`.
-Identity. The Chronos path is never invoked.
+**Default behavior (Chronos inactive):** `fair_up_ensemble = fair_up_cal`.
+Identity. `predict()` returns `None`, so `apply_ensemble()` short-circuits to
+the calibrated baseline and the Chronos path is never invoked.
 
-**Flag-on behavior:**
+**Active behavior:**
 ```
 w_cal     = brier_weight(brier_cal_recent)
 w_chronos = brier_weight(brier_chronos_recent)
@@ -69,8 +69,11 @@ deployment starts at weight 0 until enough samples accumulate.
      significance (paired bootstrap, p < 0.05).
 2. **Latency budget**: 95th percentile inference time < 2.5s on the
    target deployment.
-3. **Operator sign-off**: `python -m btc_bot.chronos_signal --activate --confirm`
-   writes `data/chronos_active.json`. The live bot reads it.
+3. **Operator sign-off**: the operator writes the activation marker
+   `data/chronos_active.json` (fields: `activated_at`, `weight_cap`,
+   `samples_required`, `model_id`). `chronos_signal.load_activation()` /
+   `is_active()` read it; its absence means OFF. There is no CLI to flip this
+   today — the stub never produces a signal regardless.
 4. **Initial weight cap**: First live deployment caps Chronos weight at 0.30
    until 200 closed-trade Brier samples accumulate, then unlocks to
    pure Brier-weighted.
@@ -79,9 +82,11 @@ Until all four are satisfied, the live bot path is unchanged.
 
 ## File layout (planned)
 
-- `btc_bot/chronos_signal.py` — the module: `predict(window_closes)`,
-  `ChronosEnsemble.apply(fair_up_cal)`, `is_active()`. **Implemented as a
-  stub today** — returns `None` (no signal) and reports `inactive`.
+- `btc_bot/chronos_signal.py` — the module: `predict(window_closes, reference_price)`,
+  `apply_ensemble(fair_up_cal, fair_up_chronos, *, weight_cal, weight_chronos)`,
+  `is_active()` / `load_activation()`. **Implemented as a stub today** —
+  `predict()` returns `None` (no signal), so `apply_ensemble()` is identity and
+  `is_active()` is `False` unless the marker file exists.
 - `tools/chronos_replay_eval.py` — OOS validator. NOT YET WRITTEN.
 - `data/chronos_active.json` — operator activation marker. ABSENCE = OFF.
 

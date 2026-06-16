@@ -31,13 +31,18 @@ The current backtest is a **trade-history conditional backtest**:
 
 ## Important Limitation
 
-This is not a full-market backtest yet. It only evaluates opportunities that
+This is not a full-market backtest. It only evaluates opportunities that
 appear in the user's historical buy log. It cannot measure markets that were
 skipped, full CLOB fill quality, or quote-path exits after entry.
 
-The next step in `docs/ROADMAP.md` is a market data recorder and deterministic
-replay harness so the strategy can be tested on all observed market windows,
-not only historical user trades.
+A full-market replay harness already exists at `btc_5m_fv/backtest/harness.py`,
+but it is **not wired into the live path** — nothing in `btc_bot/` or the
+dashboard imports it (it is exercised only by tests). The live backtest that
+the dashboard and CLI actually use is `btc_bot/backtest.py` (the
+trade-history conditional grid above), and the dashboard renders the
+precomputed report from `data/backtests/latest.json` rather than running a
+replay live. Wiring the full-market harness into the live tooling remains
+open work tracked in `docs/ROADMAP.md`.
 
 ## Current Optimized Profile
 
