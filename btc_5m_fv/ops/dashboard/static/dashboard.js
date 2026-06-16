@@ -124,27 +124,40 @@ function handleStop() {
     .finally(function() { setButtonsDisabled(false); });
 }
 
-function setMaxTradeSize() {
-  var el = document.getElementById('ctl-max-trade');
+function updateShareValue() {
+  var el = document.getElementById('ctl-shares');
+  var out = document.getElementById('ctl-shares-val');
+  if (!el || !out) return;
+  var n = parseFloat(el.value);
+  var px = parseFloat(out.getAttribute('data-px')) || 0;
+  if (!(n > 0)) { out.textContent = '≈ $—'; return; }
+  if (px > 0) {
+    out.textContent = '≈ $' + (n * px).toFixed(2) + ' at ' + px.toFixed(2);
+  } else {
+    out.textContent = '≈ $' + (n * 0.5).toFixed(2) + '–$' + (n * 1).toFixed(2);
+  }
+}
+
+function setTradeShares() {
+  var el = document.getElementById('ctl-shares');
   if (!el) return;
   var v = parseFloat(el.value);
-  if (!(v > 0)) {
-    showToast('Enter a positive max trade size', 'error');
+  if (!(v >= 5)) {
+    showToast('Minimum order is 5 shares (Polymarket)', 'error');
     return;
   }
-  if (!confirm('Set max trade size to $' + v.toFixed(2) +
-      '? Applies to paper + live on the next tick.')) {
+  if (!confirm('Set trade size to ' + v + ' shares? Applies to paper + live on the next tick.')) {
     return;
   }
   fetch('/api/runtime-config', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ key: 'max_trade_usd', value: v })
+    body: JSON.stringify({ key: 'trade_shares', value: v })
   })
     .then(function(r) { return r.json(); })
     .then(function(data) {
       if (data.status === 'ok') {
-        showToast('Max trade size → $' + Number(data.value).toFixed(2), 'success');
+        showToast('Trade size → ' + Number(data.value) + ' shares', 'success');
       } else {
         showToast('Update failed: ' + (data.detail || 'unknown error'), 'error');
       }

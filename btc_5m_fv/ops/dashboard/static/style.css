@@ -244,6 +244,15 @@ body {
 .ctl-input:focus { outline: none; border-color: var(--accent); }
 .ctl-input::-webkit-outer-spin-button,
 .ctl-input::-webkit-inner-spin-button { opacity: 1; }
+.ctl-unit { font-family: var(--mono); font-size: 11px; color: var(--faint); }
+/* ── share-minimum infographic (#89) ── */
+.share-min { display: flex; align-items: center; gap: 8px; margin: 8px 0 4px; }
+.share-pips { display: flex; gap: 3px; }
+.shp {
+  width: 9px; height: 14px; border-radius: 2px;
+  background: var(--up, #6ad07b); opacity: 0.8;
+}
+.share-min-lbl { font-family: var(--mono); font-size: 10px; color: var(--faint); }
 @media (max-width: 1100px) {
   .gr-grid { grid-template-columns: repeat(2, 1fr); }
 }

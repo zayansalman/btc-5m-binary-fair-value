@@ -83,6 +83,7 @@ async def ems_html() -> str:
     from btc_5m_fv.execution.gate import (
         get_loss_halt_bypass,
         get_runtime_max_trade_usd,
+        get_runtime_trade_shares,
     )
     bypass_loss_halt = await get_loss_halt_bypass()
     # Operator runtime per-trade cap (#50): None when unset → bot uses the env
@@ -95,6 +96,16 @@ async def ems_html() -> str:
     max_trade_effective = (
         max_trade_current if max_trade_current is not None else max_trade_env
     )
+    # Share-denominated trade size (#89) — the operator-facing knob. None → the
+    # CONTROLS input defaults to the venue minimum. ``current_price`` is the
+    # favoured side's live ask (the side ≥ 0.50) for the $-value estimate.
+    trade_shares_current = await get_runtime_trade_shares()
+    _px = [
+        p
+        for p in ((tick or {}).get("market_up_price"), (tick or {}).get("market_down_price"))
+        if isinstance(p, (int, float)) and p > 0
+    ]
+    current_price = max(_px) if _px else None
 
     # Active params shape the decision-engine gate eval — same thresholds the
     # live loop uses, so the gate column never lies.
@@ -142,8 +153,8 @@ async def ems_html() -> str:
         bypass_loss_halt=bypass_loss_halt,
     )
     controls_html = controls.render(
-        max_trade_current=max_trade_current,
-        max_trade_env=max_trade_env,
+        trade_shares_current=trade_shares_current,
+        current_price=current_price,
     )
     strategy_html = strategy.render(
         style=style,
@@ -151,6 +162,8 @@ async def ems_html() -> str:
         paused=paused,
         pause_reason=pause_reason,
         max_trade=max_trade_effective,
+        trade_shares=trade_shares_current,
+        current_price=current_price,
     )
     market_html = market.render(tick)
     decision_html = decision_engine.render(

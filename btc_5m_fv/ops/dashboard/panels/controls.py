@@ -1,44 +1,61 @@
-"""Operator runtime controls (#50): live-editable risk knobs.
+"""Operator runtime controls (#50, #89): live-editable risk knobs.
 
-Currently exposes the unified max trade size. The bot re-reads the persisted
-value every tick, so changes apply without a restart, in paper AND live. Pure
-``render(...)`` transform like every other panel — no DB access here (the
-current value is loaded in ``ems.py`` and passed in). Singleton/multiple
-position mode + max concurrent positions will register here later.
+Exposes the trade size in SHARES (#89): the operator picks a share count and the
+bot trades that many shares per clip. The persisted value is re-read every tick,
+so changes apply without a restart, in paper AND live. Pure ``render(...)``
+transform — no DB access here (values are loaded in ``ems.py`` and passed in).
 """
 from __future__ import annotations
+
+from btc_5m_fv.execution.live import DEFAULT_MIN_ORDER_SIZE
 
 
 def render(
     *,
-    max_trade_current: float | None,
-    max_trade_env: float,
+    trade_shares_current: float | None,
+    current_price: float | None,
 ) -> str:
     """Render the CONTROLS card.
 
-    ``max_trade_current`` is the operator override (None when unset);
-    ``max_trade_env`` is the env/config default the bot falls back to.
+    ``trade_shares_current`` is the operator-set share count (None when unset →
+    the input defaults to the venue minimum). ``current_price`` is the favoured
+    side's live ask, used for the $-value estimate (None when no live market).
     """
-    effective = max_trade_current if max_trade_current is not None else max_trade_env
-    source = "operator" if max_trade_current is not None else "env default"
-    src_cls = "up" if max_trade_current is not None else "dim"
+    minsh = float(DEFAULT_MIN_ORDER_SIZE)
+    shares = trade_shares_current if trade_shares_current is not None else minsh
+    source = "operator" if trade_shares_current is not None else "default"
+    px = current_price if (current_price and current_price > 0) else None
+    if px:
+        value_str = f"≈ ${shares * px:,.2f} at {px:.2f}"
+    else:
+        value_str = f"≈ ${shares * 0.5:,.2f}–${shares * 1.0:,.2f}"
+    lo, hi = shares * 0.50, shares * 1.00
+    # Infographic: one pip per venue-minimum share, with a label.
+    pips = "".join("<span class='shp'></span>" for _ in range(int(minsh)))
     return (
         "<section class='card'>"
         "<div class='card-h'>CONTROLS<span class='win'>runtime · no restart</span></div>"
         "<div class='de-kv'>"
-        f"<div><span>Max trade size</span>"
-        f"<b class='mono'>${effective:,.2f} <em class='{src_cls}'>({source})</em></b></div>"
-        f"<div><span>Env default</span><b class='mono dim'>${max_trade_env:,.2f}</b></div>"
+        f"<div><span>Trade size</span>"
+        f"<b class='mono'>{shares:g} shares <em class='up'>({source})</em></b></div>"
+        f"<div><span>≈ value</span>"
+        f"<b class='mono' id='ctl-shares-val' data-px='{(px or 0):.4f}'>{value_str}</b></div>"
+        f"<div><span>$ range</span><b class='mono dim'>${lo:,.2f} – ${hi:,.2f}</b></div>"
         "</div>"
         "<div class='ctl-row'>"
-        "<input id='ctl-max-trade' class='ctl-input' type='number' "
-        f"step='0.5' min='0.5' value='{effective:.2f}' "
-        "aria-label='Max trade size in USD' />"
-        "<button class='gr-btn btn-ok' onclick='setMaxTradeSize()'>Apply</button>"
+        f"<input id='ctl-shares' class='ctl-input' type='number' step='1' "
+        f"min='{minsh:.0f}' value='{shares:g}' oninput='updateShareValue()' "
+        "aria-label='Trade size in shares' />"
+        "<span class='ctl-unit'>shares</span>"
+        "<button class='gr-btn btn-ok' onclick='setTradeShares()'>Apply</button>"
+        "</div>"
+        "<div class='share-min'>"
+        f"<div class='share-pips' aria-hidden='true'>{pips}</div>"
+        f"<span class='share-min-lbl'>Polymarket minimum order · {minsh:.0f} shares</span>"
         "</div>"
         "<div class='gr-toggle-hint'>"
-        "sizes by confidence up to this cap · small orders auto-bump to "
-        "Polymarket's 5-share minimum · paper + live"
+        "you set the share count · every order ≥ 5 shares (venue minimum) · "
+        "applies to paper + live"
         "</div>"
         "</section>"
     )

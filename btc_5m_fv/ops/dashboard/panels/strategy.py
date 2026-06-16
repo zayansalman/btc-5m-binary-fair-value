@@ -15,8 +15,26 @@ def render(
     paused: bool,
     pause_reason: str,
     max_trade: float | None = None,
+    trade_shares: float | None = None,
+    current_price: float | None = None,
 ) -> str:
     active = _params.load_active()
+    # Sizing line: share-denominated when the operator set a share count (#89),
+    # else the dollar clip.
+    if trade_shares is not None:
+        if current_price and current_price > 0:
+            sizing = (
+                f"{trade_shares:g} shares (~${trade_shares * current_price:,.2f}) · 1 pos max"
+            )
+        else:
+            sizing = f"{trade_shares:g} shares · 1 pos max"
+    else:
+        _dollar = (
+            max_trade
+            if max_trade is not None
+            else (_config.BTC_LIVE_MAX_TRADE_USD if is_live else _config.BTC_PAPER_MAX_TRADE_USD)
+        )
+        sizing = f"${_dollar:.0f}/clip · 1 pos max"
     proposed = _params.load_proposed()
     if active.source == "applied":
         params_html = (
@@ -62,7 +80,7 @@ def render(
         f"<div><span>Style</span><b>{escape(style)} (1 entry/window, hold→resolution)</b></div>"
         f"<div><span>Edge band</span><b>{_config.BTC_PAPER_ENTRY_EDGE_MIN:.3f} – {_config.BTC_PAPER_ENTRY_EDGE_MAX:.3f}</b></div>"
         f"<div><span>Entry floor</span><b>≥ {_config.BTC_PAPER_MIN_ENTRY_PRICE:.2f} (favorites)</b></div>"
-        f"<div><span>Sizing</span><b>${(max_trade if max_trade is not None else (_config.BTC_LIVE_MAX_TRADE_USD if is_live else _config.BTC_PAPER_MAX_TRADE_USD)):.0f}/clip · 1 pos max</b></div>"
+        f"<div><span>Sizing</span><b>{sizing}</b></div>"
         f"<div><span>Settlement</span><b>Chainlink BTC/USD · ≥ ⇒ Up</b></div>"
         f"<div><span>Params</span>{params_html}</div>"
         f"{proposed_html}"
