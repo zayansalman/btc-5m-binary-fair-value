@@ -695,6 +695,27 @@ def _now() -> int:
     return int(time.time())
 
 
+def _share_sized_notional(
+    side: str | None,
+    notional: float,
+    up_ask: float | None,
+    down_ask: float | None,
+    trade_shares: float | None,
+) -> float:
+    """Resize a clip to a fixed share count when the operator set one (#89).
+
+    Returns ``trade_shares × the chosen side's ask`` so the order sizes to ≈N
+    shares. Falls through to the original dollar ``notional`` when no share
+    target is set, no side was chosen, or the side has no usable ask.
+    """
+    if side is None or notional <= 0 or trade_shares is None:
+        return notional
+    side_ask = up_ask if side == "Up" else down_ask
+    if side_ask and side_ask > 0:
+        return trade_shares * side_ask
+    return notional
+
+
 async def _build_snapshot(client: httpx.AsyncClient) -> PaperSnapshot:
     now = _now()
     market = await _fetch_current_market(client, now)
@@ -774,6 +795,15 @@ async def _build_snapshot(client: httpx.AsyncClient) -> PaperSnapshot:
                 f"(up ask={up_book.best_ask} crossed={up_book.crossed}; "
                 f"down ask={down_book.best_ask} crossed={down_book.crossed})"
             )
+
+    # Share-denominated sizing (#89): when the operator sets a target share count,
+    # resize the clip to ≈N shares (notional = N × the chosen side's ask). The
+    # live executor / paper fill still auto-bumps to the venue minimum (#87).
+    if _risk_gate is not None:
+        notional = _share_sized_notional(
+            side, notional, up_book.best_ask, down_book.best_ask,
+            _risk_gate.runtime_trade_shares,
+        )
 
     candidate_edges = [e for e in (edge_up, edge_down) if e is not None]
     edge = max(candidate_edges) if candidate_edges else 0.0
