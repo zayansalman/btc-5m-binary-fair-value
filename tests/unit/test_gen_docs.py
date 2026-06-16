@@ -19,3 +19,36 @@ def test_inventory_reads_roles(tmp_path):
     assert by_path["pkg/alpha.py"].role == "Computes alpha."
     assert by_path["pkg/beta.py"].role == gd.NO_DOCSTRING
     assert by_path["pkg/__init__.py"].role == "Pkg root."
+
+
+def test_import_graph_flags_dead(tmp_path):
+    root = tmp_path
+    pkg = root / "pkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (pkg / "alpha.py").write_text('"""A."""\nX = 1\n')
+    (pkg / "beta.py").write_text('"""B."""\nfrom pkg.alpha import X\n')  # imports alpha
+    tests = root / "tests"
+    tests.mkdir()
+    (tests / "test_x.py").write_text("from pkg.beta import X\n")  # test-only importer
+
+    mods = gd.collect_modules(root, source_roots=["pkg"], toplevel=[])
+    gd.annotate_importers(root, mods, test_dirs=["tests"])
+    by = {m.path: m for m in mods}
+    assert by["pkg/alpha.py"].status == "WIRED"   # imported by beta (non-test)
+    assert by["pkg/beta.py"].status == "DEAD?"     # only a test imports it
+
+
+def test_real_tree_wiring_truth():
+    """The load-bearing facts the docs must never get wrong."""
+    mods = gd.collect_modules(gd.REPO)
+    gd.annotate_importers(gd.REPO, mods)
+    by = {m.path: m for m in mods}
+    # The live loop and its signal math are WIRED.
+    assert by["btc_bot/paper.py"].status == "WIRED"
+    assert by["btc_bot/strategy.py"].status == "WIRED"
+    # The live risk gate + executor are WIRED.
+    assert by["btc_5m_fv/execution/gate.py"].status == "WIRED"
+    assert by["btc_5m_fv/execution/live.py"].status == "WIRED"
+    # Known dead-in-active-tree module is flagged.
+    assert by["btc_5m_fv/ops/controller.py"].status == "DEAD?"

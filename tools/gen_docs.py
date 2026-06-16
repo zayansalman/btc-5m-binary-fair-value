@@ -64,3 +64,44 @@ def collect_modules(root: Path, source_roots=SOURCE_ROOTS, toplevel=TOPLEVEL_MOD
             rel = p.relative_to(root).as_posix()
             mods.append(Module(path=rel, role=_role_from_source(p.read_text())))
     return sorted(mods, key=lambda m: m.path)
+
+
+def _dotted_name(rel_path: str) -> str:
+    parts = rel_path[:-3].split("/")  # strip .py
+    if parts[-1] == "__init__":
+        parts = parts[:-1]
+    return ".".join(parts)
+
+
+def _imported_targets(text: str) -> set[str]:
+    """Dotted names this module references via import / from-import."""
+    targets: set[str] = set()
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return targets
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                targets.add(a.name)
+        elif isinstance(node, ast.ImportFrom):
+            if node.module is None:  # relative import without module — skip
+                continue
+            targets.add(node.module)
+            for a in node.names:  # `from pkg import mod` → pkg.mod is a candidate
+                targets.add(f"{node.module}.{a.name}")
+    return targets
+
+
+def annotate_importers(root: Path, mods, test_dirs=("tests",)) -> None:
+    known = {_dotted_name(m.path): m for m in mods}
+    for src in sorted(root.rglob("*.py")):
+        if "__pycache__" in src.parts:
+            continue
+        rel = src.relative_to(root).as_posix()
+        if any(rel.startswith(td + "/") or rel == td for td in test_dirs):
+            continue  # test importers don't count toward "wired"
+        for tgt in _imported_targets(src.read_text()):
+            mod = known.get(tgt)
+            if mod is not None and mod.path != rel:
+                mod.importers += 1
