@@ -339,3 +339,63 @@ class TestRuntimeMaxTradeOverride:
         await gate.refresh_runtime_limits()
         assert gate.runtime_max_trade_usd is None
         assert gate.effective_max_trade_usd == 5.0
+
+
+class TestRuntimeTradeShares:
+    """Operator runtime trade size in shares (#89): precedence + cap derivation."""
+
+    @pytest.mark.asyncio
+    async def test_set_get_round_trip(self) -> None:
+        from btc_5m_fv.execution.gate import (
+            get_runtime_trade_shares,
+            set_runtime_trade_shares,
+        )
+
+        assert await get_runtime_trade_shares() is None
+        await set_runtime_trade_shares(8.0)
+        assert await get_runtime_trade_shares() == 8.0
+        await set_runtime_trade_shares(0)  # ≤0 clears
+        assert await get_runtime_trade_shares() is None
+
+    @pytest.mark.asyncio
+    async def test_refresh_derives_effective_cap(self) -> None:
+        from btc_5m_fv.execution.gate import set_runtime_trade_shares
+
+        gate = RiskGate(_cfg(max_trade_usd=5.0))
+        await set_runtime_trade_shares(8.0)
+        await gate.refresh_runtime_limits()
+        assert gate.runtime_trade_shares == 8.0
+        # N shares cost ≤ ~$N (price < 1), so the dollar cap derives as N and an
+        # 8-share clip (notional ≤ 8 × 0.99 < 8) never trips its own per-trade cap.
+        assert gate.effective_max_trade_usd == 8.0
+        assert gate.block_reason(_req(notional_usd=7.5)) is None
+
+    @pytest.mark.asyncio
+    async def test_shares_take_precedence_over_dollar_override(self) -> None:
+        from btc_5m_fv.execution.gate import (
+            set_runtime_max_trade_usd,
+            set_runtime_trade_shares,
+        )
+
+        gate = RiskGate(_cfg(max_trade_usd=5.0))
+        await set_runtime_max_trade_usd(3.0)
+        await set_runtime_trade_shares(10.0)
+        await gate.refresh_runtime_limits()
+        assert gate.effective_max_trade_usd == 10.0  # shares win
+
+    @pytest.mark.asyncio
+    async def test_cleared_shares_fall_back_to_dollar_override(self) -> None:
+        from btc_5m_fv.execution.gate import (
+            set_runtime_max_trade_usd,
+            set_runtime_trade_shares,
+        )
+
+        gate = RiskGate(_cfg(max_trade_usd=5.0))
+        await set_runtime_max_trade_usd(3.0)
+        await set_runtime_trade_shares(10.0)
+        await gate.refresh_runtime_limits()
+        assert gate.effective_max_trade_usd == 10.0
+        await set_runtime_trade_shares(None)  # clear shares
+        await gate.refresh_runtime_limits()
+        assert gate.runtime_trade_shares is None
+        assert gate.effective_max_trade_usd == 3.0  # falls back to the dollar override

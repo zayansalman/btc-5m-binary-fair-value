@@ -682,6 +682,9 @@ async def api_loss_halt_reset() -> dict[str, Any]:
 # Hard sanity bound on the operator runtime per-trade cap. Generous enough for
 # any realistic clip on this bankroll, low enough to catch a fat-fingered entry.
 _MAX_TRADE_USD_CEILING = 1000.0
+# Hard sanity bound on the operator runtime trade size in shares (#89). Far above
+# anything this bankroll supports; the gate/bankroll caps do the real limiting.
+_MAX_TRADE_SHARES_CEILING = 1000.0
 
 
 @app.post("/api/runtime-config")
@@ -717,6 +720,31 @@ async def api_runtime_config(request: Request) -> dict[str, Any]:
         await notify(
             "btc_runtime_config",
             f"Operator set max trade size to ${value:.2f} (paper+live, runtime — no restart)",
+            {"key": key, "value": value},
+        )
+        log.info("btc.runtime_config_set", key=key, value=value)
+        return {"status": "ok", "key": key, "value": value}
+    if key == "trade_shares":
+        from btc_5m_fv.execution.gate import set_runtime_trade_shares
+        from btc_5m_fv.execution.live import DEFAULT_MIN_ORDER_SIZE
+
+        try:
+            value = float((body or {}).get("value"))
+        except (TypeError, ValueError):
+            return {"status": "error", "detail": "value must be a number"}
+        if not (DEFAULT_MIN_ORDER_SIZE <= value <= _MAX_TRADE_SHARES_CEILING):
+            return {
+                "status": "error",
+                "detail": (
+                    f"shares must be between {DEFAULT_MIN_ORDER_SIZE:.0f} "
+                    f"(Polymarket minimum) and {_MAX_TRADE_SHARES_CEILING:.0f}"
+                ),
+            }
+        value = round(value, 2)
+        await set_runtime_trade_shares(value)
+        await notify(
+            "btc_runtime_config",
+            f"Operator set trade size to {value:g} shares (paper+live, runtime — no restart)",
             {"key": key, "value": value},
         )
         log.info("btc.runtime_config_set", key=key, value=value)

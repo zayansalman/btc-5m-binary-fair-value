@@ -14,7 +14,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 import db as _db
-from btc_5m_fv.execution.gate import get_runtime_max_trade_usd
+from btc_5m_fv.execution.gate import (
+    get_runtime_max_trade_usd,
+    get_runtime_trade_shares,
+)
 
 
 @pytest.fixture
@@ -70,3 +73,29 @@ class TestRuntimeConfigEndpoint:
         )
         assert r.json()["status"] == "error"
         assert "unknown runtime key" in r.json()["detail"]
+
+    def test_set_trade_shares_ok_and_persists(self, client: TestClient) -> None:
+        r = client.post(
+            "/api/runtime-config", json={"key": "trade_shares", "value": 8}
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["status"] == "ok"
+        assert body["value"] == 8.0
+        assert asyncio.run(get_runtime_trade_shares()) == 8.0
+
+    def test_trade_shares_rejects_below_minimum(self, client: TestClient) -> None:
+        # 4 shares < Polymarket's 5-share minimum.
+        r = client.post(
+            "/api/runtime-config", json={"key": "trade_shares", "value": 4}
+        )
+        body = r.json()
+        assert body["status"] == "error"
+        assert "minimum" in body["detail"].lower()
+        assert asyncio.run(get_runtime_trade_shares()) is None
+
+    def test_trade_shares_rejects_non_numeric(self, client: TestClient) -> None:
+        r = client.post(
+            "/api/runtime-config", json={"key": "trade_shares", "value": "x"}
+        )
+        assert r.json()["status"] == "error"
