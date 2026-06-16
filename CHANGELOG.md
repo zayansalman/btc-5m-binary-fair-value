@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.4.6 — Enforce a min-trade floor on the runtime max-trade cap (2026-06-17)
+
+Closes #85. Live trading was **100% blocked**: the dashboard BLOCKED panel showed every entry rejected — `size 1.78 shares below Polymarket minimum 5.00 at price 0.5600`. The operator had set the runtime **Max trade size to $1.00** from the dashboard (#50). At the favourites-only entry floor (price ≥ 0.50), $1.00 buys < 2 shares — below Polymarket's **5-share venue minimum** — so `LiveExecutor.submit_entry` (`execution/live.py`) correctly refused every order, every window. Funds were untouched; the bot was stopped.
+
+Root cause: the #50 slice shipped **no floor** on the per-trade cap. Its CHANGELOG states the flawed assumption directly — *"a value below min gives a smaller fixed clip … no `min` changes needed."* But the cap is the **ceiling** of the confidence-sizing range, and `notional_from_confidence` clamps every order to `[min_trade, max_trade]`; a ceiling below `BTC_PAPER_MIN_TRADE_USD` ($5 in the operator's env) pins every order's notional to $1 → sub-minimum. Nothing enforced the floor: `POST /api/runtime-config` validated only `0 < v ≤ 1000`, the HTML input hardcoded `min='0.5'`, and the gate read accepted any `value > 0`.
+
+### What
+- **`btc_5m_fv/execution/gate.py`**: new `_runtime_override_or_none(value)` — a stored override that is non-positive **or below `BTC_PAPER_MIN_TRADE_USD`** is invalid and dropped, so the gate falls back to the (placeable) env default. Wired into both `RiskGate.refresh_runtime_limits()` (per-tick) and the module reader `get_runtime_max_trade_usd()` (dashboard display), so the live bot **auto-heals the stale $1.00 on the next tick** — no manual DB surgery, no migration. The floor is read from `config` at call time (no restart to change it).
+- **`btc_5m_fv/ops/dashboard/app.py`**: `POST /api/runtime-config` now rejects `value < BTC_PAPER_MIN_TRADE_USD` with an actionable error ("must be at least the $5.00 min trade size — a smaller cap … blocks all entries") instead of silently accepting an unplaceable clip.
+- **`btc_5m_fv/ops/dashboard/panels/controls.py`**: the number input's `min` attribute now tracks the displayed `min_trade` floor (was a hardcoded `0.5`), so the browser widget and the "min $X" hint agree.
+- **Tests**: `test_runtime_config.py` (endpoint rejects sub-floor / accepts at floor); `test_risk_gate.py` (a stored $1 override is dropped → effective cap falls back to env default — the exact incident). Existing cap tests now pin `BTC_PAPER_MIN_TRADE_USD` explicitly, removing a latent dependency on the local `.env` (floor of 5 vs the CI default of 1). Full suite green (544, +3 new).
+
+### Why this shape
+- The invariant is **effective per-trade cap ≥ min-trade size** — the ceiling can't sit below the floor without inverting the sizing range. Enforced at every boundary (endpoint reject → operator feedback; gate read drop → heals legacy state; HTML `min` → honest widget), mirroring the existing "invalid override → None → env default" handling rather than adding new machinery.
+- The gate drop is silent (no per-tick log spam) and the reader masks the stale value, so the dashboard already shows the corrected env-default cap. The stored $1 is inert until overwritten.
+- **Out of scope:** #83 (backtest look-ahead leak) and #84 (entry-signal overfit) — those question whether the signal has live *edge*; this change only unblocks order *placement*.
+
 ## v0.4.5 — UI-settable max trade size (2026-06-16)
 
 Part of #50 (the max-trade-size slice). Resizing the clip required editing `.env` and restarting uvicorn; with `BTC_PAPER_MIN_TRADE_USD=BTC_PAPER_MAX_TRADE_USD=5` every trade went in at a fixed $5 with no way to tune it mid-session. Now the operator sets it from the dashboard and it takes effect on the next tick — paper AND live, no restart.

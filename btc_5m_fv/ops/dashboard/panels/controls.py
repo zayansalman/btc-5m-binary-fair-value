@@ -33,7 +33,7 @@ def render(
         "</div>"
         "<div class='ctl-row'>"
         "<input id='ctl-max-trade' class='ctl-input' type='number' "
-        f"step='0.5' min='0.5' value='{effective:.2f}' "
+        f"step='0.5' min='{min_trade:.2f}' value='{effective:.2f}' "
         "aria-label='Max trade size in USD' />"
         "<button class='gr-btn btn-ok' onclick='setMaxTradeSize()'>Apply</button>"
         "</div>"

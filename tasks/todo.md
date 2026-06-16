@@ -1,3 +1,45 @@
+# #85 — Live trades 100% blocked: runtime max-trade cap below Polymarket share minimum (2026-06-16)
+
+**Issue:** #85. **Branch:** `feature/85-runtime-cap-min-floor` off `develop`.
+
+## Problem
+Dashboard BLOCKED panel: every entry rejected — `size 1.78 shares below Polymarket minimum 5.00 at price 0.5600`.
+Operator set runtime **Max trade size = $1.00**. At favourites (price ≥ 0.50), $1.00 buys < 2 shares < Polymarket's
+**5-share venue minimum** → `LiveExecutor.submit_entry` (`live.py:662`) correctly refuses every order. Bot is STOPPED, funds untouched.
+
+## Root cause
+No floor enforced on the per-trade cap (the #50 slice shipped without one):
+- `POST /api/runtime-config` validates only `0 < value <= 1000` (`app.py:710`).
+- HTML input hardcodes `min='0.5'` (`controls.py:36`); the "min $5.00" hint is cosmetic.
+- Gate read accepts any `value > 0` (`gate.py`).
+v0.4.5 (#50) CHANGELOG states the flawed assumption: *"a value below min gives a smaller fixed clip — no `min` changes needed."*
+False — a clip below the min-trade size sizes every order below the venue minimum.
+
+## Invariant
+**Effective per-trade cap ≥ min-trade size (`BTC_PAPER_MIN_TRADE_USD`).** The cap is the sizing-range ceiling;
+`notional_from_confidence` clamps to `[min, max]`, so a ceiling below the floor forces every order below the floor.
+
+## Tasks (TDD)
+- [ ] Failing tests: endpoint rejects sub-floor / accepts at floor; gate treats stored sub-floor override as invalid → env default.
+- [ ] Pin `BTC_PAPER_MIN_TRADE_USD` in existing cap tests (they silently depended on the local `.env` floor=5).
+- [ ] `gate.py`: stored override `< floor` treated as invalid → `None` in `refresh_runtime_limits` + `get_runtime_max_trade_usd` (heals the live bot's stale $1.00).
+- [ ] `app.py`: reject `value < floor` with an actionable error.
+- [ ] `controls.py`: HTML `min='{min_trade}'` so widget + hint agree.
+- [ ] Full suite green; CHANGELOG v0.4.6; lessons.md; push to develop.
+
+## Not in scope
+#83 (backtest leak) / #84 (signal overfit) — those question live edge; this only unblocks order placement.
+
+## Review (2026-06-17)
+**Done.** Invariant enforced: effective per-trade cap ≥ `BTC_PAPER_MIN_TRADE_USD`.
+- `gate.py`: `_runtime_override_or_none()` drops a non-positive / sub-floor stored override → env-default fallback; wired into `refresh_runtime_limits()` + `get_runtime_max_trade_usd()`. **Auto-heals the live bot's stale $1.00 on the next tick** — no migration, no manual DB edit.
+- `app.py`: `POST /api/runtime-config` rejects sub-floor values with an actionable error.
+- `controls.py`: HTML `min` now tracks the displayed floor.
+- TDD: wrote failing tests first (RED → GREEN). Full suite **544 green (+3)**; ruff clean; zero new mypy errors on changed files.
+- **Immediate operator action** (one of): in the dashboard set Max trade size back to ≥ $5.00 (or clear the override), then Start. After deploying this fix, the stale $1.00 self-heals on the first tick regardless.
+
+---
+
 # Plan — UI-settable max trade size (2026-06-16)
 
 **Issue:** #50 (runtime config controls — the max-trade-size slice only).
