@@ -95,11 +95,14 @@ async def current_mode() -> str:
 
 
 async def set_mode(mode: str) -> BtcBotStatus:
-    """Switch execution mode from the dashboard, then restart the loop cleanly.
+    """Switch execution mode from the dashboard.
+
+    The bot is stopped (live → flatten, paper → force-close) and the new mode
+    is persisted. The runner is NOT auto-started — the operator must press
+    Start. This keeps mode-switching free of surprise live-order side effects.
 
     Live is gated exactly like a boot: if the gate fails the mode is NOT
-    changed and an error status is returned. Stop-before-start guarantees a
-    single loop (no overlap).
+    changed and an error is raised.
     """
     if mode not in ("paper", "live"):
         raise ValueError(f"unknown mode {mode!r}")
@@ -108,7 +111,14 @@ async def set_mode(mode: str) -> BtcBotStatus:
         assert_live_boot_allowed()
     await request_stop()
     await set_config("btc_bot.requested_mode", mode)
-    return await request_start()
+    now = datetime.now(UTC).isoformat(timespec="seconds")
+    detail = (
+        f"Mode set to {mode.upper()}. Bot is stopped — press Start to begin."
+    )
+    await set_config("btc_bot.mode", mode)
+    await set_config("btc_bot.updated_at", now)
+    await set_config("btc_bot.detail", detail)
+    return await get_status()
 
 
 async def request_start() -> BtcBotStatus:
