@@ -39,6 +39,38 @@ def test_import_graph_flags_dead(tmp_path):
     assert by["pkg/beta.py"].status == "DEAD?"     # only a test imports it
 
 
+def test_annotate_importers_excludes_venv(tmp_path):
+    """Import graph must ignore .venv/build dirs whose modules collide with ours.
+
+    Third-party files in a virtualenv often reference short generic names
+    (`main`, `config`) that collide with our top-level modules. They must not
+    inflate importer counts.
+    """
+    root = tmp_path
+    pkg = root / "pkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text('"""Pkg root."""\n')
+    (pkg / "alpha.py").write_text('"""A."""\n')
+    (pkg / "beta.py").write_text("from pkg.alpha import *\n")  # real source importer
+    (root / "main.py").write_text('"""M."""\n')  # top-level collision target
+    venv_lib = root / ".venv" / "lib"
+    venv_lib.mkdir(parents=True)
+    # Third-party file referencing OUR names — must be excluded from the walk.
+    (venv_lib / "junk.py").write_text(
+        "import pkg\nfrom pkg import alpha\nimport main\n"
+    )
+
+    mods = gd.collect_modules(
+        root, source_roots=["pkg"], toplevel=["main.py"]
+    )
+    gd.annotate_importers(root, mods, test_dirs=["tests"])
+    by = {m.path: m for m in mods}
+    # .venv reference excluded -> main.py has zero source importers.
+    assert by["main.py"].importers == 0
+    # Only pkg/beta.py (a real source file) counts toward pkg/alpha.py.
+    assert by["pkg/alpha.py"].importers == 1
+
+
 def test_status_taxonomy_pkg_cli_wired_dead(tmp_path):
     """pkg / cli / WIRED / DEAD? precedence resolves correctly."""
     root = tmp_path

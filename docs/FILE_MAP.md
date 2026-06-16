@@ -66,11 +66,11 @@ _Status: `WIRED` = has non-test importers; `DEAD?` = no importers found (investi
 | `btc_bot/params_apply.py` | cli | 0 | Layer 2 — operator-gated promotion of proposed -> active strategy params. |
 | `btc_bot/params_propose.py` | cli | 0 | Layer 2 — propose tuned strategy parameters from the existing backtest grid. |
 | `btc_bot/strategy.py` | WIRED | 3 | Shared BTC 5-minute binary strategy math. |
-| `config.py` | WIRED | 41 | Configuration for the local BTC 5-minute binary fair-value strategy lab. |
+| `config.py` | WIRED | 22 | Configuration for the local BTC 5-minute binary fair-value strategy lab. |
 | `dashboard.py` | WIRED | 1 | Local Gradio dashboard for BTC 5-minute paper trading. |
 | `db.py` | WIRED | 12 | SQLite storage for the BTC 5-minute binary fair-value strategy lab. |
 | `logging_setup.py` | WIRED | 9 | Structured JSON logging with structlog. Module + trade_id context. |
-| `main.py` | cli | 19 | Entrypoint for the BTC 5-minute paper trading system. |
+| `main.py` | cli | 0 | Entrypoint for the BTC 5-minute paper trading system. |
 | `tools/backtest_btc_strategy.py` | cli | 0 | Run the BTC strategy backtest and parameter optimizer. |
 | `tools/chainlink_lead_lag.py` | cli | 0 | Chainlink-vs-Binance BTC lead-lag analysis (issue #57). |
 | `tools/clear_auto_pause.py` | cli | 0 | Clear the adaptive auto-pause and resume entries (#36). |

@@ -24,6 +24,25 @@ TOPLEVEL_MODULES = ["main.py", "config.py", "db.py", "logging_setup.py", "dashbo
 # Entrypoints / foundation: never flagged DEAD even with zero importers.
 WIRED_ALLOWLIST = {"main.py", "config.py", "db.py", "logging_setup.py"}
 
+# Virtualenv/build/VCS dirs: never walk into these. Third-party packages have
+# modules/symbols with short generic names (`main`, `config`) that collide with
+# our top-level modules and would inflate importer counts. `*.egg-info` is
+# handled separately (suffix match).
+EXCLUDE_DIRS = {".venv", "venv", "env", "__pycache__", ".git", ".pytest_cache",
+                "build", "dist", "node_modules", ".mypy_cache", ".ruff_cache"}
+
+
+def _iter_py_files(root: Path):
+    """Yield `*.py` files under `root`, skipping virtualenv/build/VCS dirs.
+
+    Deterministic (sorted) and stdlib-only. Excludes any path with a part in
+    `EXCLUDE_DIRS` or a part ending in `.egg-info`.
+    """
+    for p in sorted(root.rglob("*.py")):
+        if any(part in EXCLUDE_DIRS or part.endswith(".egg-info") for part in p.parts):
+            continue
+        yield p
+
 
 @dataclass
 class Module:
@@ -114,9 +133,7 @@ def collect_modules(root: Path, source_roots=SOURCE_ROOTS, toplevel=TOPLEVEL_MOD
         base = root / sr
         if not base.exists():
             continue
-        for p in sorted(base.rglob("*.py")):
-            if "__pycache__" in p.parts:
-                continue
+        for p in _iter_py_files(base):
             rel = p.relative_to(root).as_posix()
             mods.append(_make_module(root, p, rel))
     return sorted(mods, key=lambda m: m.path)
@@ -151,9 +168,7 @@ def _imported_targets(text: str) -> set[str]:
 
 def annotate_importers(root: Path, mods, test_dirs=("tests",)) -> None:
     known = {_dotted_name(m.path): m for m in mods}
-    for src in sorted(root.rglob("*.py")):
-        if "__pycache__" in src.parts:
-            continue
+    for src in _iter_py_files(root):
         rel = src.relative_to(root).as_posix()
         if any(rel.startswith(td + "/") or rel == td for td in test_dirs):
             continue  # test importers don't count toward "wired"
