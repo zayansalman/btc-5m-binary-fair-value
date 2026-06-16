@@ -29,8 +29,6 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-import httpx
-
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -66,60 +64,37 @@ def _parse_since(spec: str) -> int:
 # ---------------------------------------------------------------------------
 
 
-class GammaResolver:
-    """Caches market lookups so we don't hit the gamma API once per trade."""
+try:
+    from zoneinfo import ZoneInfo
+    _ET = ZoneInfo("America/New_York")
+except Exception:  # noqa: BLE001
+    _ET = None
 
-    def __init__(self, client: httpx.Client) -> None:
-        self._client = client
-        self._by_condition: dict[str, dict[str, Any]] = {}
-        # Map outcome token_id → (market_name, side_label).
-        self._by_token: dict[str, tuple[str, str]] = {}
 
-    def lookup_token(self, token_id: str) -> tuple[str | None, str | None]:
-        """Resolve (market_name, side_label) for an outcome token."""
-        if token_id in self._by_token:
-            return self._by_token[token_id]
-        try:
-            r = self._client.get(
-                f"{_config.POLYMARKET_GAMMA_API}/markets",
-                params={"clob_token_ids": token_id, "limit": 1},
-                timeout=10.0,
-            )
-            r.raise_for_status()
-            data = r.json()
-        except Exception as e:  # noqa: BLE001
-            print(f"gamma lookup failed for token {token_id[:16]}…: {e}", file=sys.stderr)
-            self._by_token[token_id] = (None, None)
-            return (None, None)
-        markets = data if isinstance(data, list) else data.get("data", [])
-        if not markets:
-            self._by_token[token_id] = (None, None)
-            return (None, None)
-        m = markets[0]
-        # Gamma returns clobTokenIds as a JSON-encoded string list, and a
-        # parallel outcomes list. Position 0 is "Up" / "Yes", 1 is "Down" / "No".
-        token_ids_raw = m.get("clobTokenIds") or "[]"
-        try:
-            token_ids = (
-                eval(token_ids_raw) if isinstance(token_ids_raw, str) else token_ids_raw
-            )
-        except Exception:  # noqa: BLE001
-            token_ids = []
-        outcomes_raw = m.get("outcomes") or "[]"
-        try:
-            outcomes = (
-                eval(outcomes_raw) if isinstance(outcomes_raw, str) else outcomes_raw
-            )
-        except Exception:  # noqa: BLE001
-            outcomes = []
-        market_name = m.get("question") or m.get("groupItemTitle") or ""
-        side = None
-        for i, tid in enumerate(token_ids):
-            if str(tid) == token_id and i < len(outcomes):
-                side = outcomes[i]
-                break
-        self._by_token[token_id] = (market_name, side)
-        return (market_name, side)
+def synthesize_btc_market_name(trade_ts: int) -> str:
+    """Return the canonical ``Bitcoin Up or Down - <Month> <D>, H:MMAM-H:MMAM ET``
+    name for the 5-minute BTC market that contains ``trade_ts``.
+
+    BTC 5m markets are aligned to wall-clock 5-minute boundaries, so the
+    window the trade belongs to is the floor-aligned 5-minute slot. Gamma
+    drops resolved markets from its index — we can't look the name up after
+    the fact — but we can reconstruct it from the trade timestamp alone.
+    """
+    if _ET is None:
+        return ""
+    dt = datetime.fromtimestamp(trade_ts, UTC).astimezone(_ET)
+    floor_min = (dt.minute // 5) * 5
+    start = dt.replace(minute=floor_min, second=0, microsecond=0)
+    end = start + timedelta(minutes=5)
+
+    def _fmt(t: datetime) -> str:
+        # 5:25AM, 12:00PM — drop the leading zero from the hour.
+        return t.strftime("%I:%M%p").lstrip("0")
+
+    return (
+        f"Bitcoin Up or Down - {start.strftime('%B')} "
+        f"{start.day}, {_fmt(start)}-{_fmt(end)} ET"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -164,34 +139,22 @@ def fetch_trades(after_ts: int, before_ts: int | None) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
-def _trade_action(t: dict[str, Any]) -> str:
-    """CLOB trades have a 'side' (BUY/SELL) at the taker level. Maker side is opposite."""
-    # The user perspective: are they maker or taker? maker_address vs taker_address.
-    user_addr = (_config.POLYMARKET_FUNDER or "").lower()
-    if not user_addr:
-        # Fall back to whatever the trade reports — usually correct.
-        return (t.get("side") or "").lower()
-    if (t.get("maker_address") or "").lower() == user_addr:
-        # We're the maker. Maker side is the opposite of the taker side.
-        taker = (t.get("side") or "").upper()
-        return "sell" if taker == "BUY" else "buy"
-    return (t.get("side") or "").lower()
-
-
-def trade_to_row(t: dict[str, Any], resolver: GammaResolver) -> dict[str, Any] | None:
+def trade_to_row(t: dict[str, Any]) -> dict[str, Any] | None:
     """Convert one CLOB trade record to a CSV row compatible with build_opportunities.
 
     Returns ``None`` when the trade isn't a BTC 5m buy we can backtest.
+    The CLOB ``side`` field is the user's perspective regardless of taker/maker
+    role, so a BUY here is always a buy of the named outcome.
+
+    Market discrimination is by outcome label: BTC 5m markets only have
+    "Up" / "Down" outcomes; sports markets use team names ("Knicks", etc.)
+    and other binaries use "Yes" / "No". So the outcome alone is enough to
+    filter to BTC 5m without a gamma round-trip per trade. Market name is
+    synthesized from the trade timestamp (gamma drops resolved markets).
     """
-    action = _trade_action(t)
-    if action != "buy":
+    if (t.get("side") or "").upper() != "BUY":
         return None
-    token_id = str(t.get("asset_id") or "")
-    if not token_id:
-        return None
-    market_name, side_label = resolver.lookup_token(token_id)
-    if not market_name or "Bitcoin Up or Down" not in market_name:
-        return None
+    side_label = (t.get("outcome") or "").strip()
     if side_label not in ("Up", "Down"):
         return None
     try:
@@ -206,6 +169,9 @@ def trade_to_row(t: dict[str, Any], resolver: GammaResolver) -> dict[str, Any] |
     try:
         ts = int(match_time)
     except (TypeError, ValueError):
+        return None
+    market_name = synthesize_btc_market_name(ts)
+    if not market_name or "Bitcoin Up or Down" not in market_name:
         return None
     return {
         "timestamp": ts,
@@ -262,14 +228,12 @@ def main() -> None:
         sys.exit(0)
 
     rows: list[dict[str, Any]] = []
-    with httpx.Client(timeout=10.0, follow_redirects=True) as http:
-        resolver = GammaResolver(http)
-        for i, t in enumerate(trades):
-            row = trade_to_row(t, resolver)
-            if row is not None:
-                rows.append(row)
-            if (i + 1) % 100 == 0:
-                print(f"  processed {i + 1}/{len(trades)}", file=sys.stderr)
+    for i, t in enumerate(trades):
+        row = trade_to_row(t)
+        if row is not None:
+            rows.append(row)
+        if (i + 1) % 100 == 0:
+            print(f"  processed {i + 1}/{len(trades)}", file=sys.stderr)
 
     rows.sort(key=lambda r: r["timestamp"])
     args.output.parent.mkdir(parents=True, exist_ok=True)
