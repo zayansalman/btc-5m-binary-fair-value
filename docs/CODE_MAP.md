@@ -73,7 +73,7 @@ Env knobs: `BTC_TRADE_*` are canonical; `BTC_LIVE_*` are deprecated read-aliases
 <!-- BEGIN GENERATED:summary -->
 - **Trees:** `btc_bot/` = live loop + signal math; `btc_5m_fv/` = execution/connectors/dashboard/backtest; top-level `config.py`/`db.py`/`logging_setup.py` = foundation. Both ACTIVE, bidirectionally coupled.
 - **Entry:** `python main.py` → FastAPI `btc_5m_fv/ops/dashboard/app.py`; loop starts on operator ▶ Start → `btc_bot/controller.py:request_start`.
-- **Tests:** 558.
+- **Tests:** 561.
 - **Built-but-dead (do not edit expecting runtime effect):** `btc_5m_fv/backtest/conditional.py`, `btc_5m_fv/backtest/harness.py`, `btc_5m_fv/connectors/base.py`, `btc_5m_fv/connectors/binance.py`, `btc_5m_fv/connectors/chainlink.py`, `btc_5m_fv/connectors/polymarket.py`, `btc_5m_fv/ops/controller.py`, `btc_5m_fv/ops/dashboard/panels/_shared.py`, `btc_5m_fv/storage/replay.py`, `btc_5m_fv/strategy/signal.py`, `btc_bot/chronos_signal.py`.
 <!-- END GENERATED:summary -->
 
@@ -89,7 +89,7 @@ Env knobs: `BTC_TRADE_*` are canonical; `BTC_LIVE_*` are deprecated read-aliases
 | `btc_5m_fv/connectors/base.py` | DEAD? | 0 | Re-export abstract base classes and exceptions for connector authors. |
 | `btc_5m_fv/connectors/binance.py` | DEAD? | 0 | Binance connector — BTC spot price and recent close history. |
 | `btc_5m_fv/connectors/chainlink.py` | DEAD? | 0 | Chainlink Data Streams connector stub. |
-| `btc_5m_fv/connectors/chainlink_settlement.py` | WIRED | 1 | Settlement-aligned Chainlink BTC/USD feed via Polymarket endpoints (issue #21). |
+| `btc_5m_fv/connectors/chainlink_settlement.py` | WIRED | 2 | Settlement-aligned Chainlink BTC/USD feed via Polymarket endpoints (issue #21). |
 | `btc_5m_fv/connectors/polymarket.py` | DEAD? | 0 | Polymarket connector — discovers the current BTC 5-minute binary market window. |
 | `btc_5m_fv/connectors/registry.py` | WIRED | 1 | Connector registry — manages the lifecycle and discovery of all connectors. |
 | `btc_5m_fv/core/__init__.py` | pkg | 0 | Core domain types, interfaces, and exceptions. |
@@ -148,6 +148,7 @@ Env knobs: `BTC_TRADE_*` are canonical; `BTC_LIVE_*` are deprecated read-aliases
 | `tools/backtest_btc_strategy.py` | cli | 0 | Run the BTC strategy backtest and parameter optimizer. |
 | `tools/chainlink_lead_lag.py` | cli | 0 | Chainlink-vs-Binance BTC lead-lag analysis (issue #57). |
 | `tools/clear_auto_pause.py` | cli | 0 | Clear the adaptive auto-pause and resume entries (#36). |
+| `tools/datastreams_tieout.py` | cli | 0 | Tie-out Chainlink Data Streams vs Polymarket's settlement prints (issue #91). |
 | `tools/demo_snapshot.py` | cli | 0 | Print a BTC paper trading snapshot. |
 | `tools/fetch_polymarket_trades.py` | cli | 0 | Pull this account's Polymarket trade history via the CLOB API → CSV. |
 | `tools/gen_docs.py` | cli | 0 | Generate the machine-derived sections of the agent docs. |

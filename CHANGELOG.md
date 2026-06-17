@@ -1,6 +1,15 @@
 # Changelog
 
-## v0.4.10 — Heal phantom "max 1" singleton block (live) (2026-06-17)
+## v0.4.11 — Chainlink Data Streams tie-out tool (#91, read-only spike) (2026-06-17)
+
+The bot scrapes Chainlink BTC/USD off Polymarket's relay (`crypto-price` REST + `ws-live-data` WS) — fragile. Polymarket actually settles via **Chainlink Data Streams + Automation**, and the operator now holds first-party Data Streams creds for `BTC/USD-RefPrice-DS-Premium-Global-003` (feed `0x00039d9e…`, independently surfaced as Polymarket's settlement feed). This adds the **gate** before any feed swap: prove the direct stream reproduces Polymarket's exact open/close prints.
+
+### What
+- **`tools/datastreams_tieout.py`** (read-only, places no trades): for the last N completed 5-minute windows, pulls Polymarket `openPrice`/`closePrice` (`ChainlinkSettlementConnector.fetch_window`) and the Data Streams report `price` at `t` / `t+300` (signed REST `GET /api/v1/reports`), and reports the cent-for-cent match rate. **Acceptance: ≥99% match → safe to wire Data Streams primary.** Secrets read from `DATASTREAMS_API_KEY`/`DATASTREAMS_API_SECRET` env and never logged — the operator runs it.
+- Pure, unit-tested helpers: `sign_headers` (HMAC-SHA256 over `METHOD FULL_PATH BODY_HASH API_KEY TS`) and `decode_v3_price` (extracts the int192 `price` from the V3 `fullReport` blob, word 6, 8 decimals) — verified against a synthetic V3 report; the live run is the final tie-out.
+
+### Why this shape
+- It's **plumbing, not edge**: Data Streams is the same Chainlink data, first-party — robustness + exact settlement reads + cleaner near-boundary spot (better entry selection). It can't lead Chainlink, so it does not replace the CEX lead-lag idea (#55). Gated on the tie-out before swapping `connectors/chainlink_settlement.py` (would implement the dead `connectors/chainlink.py` #9 stub). See #91.
 
 Closes #91. Live trading silently stopped: the BLOCKED panel showed every entry rejected with **"an open position/order already exists (max 1)"** while the position ledger was **flat (0 open rows)** and Polymarket history showed the last position fully **bought and sold** (flat, funds intact). The bot's trade blotter and Polymarket history therefore *agreed* — both flat — but the live executor's **in-memory** singleton flag was stranded `True`, so it blocked forever until a clean restart.
 
