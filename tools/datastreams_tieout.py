@@ -151,6 +151,53 @@ async def _ds_price(
     return decode_v3_price(full, decimals)
 
 
+async def probe(args: argparse.Namespace, api_key: str, api_secret: str) -> int:
+    """Single authenticated 'what can this account see' call — auth + shape check.
+
+    Hits /reports/latest (no timestamp needed). Prints HTTP status, the decoded
+    latest BTC/USD price, and the response shape. Never prints the secret; a
+    non-200 body is an API error message (not credentials).
+    """
+    base = REST_BASE[args.network]
+    path = f"/api/v1/reports/latest?feedID={args.feed_id}"
+    headers = sign_headers("GET", path, b"", api_key, api_secret, int(time.time() * 1000))
+    print(f"# Data Streams probe — {args.network} · feed {args.feed_id[:14]}…")
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        try:
+            r = await client.get(base + path, headers=headers, timeout=15.0)
+        except Exception as e:  # noqa: BLE001
+            print(f"- request failed: {str(e)[:200]}")
+            return 1
+    print(f"- endpoint: {base}{path.split('?')[0]}")
+    print(f"- HTTP {r.status_code}")
+    if r.status_code != 200:
+        print(f"- body: {r.text[:300]}")
+        print(
+            "- 401/403 => key not authorized for THIS network/stream. Try "
+            "--network testnet; mainnet + this BTC feed may need the sponsored "
+            "grant (your pm-ds-request form), still pending."
+        )
+        return 1
+    data = r.json()
+    report = data.get("report") or data
+    if isinstance(report, list):
+        report = report[0] if report else {}
+    price = None
+    full = report.get("fullReport") or report.get("full_report")
+    if full:
+        try:
+            price = decode_v3_price(full, args.decimals)
+        except Exception as e:  # noqa: BLE001
+            print(f"- decode error: {str(e)[:120]}")
+    print(f"- response keys: {list(data.keys())}")
+    print(f"- observationsTimestamp: {report.get('observationsTimestamp')}")
+    print(f"- decoded BTC/USD price: {price}")
+    if price is None:
+        print(f"- raw report (first 400 chars, no secret): {str(report)[:400]}")
+    print("\nAUTH OK — share this output and I'll confirm the decode/feed, then we tie-out.")
+    return 0
+
+
 async def main(args: argparse.Namespace) -> int:
     api_key = os.environ.get("DATASTREAMS_API_KEY")
     api_secret = os.environ.get("DATASTREAMS_API_SECRET")
@@ -161,6 +208,8 @@ async def main(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
+    if args.probe:
+        return await probe(args, api_key, api_secret)
     base = REST_BASE[args.network]
     now = int(time.time())
     last_complete = (now // WINDOW_SECONDS) * WINDOW_SECONDS - WINDOW_SECONDS
@@ -226,4 +275,5 @@ if __name__ == "__main__":
     ap.add_argument("--network", choices=("mainnet", "testnet"), default="mainnet")
     ap.add_argument("--sleep", type=float, default=0.3, help="seconds between windows (rate limit)")
     ap.add_argument("--debug", action="store_true", help="print raw Data Streams responses on miss")
+    ap.add_argument("--probe", action="store_true", help="single auth+shape check (latest report); no Polymarket compare")
     raise SystemExit(asyncio.run(main(ap.parse_args())))
