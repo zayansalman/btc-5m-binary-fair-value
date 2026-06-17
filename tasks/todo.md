@@ -1,3 +1,23 @@
+# #91 — Heal phantom "max 1" singleton block (live) (2026-06-17)
+
+**Issue:** #91. **Branch:** `feature/91-heal-phantom-singleton-block` off `develop`.
+
+## Symptom
+BLOCKED panel: every live entry rejected "an open position/order already exists (max 1)". Ledger flat (0 open rows); Polymarket history showed the last position bought AND sold (flat, funds intact). Bot blotter ↔ Polymarket agreed; the live executor's in-memory flag was stranded `True`.
+
+## Root cause (from btc_live_orders details_json + Polymarket history)
+Singleton gate blocks on `position_open or entry_order_resting`, read from live's in-memory `_position_open` / `_entry_order_id`. Stranded because: (1) a fully-matched entry kept its order id (a filled order isn't "resting"); (2) rapid stop/start (~10 BOOT_RECONCILE / 20 min) left `_position_open=True` with no open ledger row, and reconcile only syncs from an *open* row.
+
+## Done (TDD, "Both" per operator)
+- [x] Failing tests first (RED → GREEN).
+- [x] `live.py submit_entry`: fully-matched entry (`_filled_shares`) drops `_entry_order_id`, records `_entry_matched_size` → `entry_order_resting` honest; skips doomed matched-cancel.
+- [x] `live.py resync_flat()`: heals stale open-state; cancels tracked order then clears. Safe by invariant (ledger-flat ⟹ venue-flat: row closes only after confirmed flatten).
+- [x] `paper.py _maybe_open_position`: `await executor.resync_flat()` after `COUNT(open)=0` → self-heals next tick, no restart/manual edit.
+- [x] 558 green (+3); ruff clean; no new mypy. CHANGELOG v0.4.10; lessons.
+- [ ] File P2 issue for the restart storm itself (operator/tooling driving ~10 boots/20min).
+
+---
+
 # #89 — Set trade size in SHARES from the CONTROLS panel (2026-06-17)
 
 **Issue:** #89. **Branch:** `feature/89-share-denominated-sizing` off `develop`.

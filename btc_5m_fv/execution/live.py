@@ -166,6 +166,21 @@ def _round_size_down(size: float) -> float:
     return math.floor(size * factor) / factor
 
 
+def _filled_shares(response: dict[str, Any]) -> float:
+    """Outcome-token shares an order matched on submission (0 if none/unknown).
+
+    A market-matched BUY returns status='matched' with the filled outcome
+    tokens in ``takingAmount``; an unmatched GTC rests with status='live' and
+    no taking amount. Anything unparseable is treated as no fill.
+    """
+    if str(response.get("status") or "").lower() != "matched":
+        return 0.0
+    try:
+        return float(response.get("takingAmount") or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 class LiveExecutor:
     """Wraps a (synchronous) ``ClobClient`` behind an async, risk-gated API.
 
@@ -694,14 +709,24 @@ class LiveExecutor:
             price=price, size=size, window_slug=window_slug,
         )
         if result.ok:
-            self._entry_order_id = result.order_id
             self._entry_token_id = token_id
             self._entry_price = price
             self._entry_size = size
-            self._entry_matched_size = None
             self._entry_sold_size = 0.0
             self._position_open = True
             await self.gate.record_buy_notional(round(price * size, 4))
+            filled = _round_size_down(_filled_shares(result.raw))
+            if filled >= size:
+                # Fully matched on submission: nothing rests in the book, so
+                # this is NOT a resting entry order. Drop the id so the gate's
+                # `entry_order_resting` stays honest (the open position holds
+                # the max-1 slot) and the next flatten skips a doomed
+                # "matched orders can't be canceled" round trip.
+                self._entry_order_id = None
+                self._entry_matched_size = filled
+            else:
+                self._entry_order_id = result.order_id
+                self._entry_matched_size = None
         return result
 
     async def submit_exit(
@@ -901,6 +926,40 @@ class LiveExecutor:
         self._position_open = False
         self._exit_order_id = None
         self._exit_price = None
+
+    async def resync_flat(self) -> bool:
+        """Heal stale in-memory open-state that a flat position ledger refutes.
+
+        The live entry path calls this AFTER confirming the ledger has zero
+        open rows. A live ledger row is closed only once the venue flatten is
+        confirmed (see ``btc_bot.paper._close_position``), so a flat ledger
+        guarantees no real exposure remains. Any lingering ``_position_open`` /
+        ``_entry_order_id`` is therefore a phantom — left by an interrupted
+        stop/restart — that would otherwise block every entry with "max 1".
+
+        Cancel anything still tracked on the venue first (cheap insurance on the
+        money path; the invariant says it should find nothing live), then clear
+        the slot. Returns True when a phantom was healed.
+        """
+        if (
+            not self._position_open
+            and self._entry_order_id is None
+            and self._exit_order_id is None
+        ):
+            return False
+        had_entry_order = self._entry_order_id is not None
+        if had_entry_order or self._exit_order_id is not None:
+            try:
+                await self.cancel_open(reason="LEDGER_FLAT_RESYNC")
+            except Exception as e:  # noqa: BLE001
+                log.warning("live_executor.resync_cancel_failed", error=str(e))
+        log.warning(
+            "live_executor.healed_phantom_position",
+            had_entry_order=had_entry_order,
+            position_open=self._position_open,
+        )
+        self._clear_position()
+        return True
 
     async def _register_exit_fill(self, sold_size: float, exit_price: float | None) -> None:
         """Account a confirmed exit fill: track sold shares, record realized PnL."""

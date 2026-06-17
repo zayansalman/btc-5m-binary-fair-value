@@ -69,6 +69,7 @@ def _mock_executor() -> MagicMock:
     executor.cancel_open = AsyncMock(return_value=["0xE1"])
     executor.enforce_kill_switch = AsyncMock(return_value=False)
     executor.record_realized_pnl = AsyncMock()
+    executor.resync_flat = AsyncMock(return_value=False)
     return executor
 
 

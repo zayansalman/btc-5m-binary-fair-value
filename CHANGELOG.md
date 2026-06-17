@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.4.10 — Heal phantom "max 1" singleton block (live) (2026-06-17)
+
+Closes #91. Live trading silently stopped: the BLOCKED panel showed every entry rejected with **"an open position/order already exists (max 1)"** while the position ledger was **flat (0 open rows)** and Polymarket history showed the last position fully **bought and sold** (flat, funds intact). The bot's trade blotter and Polymarket history therefore *agreed* — both flat — but the live executor's **in-memory** singleton flag was stranded `True`, so it blocked forever until a clean restart.
+
+**Root cause** (from `btc_live_orders` + the Polymarket history): the singleton gate (`gate.py:block_reason`) blocks on `position_open or entry_order_resting`, and for live those read the executor's in-memory `self._position_open` / `self._entry_order_id` (`live.py`). Two ways they stranded:
+1. A **fully-matched** entry (`status='matched'`, filled shares in `takingAmount`) kept its `_entry_order_id` set — but a filled order is **not resting**, so `entry_order_resting` lied. Polymarket confirms a matched BUY can't be cancelled (`"matched orders can't be canceled"`).
+2. Across the operator's **rapid stop/start** cycle (~10 `BOOT_RECONCILE` in 20 min), an interrupted shutdown left `_position_open=True` with no matching open ledger row — and boot reconciliation only re-syncs *from* an open ledger row; it never heals a phantom flag when the ledger is already flat.
+
+### What
+- **`btc_5m_fv/execution/live.py`** — two-part fix:
+  - **`submit_entry`**: a fully-matched entry (new `_filled_shares(response)` reads `status`/`takingAmount`) drops `_entry_order_id` and records `_entry_matched_size` instead, so `entry_order_resting` stays honest (the open *position* holds the max-1 slot) and the next flatten skips a doomed "matched orders can't be canceled" round trip.
+  - **`resync_flat()`**: heals stale in-memory open-state. Called by the entry path once the ledger is confirmed flat; cancels anything still tracked on the venue (cheap insurance), then clears the slot. **Safe by invariant:** a live ledger row is closed only after a *confirmed venue flatten* (`paper._close_position`), so ledger-flat ⟹ venue-flat — clearing can never strand real tokens.
+- **`btc_bot/paper.py`**: `_maybe_open_position` calls `await executor.resync_flat()` right after the `COUNT(open)=0` check, so a phantom **self-heals on the next tick** — no restart, no manual DB edit.
+- **Tests**: `test_live_executor.py` — fully-matched entry isn't tracked as resting; `resync_flat` heals a phantom (and cancels the stale order) / no-ops when already flat. `test_live_wiring.py` fixture gains `resync_flat`. Full suite green (558, +3); ruff clean; no new mypy errors.
+
+### Why this shape
+- The **position ledger is the source of truth** (it's what reconcile trusts, the dashboard shows, and Polymarket matched). The in-memory flags are a cache that can go stale under rapid restarts; healing them against the authoritative-and-safe "ledger flat ⟹ venue flat" invariant is minimal and cannot abandon real exposure.
+- **Out of scope:** the restart *storm* itself (operator/tooling driving ~10 boots in 20 min) — filed separately; this change makes the bot resilient to it rather than depending on clean shutdowns.
+
 ## v0.4.8 — Set trade size in shares from the CONTROLS panel (2026-06-17)
 
 Closes #89. The operator thinks in shares (contracts), not dollars — a binary's $ cost varies with price. The CONTROLS panel now takes a **share count** (≥5, the Polymarket minimum), shows the **$ value** of that many shares at the live price (plus the $2.50–$5-style range), and an **infographic** of the 5-share venue minimum. The share setting drives sizing everywhere — paper + live, next tick, no restart.
