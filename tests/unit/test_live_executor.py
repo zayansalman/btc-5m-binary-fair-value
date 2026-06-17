@@ -415,6 +415,82 @@ async def test_one_open_position_max(journal_db, tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_fully_matched_entry_is_not_tracked_as_resting(
+    journal_db, tmp_path: Path
+) -> None:
+    """A fully-matched entry has no resting remainder.
+
+    Polymarket reports a market-matched BUY with status='matched' and the
+    filled shares in takingAmount. Such an order is NOT resting in the book —
+    keeping its id would make the singleton gate's `entry_order_resting` lie,
+    and the next flatten would waste a doomed "matched orders can't be
+    canceled" round trip. The position (not a phantom order) is what holds the
+    max-1 slot.
+    """
+    client = _mock_client()
+    client.create_and_post_order.return_value = {
+        "success": True,
+        "errorMsg": "",
+        "orderID": "0xORDER1",
+        "status": "matched",
+        "takingAmount": "5.26",  # floor(3.0 / 0.57, 2dp) — fully filled
+    }
+    executor = _executor(client, tmp_path)
+
+    result = await executor.submit_entry(UP_TOKEN, 0.57, 3.0, window_slug="w1")
+
+    assert result.ok and result.status == "SUBMITTED"
+    # Filled, so nothing rests: the order id is not tracked as resting.
+    assert executor._entry_order_id is None
+    assert executor._entry_matched_size == 5.26
+    # The slot is still held by the open position (singleton honoured).
+    assert "max 1" in (executor.entry_block_reason(3.0) or "")
+
+
+@pytest.mark.asyncio
+async def test_resync_flat_heals_phantom_open_state(
+    journal_db, tmp_path: Path
+) -> None:
+    """resync_flat() clears a stale open-state the flat ledger contradicts.
+
+    A live ledger row is closed only after a confirmed venue flatten, so when
+    the entry path sees zero open rows the venue is genuinely flat. Any
+    lingering in-memory position/order (left by an interrupted stop/restart)
+    is a phantom that blocks every entry with "max 1" — resync_flat heals it.
+    """
+    client = _mock_client()
+    executor = _executor(client, tmp_path)
+    # Simulate the stranded state: the gate would block "max 1".
+    executor._position_open = True
+    executor._entry_order_id = "0xSTALE"
+    executor._entry_token_id = UP_TOKEN
+    assert "max 1" in (executor.entry_block_reason(3.0) or "")
+
+    healed = await executor.resync_flat()
+
+    assert healed is True
+    assert executor._position_open is False
+    assert executor._entry_order_id is None
+    # The doomed/abandoned order is cancelled on the venue, not forgotten.
+    client.cancel_order.assert_called_once_with(OrderPayload(orderID="0xSTALE"))
+    # Entry is no longer blocked by the phantom.
+    assert executor.entry_block_reason(3.0) is None
+
+
+@pytest.mark.asyncio
+async def test_resync_flat_noop_when_already_flat(
+    journal_db, tmp_path: Path
+) -> None:
+    client = _mock_client()
+    executor = _executor(client, tmp_path)
+
+    healed = await executor.resync_flat()
+
+    assert healed is False
+    client.cancel_order.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_bankroll_cap_blocks_session_overspend(journal_db, tmp_path: Path) -> None:
     client = _mock_client()
     executor = _executor(client, tmp_path, bankroll=5.0)

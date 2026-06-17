@@ -1177,6 +1177,12 @@ async def _maybe_open_position(snapshot: PaperSnapshot) -> None:
 
     executor = _live_executor
     if executor is not None:
+        # The ledger is authoritatively flat here (the open-row check above
+        # returned none). A live ledger row closes only after a confirmed
+        # venue flatten, so heal any phantom in-memory open-state the executor
+        # may still hold (e.g. left by an interrupted stop/restart) — otherwise
+        # its singleton gate blocks every entry with "max 1" (issue #91).
+        await executor.resync_flat()
         # Live mode: the ledger row is written BEFORE the real order goes
         # out. Every failure mode of this ordering is benign: a failed
         # submit deletes the row (or, if even that write fails, the row is
