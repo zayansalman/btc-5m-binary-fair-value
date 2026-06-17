@@ -1,5 +1,10 @@
 # Lessons
 
+## In-memory trade state is a cache; reconcile it to the authoritative ledger (2026-06-17, #91)
+**Pattern:** Live trading silently stopped — the BLOCKED panel showed "an open position/order already exists (max 1)" on every entry, while the position ledger was flat AND Polymarket showed the last position fully bought+sold. The blotter and the venue *agreed* (both flat); only the live executor's in-memory `_position_open` / `_entry_order_id` were stranded `True`. Two causes: (1) a fully-MATCHED entry kept its order id, so `entry_order_resting` lied (a filled order isn't resting — Polymarket: "matched orders can't be canceled"); (2) under a rapid stop/start storm (~10 BOOT_RECONCILE in 20 min) an interrupted shutdown left the flag set, and boot reconcile only syncs *from* an open ledger row, never heals a phantom when the ledger is already flat.
+**Why:** The singleton gate keyed off a mutable in-memory cache with no path to re-derive it from the source of truth once it diverged. A cache that can outlive its truth WILL diverge under restarts/crashes and then block forever.
+**How to apply:** When an in-memory flag gates the money path, give it a heal path against the authoritative store, and find the SAFE invariant that lets you clear without risk — here, a live ledger row is closed only after a *confirmed venue flatten*, so **ledger-flat ⟹ venue-flat**, making it safe to clear a phantom when the ledger shows zero open rows. Heal on the hot path (next tick), not just at boot. Debug from real state first: the `btc_live_orders` journal `details_json` (cancel responses) + the actual Polymarket history pinned the root cause faster than reading code. See [[project-btc-5m-polymarket-bot]].
+
 ## Respect the existing UI architecture for dashboard work (2026-06-16)
 **Pattern:** When adding any dashboard UI, conform to the established panel architecture instead of bolting on a bespoke surface:
 - Pure `render(...) -> str` panel module in `btc_5m_fv/ops/dashboard/panels/` (no DB access in the panel).
