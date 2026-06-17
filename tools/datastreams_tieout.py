@@ -151,65 +151,97 @@ async def _ds_price(
     return decode_v3_price(full, decimals)
 
 
-async def probe(args: argparse.Namespace, api_key: str, api_secret: str) -> int:
-    """Single authenticated 'what can this account see' call — auth + shape check.
+def _env(name: str) -> str | None:
+    v = os.environ.get(name)
+    return v.strip() if v and v.strip() else None
 
-    Hits /reports/latest (no timestamp needed). Prints HTTP status, the decoded
-    latest BTC/USD price, and the response shape. Never prints the secret; a
-    non-200 body is an API error message (not credentials).
+
+def resolve_credentials() -> tuple[list[tuple[str, str]], str | None]:
+    """Map the operator's .env vars onto (key candidates, secret).
+
+    Chainlink's dashboard labels are misleading: the 36-char UUID under
+    'username' is the API key (Client ID); the long token under 'websocket' is
+    the API secret. We try every UUID-shaped value as the key since which one
+    authenticates isn't knowable from labels alone.
+    """
+    secret = _env("DATASTREAMS_API_SECRET") or _env("CHAINLINK_WEBSOCKET")
+    sources = [
+        ("DATASTREAMS_API_KEY", _env("DATASTREAMS_API_KEY")),
+        ("CHAINLINK_USERNAME", _env("CHAINLINK_USERNAME")),
+        ("CHAINLINK_CANDLESTICK_API", _env("CHAINLINK_CANDLESTICK_API")),
+    ]
+    seen: set[str] = set()
+    candidates = []
+    for name, val in sources:
+        if val and val not in seen:
+            seen.add(val)
+            candidates.append((name, val))
+    return candidates, secret
+
+
+async def probe(args: argparse.Namespace, candidates: list[tuple[str, str]], secret: str) -> int:
+    """Auth + shape check: try each key candidate against /reports/latest and
+    report which one authenticates. Prints HTTP status + the decoded BTC/USD
+    price; never prints the key or secret (only the last 4 chars of the key id).
     """
     base = REST_BASE[args.network]
     path = f"/api/v1/reports/latest?feedID={args.feed_id}"
-    headers = sign_headers("GET", path, b"", api_key, api_secret, int(time.time() * 1000))
     print(f"# Data Streams probe — {args.network} · feed {args.feed_id[:14]}…")
+    print(f"- endpoint: {base}/api/v1/reports/latest")
+    ok = False
     async with httpx.AsyncClient(follow_redirects=True) as client:
-        try:
-            r = await client.get(base + path, headers=headers, timeout=15.0)
-        except Exception as e:  # noqa: BLE001
-            print(f"- request failed: {str(e)[:200]}")
-            return 1
-    print(f"- endpoint: {base}{path.split('?')[0]}")
-    print(f"- HTTP {r.status_code}")
-    if r.status_code != 200:
-        print(f"- body: {r.text[:300]}")
+        for name, key in candidates:
+            headers = sign_headers("GET", path, b"", key, secret, int(time.time() * 1000))
+            try:
+                r = await client.get(base + path, headers=headers, timeout=15.0)
+            except Exception as e:  # noqa: BLE001
+                print(f"- key={name} (…{key[-4:]}): request failed: {str(e)[:120]}")
+                continue
+            if r.status_code != 200:
+                print(f"- key={name} (…{key[-4:]}): HTTP {r.status_code} — {r.text[:120]}")
+                continue
+            data = r.json()
+            report = data.get("report") or data
+            if isinstance(report, list):
+                report = report[0] if report else {}
+            price = None
+            full = report.get("fullReport") or report.get("full_report")
+            if full:
+                try:
+                    price = decode_v3_price(full, args.decimals)
+                except Exception as e:  # noqa: BLE001
+                    print(f"    decode error: {str(e)[:120]}")
+            print(f"- key={name} (…{key[-4:]}): HTTP 200 ✓  keys={list(data.keys())}")
+            print(f"    observationsTimestamp={report.get('observationsTimestamp')}  BTC/USD={price}")
+            if price is None:
+                print(f"    raw report (first 400, no secret): {str(report)[:400]}")
+            ok = True
+    if not ok:
         print(
-            "- 401/403 => key not authorized for THIS network/stream. Try "
-            "--network testnet; mainnet + this BTC feed may need the sponsored "
-            "grant (your pm-ds-request form), still pending."
+            "\nNo key authenticated. Most likely the sponsored mainnet grant "
+            "(your pm-ds-request form) is still pending — a normal account can't "
+            "read this BTC feed yet. Re-run with --network testnet to check plumbing."
         )
         return 1
-    data = r.json()
-    report = data.get("report") or data
-    if isinstance(report, list):
-        report = report[0] if report else {}
-    price = None
-    full = report.get("fullReport") or report.get("full_report")
-    if full:
-        try:
-            price = decode_v3_price(full, args.decimals)
-        except Exception as e:  # noqa: BLE001
-            print(f"- decode error: {str(e)[:120]}")
-    print(f"- response keys: {list(data.keys())}")
-    print(f"- observationsTimestamp: {report.get('observationsTimestamp')}")
-    print(f"- decoded BTC/USD price: {price}")
-    if price is None:
-        print(f"- raw report (first 400 chars, no secret): {str(report)[:400]}")
-    print("\nAUTH OK — share this output and I'll confirm the decode/feed, then we tie-out.")
+    print("\nAUTH OK — share this output and I'll wire the working key, then tie-out.")
     return 0
 
 
 async def main(args: argparse.Namespace) -> int:
-    api_key = os.environ.get("DATASTREAMS_API_KEY")
-    api_secret = os.environ.get("DATASTREAMS_API_SECRET")
-    if not api_key or not api_secret:
+    candidates, api_secret = resolve_credentials()
+    if not candidates or not api_secret:
         print(
-            "ERROR: set DATASTREAMS_API_KEY and DATASTREAMS_API_SECRET in the "
-            "environment (the HMAC signer needs both). Nothing was sent.",
+            "ERROR: need an API key (CHAINLINK_USERNAME or DATASTREAMS_API_KEY) "
+            "AND a secret (CHAINLINK_WEBSOCKET or DATASTREAMS_API_SECRET) in .env "
+            "or the environment. Nothing was sent.",
             file=sys.stderr,
         )
         return 2
+    if _env("BTCUSD_FEED_ID"):
+        args.feed_id = _env("BTCUSD_FEED_ID")
     if args.probe:
-        return await probe(args, api_key, api_secret)
+        return await probe(args, candidates, api_secret)
+    api_key = candidates[0][1]  # probe first to confirm which key authenticates
     base = REST_BASE[args.network]
     now = int(time.time())
     last_complete = (now // WINDOW_SECONDS) * WINDOW_SECONDS - WINDOW_SECONDS
