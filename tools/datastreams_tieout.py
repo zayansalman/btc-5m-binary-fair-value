@@ -34,8 +34,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
+from dotenv import load_dotenv
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+# Pick up DATASTREAMS_* from the gitignored .env (same store as the wallet key),
+# so the operator can persist creds there instead of exporting each shell.
+load_dotenv()
 
 from btc_5m_fv.connectors.chainlink_settlement import (  # noqa: E402
     ChainlinkSettlementConnector,
