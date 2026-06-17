@@ -5,7 +5,6 @@ Uses :mod:`unittest.mock` to mock HTTP responses — no external network calls.
 
 from __future__ import annotations
 
-import json
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx

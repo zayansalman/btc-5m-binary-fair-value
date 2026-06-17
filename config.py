@@ -121,17 +121,67 @@ POLYMARKET_PRIVATE_KEY = os.getenv("POLYMARKET_PRIVATE_KEY", "")
 POLYMARKET_FUNDER = os.getenv("POLYMARKET_FUNDER", "")
 # 0 = EOA, 1 = email/magic proxy wallet, 2 = browser wallet proxy.
 POLYMARKET_SIGNATURE_TYPE = _env_int("POLYMARKET_SIGNATURE_TYPE", 1)
-# Hard risk limits enforced in code before every live order. The per-trade and
-# daily-loss-halt limits are always on; the daily bankroll cap is OPT-IN and
-# disabled when BTC_LIVE_BANKROLL_CAP_USD is blank / unset / ≤0. The persisted
-# daily counters in SQLite keep tracking spend regardless, so the dashboard can
+# Hard risk limits enforced by the unified RiskGate (issue #64) before every
+# paper or live entry. Same gate, same values, both modes — paper is a
+# faithful preview of live. The per-trade and daily-loss-halt limits are
+# always on; the daily bankroll cap is OPT-IN and disabled when
+# BTC_TRADE_BANKROLL_CAP_USD is blank / unset / ≤0. The persisted daily
+# counters in SQLite keep tracking spend regardless, so the dashboard can
 # still display daily throughput when the cap is off.
-BTC_LIVE_MAX_TRADE_USD = _env_float("BTC_LIVE_MAX_TRADE_USD", 3.0)
-BTC_LIVE_DAILY_LOSS_HALT_USD = _env_float("BTC_LIVE_DAILY_LOSS_HALT_USD", 10.0)
-BTC_LIVE_BANKROLL_CAP_USD: float | None = _env_optional_float("BTC_LIVE_BANKROLL_CAP_USD")
-# Block an entry when the live best ask sits more than this far above the
-# signal price that generated the edge (thin 5m books can gap badly).
-BTC_LIVE_MAX_ENTRY_SLIPPAGE = _env_float("BTC_LIVE_MAX_ENTRY_SLIPPAGE", 0.02)
+#
+# The legacy BTC_LIVE_* names are still read as deprecated aliases for one
+# release: setting only the old name logs a deprecation warning on boot.
+CONFIG_DEPRECATIONS: list[str] = []
+
+
+def _trade_knob(new_name: str, old_name: str, default: float) -> float:
+    new_raw = os.getenv(new_name)
+    old_raw = os.getenv(old_name)
+    if new_raw is not None:
+        return float(new_raw)
+    if old_raw is not None:
+        # Deferred warning — config.py is import-time; logging isn't ready yet.
+        CONFIG_DEPRECATIONS.append(
+            f"{old_name} is deprecated; use {new_name} (value carried over)"
+        )
+        return float(old_raw)
+    return default
+
+
+def _trade_optional(new_name: str, old_name: str) -> float | None:
+    new_raw = os.getenv(new_name)
+    old_raw = os.getenv(old_name)
+    raw = new_raw if new_raw is not None else old_raw
+    if old_raw is not None and new_raw is None:
+        CONFIG_DEPRECATIONS.append(
+            f"{old_name} is deprecated; use {new_name} (value carried over)"
+        )
+    if raw is None or raw.strip() == "":
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
+BTC_TRADE_MAX_USD = _trade_knob("BTC_TRADE_MAX_USD", "BTC_LIVE_MAX_TRADE_USD", 3.0)
+BTC_TRADE_DAILY_LOSS_HALT_USD = _trade_knob(
+    "BTC_TRADE_DAILY_LOSS_HALT_USD", "BTC_LIVE_DAILY_LOSS_HALT_USD", 10.0
+)
+BTC_TRADE_BANKROLL_CAP_USD: float | None = _trade_optional(
+    "BTC_TRADE_BANKROLL_CAP_USD", "BTC_LIVE_BANKROLL_CAP_USD"
+)
+BTC_TRADE_MAX_ENTRY_SLIPPAGE = _trade_knob(
+    "BTC_TRADE_MAX_ENTRY_SLIPPAGE", "BTC_LIVE_MAX_ENTRY_SLIPPAGE", 0.02
+)
+
+# Legacy aliases — kept as module attributes for one release so external
+# tooling that reads ``config.BTC_LIVE_*`` continues to work.
+BTC_LIVE_MAX_TRADE_USD = BTC_TRADE_MAX_USD
+BTC_LIVE_DAILY_LOSS_HALT_USD = BTC_TRADE_DAILY_LOSS_HALT_USD
+BTC_LIVE_BANKROLL_CAP_USD = BTC_TRADE_BANKROLL_CAP_USD
+BTC_LIVE_MAX_ENTRY_SLIPPAGE = BTC_TRADE_MAX_ENTRY_SLIPPAGE
 # How long an exit SELL may rest before it is cancelled and retried at the
 # new best bid. Exits never rest beyond this bound.
 BTC_LIVE_EXIT_FILL_TIMEOUT_SECONDS = _env_float("BTC_LIVE_EXIT_FILL_TIMEOUT_SECONDS", 10.0)

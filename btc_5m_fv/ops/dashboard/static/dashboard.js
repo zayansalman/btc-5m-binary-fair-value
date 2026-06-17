@@ -71,7 +71,10 @@ function setButtonsDisabled(disabled) {
 }
 
 function setMode(mode) {
-  if (mode === 'live' && !confirm('Switch to LIVE? This places REAL orders with real funds on Polymarket.')) {
+  if (mode === 'live' && !confirm(
+    'Switch to LIVE mode? The bot will be STOPPED. ' +
+    'You must press Start to begin trading with real funds on Polymarket.'
+  )) {
     return;
   }
   fetch('/api/mode', {
@@ -119,6 +122,48 @@ function handleStop() {
       console.error('Stop error:', err);
     })
     .finally(function() { setButtonsDisabled(false); });
+}
+
+function updateShareValue() {
+  var el = document.getElementById('ctl-shares');
+  var out = document.getElementById('ctl-shares-val');
+  if (!el || !out) return;
+  var n = parseFloat(el.value);
+  var px = parseFloat(out.getAttribute('data-px')) || 0;
+  if (!(n > 0)) { out.textContent = '≈ $—'; return; }
+  if (px > 0) {
+    out.textContent = '≈ $' + (n * px).toFixed(2) + ' at ' + px.toFixed(2);
+  } else {
+    out.textContent = '≈ $' + (n * 0.5).toFixed(2) + '–$' + (n * 1).toFixed(2);
+  }
+}
+
+function setTradeShares() {
+  var el = document.getElementById('ctl-shares');
+  if (!el) return;
+  var v = parseFloat(el.value);
+  if (!(v >= 5)) {
+    showToast('Minimum order is 5 shares (Polymarket)', 'error');
+    return;
+  }
+  if (!confirm('Set trade size to ' + v + ' shares? Applies to paper + live on the next tick.')) {
+    return;
+  }
+  fetch('/api/runtime-config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key: 'trade_shares', value: v })
+  })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.status === 'ok') {
+        showToast('Trade size → ' + Number(data.value) + ' shares', 'success');
+      } else {
+        showToast('Update failed: ' + (data.detail || 'unknown error'), 'error');
+      }
+      setTimeout(refreshAll, 300);
+    })
+    .catch(function(err) { showToast('Update failed: ' + err.message, 'error'); });
 }
 
 function handleRefresh() {

@@ -40,12 +40,8 @@ from config import (
     BINANCE_API_BASE,
     BTC_EXIT_STYLE,
     BTC_MARKET_TIMEFRAME_MINUTES,
-    BTC_PAPER_ENTRY_EDGE_MAX,
     BTC_PAPER_ENTRY_EDGE_MIN,
-    BTC_PAPER_MIN_ENTRY_PRICE,
-    BTC_PAPER_ENTRY_MIN_REMAINING_SECONDS,
     BTC_PAPER_MAX_TRADE_USD,
-    BTC_PAPER_MIN_CONFIDENCE,
     BTC_PAPER_MIN_TRADE_USD,
     BTC_PAPER_STOP_RETURN,
     BTC_PAPER_TARGET_RETURN,
@@ -59,13 +55,22 @@ from config import (
     BTC_PRINT_GRANULARITY_USD,
 )
 import config as _config
-from db import connect, get_config, notify, set_config
+from db import connect, get_config, journal_live_order, notify, set_config
 from logging_setup import get_logger
 from btc_5m_fv.connectors.chainlink_settlement import (
     ChainlinkSettlementConnector,
     ChainlinkWsFeed,
 )
-from btc_5m_fv.execution.live import LiveExecutor, build_live_executor
+from btc_5m_fv.execution.live import (
+    DEFAULT_MIN_ORDER_SIZE,
+    LiveExecutor,
+    build_live_executor,
+)
+from btc_5m_fv.execution.gate import (
+    EntryRequest,
+    RiskGate,
+    build_gate_from_config,
+)
 from btc_bot.adaptive import evaluate_and_maybe_pause
 from btc_bot import calibration as _calibration
 from btc_bot import params as _params
@@ -80,6 +85,11 @@ log = get_logger("btc_paper")
 
 # Live executor for the current run loop. None means pure paper mode.
 _live_executor: LiveExecutor | None = None
+
+# Shared risk gate for the current run loop (issue #64). In paper mode this
+# is a standalone RiskGate; in live mode it is the LiveExecutor's gate (same
+# object), so both paths reuse the same daily counters and gate decisions.
+_risk_gate: RiskGate | None = None
 
 # Settlement-aligned Chainlink WS feed for the current run loop (issue #21).
 # None / stale means NO new entries (the tick journals why).
@@ -123,9 +133,15 @@ def _strategy_params() -> StrategyParams:
     the file read is cheap and survives operator updates without a restart.
     """
     a = _params.load_active()
+    # Operator runtime per-trade cap (#50): when the dashboard control is set,
+    # it governs the sizing ceiling too (unified with the gate's effective cap),
+    # so the clip actually changes without a restart. Unset → env default, i.e.
+    # fully backward-compatible. The gate refreshed this value earlier this tick.
+    override = _risk_gate.runtime_max_trade_usd if _risk_gate is not None else None
+    max_trade_usd = override if override is not None else BTC_PAPER_MAX_TRADE_USD
     return StrategyParams(
         min_trade_usd=BTC_PAPER_MIN_TRADE_USD,
-        max_trade_usd=BTC_PAPER_MAX_TRADE_USD,
+        max_trade_usd=max_trade_usd,
         entry_edge_min=a.entry_edge_min,
         min_confidence=a.min_confidence,
         entry_min_remaining_seconds=a.min_remaining_seconds,
@@ -274,6 +290,25 @@ class PaperSummary:
     connectivity: ConnectivityStatus = None  # type: ignore[assignment]
 
 
+def _loss_halt_stop_detail(gate: Any, mode: str) -> str | None:
+    """Stop-detail string when the daily loss halt is breached (#76), else None.
+
+    ``run_paper_loop`` calls this once per tick. A non-None result means: stop
+    the bot, flatten, and surface this as LAST DETAIL so the operator knows to
+    Reset the tally before pressing Start. Returns None when the gate is absent,
+    within the limit, or the operator has the bypass on.
+    """
+    if gate is None or not gate.loss_halt_breached():
+        return None
+    leg = "live" if gate.is_live else "paper"
+    pnl = gate.live_pnl if gate.is_live else gate.paper_pnl
+    limit = gate.cfg.daily_loss_halt_usd
+    return (
+        f"Daily loss halt: {leg} realized {pnl:+.2f} USD ≤ -{limit:.2f} USD. "
+        "Bot stopped & flattened — Reset the halt, then Start to resume."
+    )
+
+
 async def run_paper_loop(stop_event: threading.Event) -> None:
     """Run until Stop is pressed or the process exits.
 
@@ -282,7 +317,7 @@ async def run_paper_loop(stop_event: threading.Event) -> None:
     LiveExecutor. Live boot refusal stops the loop — it never silently falls
     back to paper.
     """
-    global _live_executor, _chainlink_feed
+    global _live_executor, _chainlink_feed, _risk_gate
     # Runtime mode selector (dashboard) overrides the env default; live still
     # passes the same boot gate. Falls back to BTC_BOT_MODE when unset.
     mode = await get_config("btc_bot.requested_mode", _config.BTC_BOT_MODE) or "paper"
@@ -302,6 +337,15 @@ async def run_paper_loop(stop_event: threading.Event) -> None:
             log.error("live_loop.boot_refused", error=error)
             return
         _live_executor = executor
+        _risk_gate = executor.gate  # share state: counters, kill flag, cfg
+    else:
+        # Paper mode: same gate class, same persisted counters, same config.
+        # "What paper does is what live would have done." is_live defaults False
+        # so the paper gate halts on the paper (study) leg (#76). The loss-halt
+        # bypass is re-read each tick via refresh_overrides and applies here too.
+        _risk_gate = build_gate_from_config()
+        await _risk_gate.load()
+        await _risk_gate.refresh_overrides()
 
     # Settlement-aligned live spot (issue #21): the WS feed task lives and
     # dies with this loop. Until its first print arrives, ticks journal
@@ -331,6 +375,9 @@ async def run_paper_loop(stop_event: threading.Event) -> None:
         await notify("btc_paper_started", "BTC paper bot started")
     log.info("paper_loop.started", mode=mode)
 
+    # Set when the daily loss halt trips (#76): the loop stops the bot and the
+    # finally surfaces this as LAST DETAIL instead of the generic stop line.
+    stop_detail: str | None = None
     try:
         while not stop_event.is_set():
             try:
@@ -340,6 +387,14 @@ async def run_paper_loop(stop_event: threading.Event) -> None:
                 error = f"{type(e).__name__}: {e!s}"
                 log.warning("paper_loop.tick_failed", error=error)
                 await _set_detail(f"BTC {mode} loop tick failed: {error}")
+            # Issue #76: a breached daily loss halt STOPS the bot (cancel +
+            # flatten via the finally below), not just blocks entries — so the
+            # operator resets the tally and restarts to resume trading.
+            stop_detail = _loss_halt_stop_detail(_risk_gate, mode)
+            if stop_detail is not None:
+                log.warning("paper_loop.loss_halt_stop", detail=stop_detail)
+                await notify("btc_loss_halt_stop", stop_detail)
+                break
             await _sleep_interruptible(stop_event, float(BTC_PAPER_TICK_SECONDS))
     finally:
         if _live_executor is not None:
@@ -355,6 +410,7 @@ async def run_paper_loop(stop_event: threading.Event) -> None:
             except Exception as e:  # noqa: BLE001
                 log.warning("live_loop.stop_flatten_failed", error=str(e))
             _live_executor = None
+        _risk_gate = None
         _chainlink_feed = None
         feed.stop()
         feed_task.cancel()
@@ -363,7 +419,10 @@ async def run_paper_loop(stop_event: threading.Event) -> None:
         except (asyncio.CancelledError, Exception):  # noqa: BLE001
             pass
         await set_config("btc_bot.state", "stopped")
-        await _set_detail(f"BTC {mode} loop stopped. No new entries will be opened.")
+        await _set_detail(
+            stop_detail
+            or f"BTC {mode} loop stopped. No new entries will be opened."
+        )
         await notify("btc_paper_stopped", f"BTC {mode} bot stopped")
         log.info("paper_loop.stopped", mode=mode)
 
@@ -374,6 +433,14 @@ async def paper_tick_once() -> PaperSnapshot:
     if _live_executor is not None:
         # Kill switch is checked every tick BEFORE any order can be placed.
         kill_active = await _live_executor.enforce_kill_switch()
+    # Re-read paper override toggles so dashboard changes take effect on the
+    # very next tick without needing a Stop/Start. No-op in live mode.
+    # The runtime per-trade cap (#50) is re-read for BOTH modes — it is a
+    # tuning knob the operator sets from the dashboard, not a paper-only
+    # safety override.
+    if _risk_gate is not None:
+        await _risk_gate.refresh_overrides()
+        await _risk_gate.refresh_runtime_limits()
     async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
         snapshot = await _build_snapshot(client)
         await _log_tick(snapshot)
@@ -628,6 +695,27 @@ def _now() -> int:
     return int(time.time())
 
 
+def _share_sized_notional(
+    side: str | None,
+    notional: float,
+    up_ask: float | None,
+    down_ask: float | None,
+    trade_shares: float | None,
+) -> float:
+    """Resize a clip to a fixed share count when the operator set one (#89).
+
+    Returns ``trade_shares × the chosen side's ask`` so the order sizes to ≈N
+    shares. Falls through to the original dollar ``notional`` when no share
+    target is set, no side was chosen, or the side has no usable ask.
+    """
+    if side is None or notional <= 0 or trade_shares is None:
+        return notional
+    side_ask = up_ask if side == "Up" else down_ask
+    if side_ask and side_ask > 0:
+        return trade_shares * side_ask
+    return notional
+
+
 async def _build_snapshot(client: httpx.AsyncClient) -> PaperSnapshot:
     now = _now()
     market = await _fetch_current_market(client, now)
@@ -707,6 +795,15 @@ async def _build_snapshot(client: httpx.AsyncClient) -> PaperSnapshot:
                 f"(up ask={up_book.best_ask} crossed={up_book.crossed}; "
                 f"down ask={down_book.best_ask} crossed={down_book.crossed})"
             )
+
+    # Share-denominated sizing (#89): when the operator sets a target share count,
+    # resize the clip to ≈N shares (notional = N × the chosen side's ask). The
+    # live executor / paper fill still auto-bumps to the venue minimum (#87).
+    if _risk_gate is not None:
+        notional = _share_sized_notional(
+            side, notional, up_book.best_ask, down_book.best_ask,
+            _risk_gate.runtime_trade_shares,
+        )
 
     candidate_edges = [e for e in (edge_up, edge_down) if e is not None]
     edge = max(candidate_edges) if candidate_edges else 0.0
@@ -1054,6 +1151,11 @@ async def _maybe_open_position(snapshot: PaperSnapshot) -> None:
     )
     notional = snapshot.notional_usd
     shares = notional / entry_price
+    # Parity with live auto-bump (#87): round a sub-minimum clip up to the venue
+    # share minimum so paper previews the same fill live would place.
+    if shares < DEFAULT_MIN_ORDER_SIZE:
+        shares = DEFAULT_MIN_ORDER_SIZE
+        notional = shares * entry_price
     if top_size is not None:
         if top_size <= 0:
             log.info(
@@ -1080,7 +1182,7 @@ async def _maybe_open_position(snapshot: PaperSnapshot) -> None:
         # submit deletes the row (or, if even that write fails, the row is
         # later closed as a confirmed zero-fill), whereas submitting first
         # could leave a REAL position with no ledger row — unmanaged by
-        # every exit path.
+        # every exit path. The shared RiskGate runs inside submit_entry.
         position_id = await _insert_position_row(
             snapshot, entry_price, notional, shares
         )
@@ -1100,7 +1202,42 @@ async def _maybe_open_position(snapshot: PaperSnapshot) -> None:
         shares = result.size or (notional / entry_price)
         await _update_position_terms(position_id, entry_price, notional, shares)
     else:
+        # Paper mode: route the entry through the SAME RiskGate live uses
+        # (issue #64). A paper trade that paper opens is one live would have
+        # opened too; a paper trade live would have blocked is recorded in
+        # btc_live_orders with mode='paper' instead.
+        gate = _risk_gate
+        if gate is not None:
+            blocked = gate.block_reason(
+                EntryRequest(
+                    notional_usd=notional,
+                    position_open=False,  # already checked the ledger above
+                    entry_order_resting=False,  # paper has no resting orders
+                    # Same snapshot for both → slippage delta is 0; honest
+                    # live-grade slippage parity requires re-quoting the book
+                    # at this point (follow-up after issue #64).
+                    side_price=entry_price,
+                    best_ask=entry_price,
+                )
+            )
+            if blocked is not None:
+                await journal_live_order(
+                    intent="ENTRY", side="BUY", status="BLOCKED",
+                    window_slug=snapshot.window_slug,
+                    token_id=_token_id_for_side(snapshot, snapshot.signal_side),
+                    price=entry_price, size=shares, notional_usd=notional,
+                    error=blocked, mode="paper",
+                )
+                log.info(
+                    "paper_entry.blocked_by_gate",
+                    window_slug=snapshot.window_slug,
+                    side=snapshot.signal_side,
+                    reason=blocked,
+                )
+                return
         await _insert_position_row(snapshot, entry_price, notional, shares)
+        if gate is not None:
+            await gate.record_buy_notional(round(entry_price * shares, 4))
     label = "LIVE" if executor is not None else "Paper"
     await notify(
         "btc_live_entry" if executor is not None else "btc_paper_entry",
@@ -1345,6 +1482,12 @@ async def _close_position(
             pnl = prior_pnl + sold * (exit_price - entry_price)
     else:
         pnl = float(pos["shares"]) * (exit_price - entry_price)
+        # Paper closes feed the SAME daily-loss-halt counter live closes do
+        # (issue #64). Without this, paper losses don't advance the halt and
+        # paper diverges from what live would have done next.
+        gate = _risk_gate
+        if gate is not None:
+            await gate.record_realized_pnl(round(pnl - prior_pnl, 4), is_live=False)
     async with connect() as db:
         await db.execute(
             """
@@ -1441,8 +1584,39 @@ def _detail_from_snapshot(snapshot: PaperSnapshot) -> str:
         f"Polymarket Up: {snapshot.market_up_price:.3f}; fair Up: {snapshot.fair_up_prob:.3f}; "
         f"edge: {snapshot.edge:+.3f}\n"
         f"Signal: {side}; confidence {snapshot.confidence:.2f}; notional ${snapshot.notional_usd:.0f}\n"
+        f"Gate: {_gate_preview_line(snapshot)}\n"
         f"Feed: Binance public fallback while Chainlink Streams access is pending."
     )
+
+
+def _gate_preview_line(snapshot: PaperSnapshot) -> str:
+    """Live-equivalent verdict for the next entry, surfaced on every tick.
+
+    Same RiskGate decides paper and live, so this line is the operator's
+    single source of truth: paper-side BLOCKED rows in btc_live_orders carry
+    the same reason, and live-mode behaviour is identical.
+    """
+    gate = _risk_gate
+    if gate is None or not snapshot.signal_side or snapshot.notional_usd <= 0:
+        return "—"
+    entry_price = (
+        snapshot.market_up_price
+        if snapshot.signal_side == "Up"
+        else snapshot.market_down_price
+    )
+    side_price = entry_price if entry_price and entry_price > 0 else None
+    reason = gate.block_reason(
+        EntryRequest(
+            notional_usd=snapshot.notional_usd,
+            position_open=False,  # ledger check is separate; preview only
+            entry_order_resting=False,
+            side_price=side_price,
+            best_ask=side_price,
+        )
+    )
+    if reason is None:
+        return "OK"
+    return f"BLOCK — {reason}"
 
 
 async def _sleep_interruptible(stop_event: threading.Event, seconds: float) -> None:

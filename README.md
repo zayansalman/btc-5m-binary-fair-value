@@ -24,8 +24,11 @@ Open the dashboard at `http://127.0.0.1:7860`.
 5. Manages positions with dynamic exits (target, stop, time decay, band reentry)
 6. Records every tick to SQLite for deterministic replay backtesting
 7. Provides a real-time operator dashboard with health telemetry and incident tracking
+8. Exposes operator runtime controls (e.g. **max trade size**) that the loop reads every tick — adjustable from the dashboard CONTROLS card without a restart, in paper and live
 
-No live orders are placed. No private key is required.
+Live trading is **built** (`btc_5m_fv/execution/live.py`) but **off by default and multi-gated**: it runs only with `BTC_BOT_MODE=live` AND `BTC_LIVE_CONFIRM=YES_I_UNDERSTAND` AND a private key AND a coherent wallet AND a clean config parse. In the default paper mode no orders are placed and no key is required. Agents must never flip the gate; the operator launches live.
+
+> This repo is **two coupled code trees** — `btc_bot/` (live loop + signal math) and `btc_5m_fv/` (execution, connectors, dashboard, backtest). See `docs/CODE_MAP.md` for the full routing picture.
 
 ---
 
@@ -97,7 +100,7 @@ Linear scale from $1 (50% confidence) to $5 (99% confidence) based on edge magni
 - **Risk control:** 1 open position, $1-$5 sizing, late-window skip, target/stop/time exits, drawdown monitoring
 - **Feed discipline:** Binance public fallback; Chainlink Data Streams intended as settlement reference
 - **Auditability:** every tick, entry, exit, and dashboard event persisted to SQLite
-- **Testability:** 321 tests, deterministic fixtures, network-free unit tests
+- **Testability:** the full pytest suite (count tracked in `docs/FILE_MAP.md` / CI), deterministic fixtures, network-free unit tests
 - **Failure visibility:** feed health telemetry, incident states, operator runbooks
 
 ---
@@ -115,21 +118,31 @@ pytest tests/unit/ -v
 pytest tests/ --cov=btc_5m_fv --cov-report=term-missing
 ```
 
-**321 tests** covering all modules: core types, strategy math, connectors, storage, backtest, execution, risk, telemetry, incidents, dashboard.
+The suite covers all modules: core types, strategy math, connectors, storage, backtest, execution, risk, telemetry, incidents, dashboard. The current test count is generated into `docs/FILE_MAP.md` and enforced by CI, so it never rots here.
 
 ---
 
 ## CLI Tools
 
+The real tools are repo-root scripts under `tools/`, run with the venv interpreter:
+
 ```bash
-# Dashboard snapshot
-python -m btc_5m_fv.tools.snapshot
+# One-shot snapshot of the current market + fair value
+./.venv/bin/python tools/demo_snapshot.py
 
-# Run backtest
-python -m btc_5m_fv.tools.backtest
+# Backtest the BTC strategy
+./.venv/bin/python tools/backtest_btc_strategy.py
 
-# Record market data
-python -m btc_5m_fv.tools.record --duration 3600
+# Replay recorded market data offline
+./.venv/bin/python tools/offline_replay.py
+
+# Live pre-go-live helpers (see docs/OPERATIONS_RUNBOOK.md)
+./.venv/bin/python tools/live_setup.py          # one-time wallet/deposit setup
+./.venv/bin/python tools/live_detect_wallet.py  # detect funder + signature type
+./.venv/bin/python tools/live_preflight.py       # gate / reachability / balance check
+
+# Other utilities: chainlink_lead_lag.py, clear_auto_pause.py,
+# fetch_polymarket_trades.py, gen_docs.py
 ```
 
 ---
@@ -167,8 +180,9 @@ See `docs/ROADMAP.md` for future priorities.
 
 ## Safety Boundaries
 
-- Paper mode only. `BTC_BOT_MODE` is restricted to `{"paper"}`.
+- Paper is the **default** mode; `BTC_BOT_MODE` accepts `{"paper", "live"}`.
+- Live trading is **built and multi-gated** (`btc_5m_fv/execution/live.py`): it activates only with `BTC_BOT_MODE=live` AND `BTC_LIVE_CONFIRM=YES_I_UNDERSTAND` AND a private key AND a coherent wallet AND a clean config parse. Any missing gate makes Start refuse — live never silently falls back to paper.
 - BTC 5m Up/Down markets only.
-- One open paper position per window.
-- Stop disables new entries immediately and force-closes open positions.
-- Live trading, signing, and private-key handling are intentionally absent.
+- One open position per window (paper and live).
+- Stop disables new entries immediately; paper positions are force-closed, live positions are cancelled and flattened through the executor.
+- **Agents never flip the live gate or place orders — the operator launches.** See `docs/OPERATIONS_RUNBOOK.md` for the go-live procedure.

@@ -26,7 +26,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -101,6 +101,10 @@ except Exception:
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     await init_db()
+    # One-shot (#76): clear a stale paper-era loss-halt bypass so live starts
+    # halt-ON now that the bypass applies to real money. Idempotent via sentinel.
+    from btc_5m_fv.execution.gate import migrate_clear_stale_bypass_v76
+    await migrate_clear_stale_bypass_v76()
     yield
 
 
@@ -618,6 +622,136 @@ async def api_stop() -> dict[str, str]:
     except Exception as e:
         log.exception("btc.stop_failed", error=str(e))
         return {"status": "error", "detail": f"Stop failed: {e}"}
+
+
+@app.post("/api/loss_halt/bypass")
+async def api_loss_halt_bypass(request: Request) -> dict[str, Any]:
+    """Toggle the daily realized-loss halt bypass (#76).
+
+    Applies to BOTH paper and live — the old "live can never disable a hard
+    money limit from the UI" invariant was removed at the operator's request.
+    Persisted under ``btc_risk.paper_bypass_loss_halt`` so the choice survives
+    Stop/Start, and re-read by the gate every tick so it takes effect without a
+    restart. Audited to ``notification_feed``.
+    """
+    from db import notify  # type: ignore[import-untyped]
+    from btc_5m_fv.execution.gate import set_loss_halt_bypass
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    enabled = bool((body or {}).get("enabled", False))
+    await set_loss_halt_bypass(enabled)
+    await notify(
+        "btc_loss_halt_bypass",
+        f"Operator {'ENABLED' if enabled else 'disabled'} loss-halt bypass "
+        "(paper+live, runtime — affects real money in live)",
+        {"enabled": enabled},
+    )
+    log.info("btc.loss_halt_bypass", enabled=enabled)
+    return {"status": "ok", "bypass_loss_halt": enabled}
+
+
+@app.post("/api/loss_halt/reset")
+async def api_loss_halt_reset() -> dict[str, Any]:
+    """Reset today's realized-loss tally to $0 so the halt clears (#76).
+
+    Stopped-only: the running loop holds the daily counters in memory and
+    re-persists them on every close, so a reset while running would be
+    clobbered. The halt auto-stops the bot, so the operator is already stopped
+    when they reach for this. Bankroll-cap notional is left untouched. Audited
+    to ``notification_feed``.
+    """
+    from db import get_config, notify, set_config  # type: ignore[import-untyped]
+    state = (await get_config("btc_bot.state", "stopped")) or "stopped"
+    if state == "running":
+        return {
+            "status": "error",
+            "detail": "stop the bot before resetting the loss halt",
+        }
+    await set_config("btc_risk.live_realized_pnl", "0.0")
+    await set_config("btc_risk.paper_realized_pnl", "0.0")
+    await notify(
+        "btc_loss_halt_reset",
+        "Operator reset the daily loss-halt tally to $0.00 (live + paper)",
+    )
+    log.info("btc.loss_halt_reset")
+    return {"status": "ok", "reset": True}
+
+
+# Hard sanity bound on the operator runtime per-trade cap. Generous enough for
+# any realistic clip on this bankroll, low enough to catch a fat-fingered entry.
+_MAX_TRADE_USD_CEILING = 1000.0
+# Hard sanity bound on the operator runtime trade size in shares (#89). Far above
+# anything this bankroll supports; the gate/bankroll caps do the real limiting.
+_MAX_TRADE_SHARES_CEILING = 1000.0
+
+
+@app.post("/api/runtime-config")
+async def api_runtime_config(request: Request) -> dict[str, Any]:
+    """Set an operator runtime risk knob, persisted and read by the bot each tick.
+
+    Currently supports ``key="max_trade_usd"`` — the unified per-trade cap that
+    governs both the sizing ceiling and the gate cap, in paper AND live, taking
+    effect on the next tick without a restart (#50). Validated and audited to
+    ``notification_feed``. The shape is generic so position-mode / max-positions
+    controls can register here later.
+    """
+    from db import notify  # type: ignore[import-untyped]
+    from btc_5m_fv.execution.gate import set_runtime_max_trade_usd
+
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    key = (body or {}).get("key", "")
+    if key == "max_trade_usd":
+        try:
+            value = float((body or {}).get("value"))
+        except (TypeError, ValueError):
+            return {"status": "error", "detail": "value must be a number"}
+        if not (0 < value <= _MAX_TRADE_USD_CEILING):
+            return {
+                "status": "error",
+                "detail": f"max trade size must be between $0 and ${_MAX_TRADE_USD_CEILING:.0f}",
+            }
+        value = round(value, 2)
+        await set_runtime_max_trade_usd(value)
+        await notify(
+            "btc_runtime_config",
+            f"Operator set max trade size to ${value:.2f} (paper+live, runtime — no restart)",
+            {"key": key, "value": value},
+        )
+        log.info("btc.runtime_config_set", key=key, value=value)
+        return {"status": "ok", "key": key, "value": value}
+    if key == "trade_shares":
+        from btc_5m_fv.execution.gate import set_runtime_trade_shares
+        from btc_5m_fv.execution.live import DEFAULT_MIN_ORDER_SIZE
+
+        try:
+            value = float((body or {}).get("value"))
+        except (TypeError, ValueError):
+            return {"status": "error", "detail": "value must be a number"}
+        if not (DEFAULT_MIN_ORDER_SIZE <= value <= _MAX_TRADE_SHARES_CEILING):
+            return {
+                "status": "error",
+                "detail": (
+                    f"shares must be between {DEFAULT_MIN_ORDER_SIZE:.0f} "
+                    f"(Polymarket minimum) and {_MAX_TRADE_SHARES_CEILING:.0f}"
+                ),
+            }
+        value = round(value, 2)
+        await set_runtime_trade_shares(value)
+        await notify(
+            "btc_runtime_config",
+            f"Operator set trade size to {value:g} shares (paper+live, runtime — no restart)",
+            {"key": key, "value": value},
+        )
+        log.info("btc.runtime_config_set", key=key, value=value)
+        return {"status": "ok", "key": key, "value": value}
+    return {"status": "error", "detail": f"unknown runtime key {key!r}"}
+
+
 
 
 async def _runtime_state() -> dict[str, str]:

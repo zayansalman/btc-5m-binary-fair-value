@@ -1,5 +1,67 @@
 # Changelog
 
+## v0.4.8 — Set trade size in shares from the CONTROLS panel (2026-06-17)
+
+Closes #89. The operator thinks in shares (contracts), not dollars — a binary's $ cost varies with price. The CONTROLS panel now takes a **share count** (≥5, the Polymarket minimum), shows the **$ value** of that many shares at the live price (plus the $2.50–$5-style range), and an **infographic** of the 5-share venue minimum. The share setting drives sizing everywhere — paper + live, next tick, no restart.
+
+### What
+- **`btc_5m_fv/execution/gate.py`**: new runtime knob `btc_runtime.trade_shares` (`set/get_runtime_trade_shares`, `runtime_trade_shares`, refreshed each tick). When set it takes precedence over the dollar `max_trade_usd` override: `effective_max_trade_usd` returns `trade_shares` (N shares cost ≤ ~$N since binary prices < 1, so the per-trade cap never blocks the bot's own N-share clip). DRYed the config reads behind `_read_positive`.
+- **`btc_bot/paper.py`**: new pure `_share_sized_notional(side, notional, up_ask, down_ask, trade_shares)` — when a share target is set, `notional = trade_shares × the chosen side's ask`, so the loop sizes to ≈N shares (exact in paper; ≈N in live within rounding). The executor still auto-bumps to the venue minimum (#87). Unset → the dollar path is untouched (backward compatible).
+- **`POST /api/runtime-config`**: new key `trade_shares` (validated 5 ≤ v ≤ 1000, audited).
+- **CONTROLS panel** (`panels/controls.py`, wired in `ems.py`): shares input (`min=5`, live `≈ $` value computed in `dashboard.js:updateShareValue()` from the favoured side's ask), `$` range, share-minimum infographic (pips + label), updated hint. `setTradeShares()` POSTs the new key. STRATEGY sizing line shows `N shares (~$X)`.
+- **Tests**: `test_share_sizing.py` (the resize helper), `test_risk_gate.py` (shares precedence + cap derivation), `test_runtime_config.py` (endpoint accept ≥5 / reject <5), `test_dashboard.py` (panel + handler). Full suite green (555); ruff clean; no new mypy errors.
+
+### Why this shape
+- The cap becomes a **target the venue minimum may exceed**, bounded by the derived dollar cap; the bankroll cap (when enabled) remains the dollar guard. The share count is the stable quantity the operator controls; the $ cost is shown as a derived, live estimate. The dollar `max_trade_usd` knob remains as a fallback when no share target is set (fully backward compatible).
+- **Out of scope:** #83 (backtest leak) / #84 (signal overfit) — live *edge*, not sizing.
+
+## v0.4.7 — Auto-bump sub-minimum orders to the venue share minimum (2026-06-17)
+
+Closes #87; **supersedes the v0.4.6 floor**. v0.4.6 stopped the operator from setting a clip below ~$5, which removed legitimate control — Polymarket's real constraint is **5 shares/order**, which at the ≥0.50 favourites floor costs only **$2.50–$5** depending on price, not a flat $5. Operator wants to set any clip and still have small orders place. So instead of forbidding small caps, the bot now **rounds any sub-minimum order up to exactly the venue minimum** so it always places.
+
+The "max trade size" cap becomes a **target, not a hard ceiling**: it may be exceeded only by what the venue minimum requires (e.g. a $3 clip at price 0.70 places 5 shares = ~$3.50), bounded so an abnormally large minimum can't overspend the bankroll.
+
+### What
+- **Reverted v0.4.6's floor** — `POST /api/runtime-config` accepts any `0 < v ≤ 1000` again; the gate no longer drops sub-floor overrides (`gate.py` back to `value if value > 0 else None`); the CONTROLS input `min` is `0.5` again and the hint explains auto-bump. Any positive clip is valid.
+- **`btc_5m_fv/execution/live.py`**: in `submit_entry`, when `size < min_size` the order size is bumped UP to `min_size` (the book's `min_order_size`, default 5) and placed, instead of blocked. `record_buy_notional` uses the bumped size; the bump is logged (`live_executor.entry_bumped_to_min`). Guard: if `min_size > MAX_AUTO_BUMP_SHARES` (= 2 × `DEFAULT_MIN_ORDER_SIZE` = 10) the order is BLOCKED rather than overspend — a venue minimum that large is too expensive for this bankroll.
+- **`btc_bot/paper.py`**: mirrors the bump (`shares = max(shares, DEFAULT_MIN_ORDER_SIZE)` before the top-of-book cap) so paper stays a faithful preview of live (#64).
+- **Tests**: `test_live_executor.py` — the old `test_entry_blocked_below_min_order_size` becomes `..._bumps_to_minimum` (places 5 shares), plus a new too-large-to-bump guard test. Dropped the v0.4.6 floor tests. Full suite green (542); ruff clean; no new mypy errors.
+
+### Why this shape
+- The 5-share minimum is the venue's, and the smallest *placeable* favourite order ($2.50) is well below $5 — a flat floor over-restricted the operator. Bumping to the exact minimum gives full size control while never blocking on "too small". The cap-as-target trade-off (slight overspend only when the venue forces it) is bounded to ≤ `MAX_AUTO_BUMP_SHARES × price` (~$10 worst case); the bankroll cap (when enabled) remains the dollar-level guard.
+- **Out of scope:** #83 (backtest leak) / #84 (signal overfit) — live *edge*, not placement.
+
+## v0.4.6 — Enforce a min-trade floor on the runtime max-trade cap (2026-06-17)
+
+Closes #85. Live trading was **100% blocked**: the dashboard BLOCKED panel showed every entry rejected — `size 1.78 shares below Polymarket minimum 5.00 at price 0.5600`. The operator had set the runtime **Max trade size to $1.00** from the dashboard (#50). At the favourites-only entry floor (price ≥ 0.50), $1.00 buys < 2 shares — below Polymarket's **5-share venue minimum** — so `LiveExecutor.submit_entry` (`execution/live.py`) correctly refused every order, every window. Funds were untouched; the bot was stopped.
+
+Root cause: the #50 slice shipped **no floor** on the per-trade cap. Its CHANGELOG states the flawed assumption directly — *"a value below min gives a smaller fixed clip … no `min` changes needed."* But the cap is the **ceiling** of the confidence-sizing range, and `notional_from_confidence` clamps every order to `[min_trade, max_trade]`; a ceiling below `BTC_PAPER_MIN_TRADE_USD` ($5 in the operator's env) pins every order's notional to $1 → sub-minimum. Nothing enforced the floor: `POST /api/runtime-config` validated only `0 < v ≤ 1000`, the HTML input hardcoded `min='0.5'`, and the gate read accepted any `value > 0`.
+
+### What
+- **`btc_5m_fv/execution/gate.py`**: new `_runtime_override_or_none(value)` — a stored override that is non-positive **or below `BTC_PAPER_MIN_TRADE_USD`** is invalid and dropped, so the gate falls back to the (placeable) env default. Wired into both `RiskGate.refresh_runtime_limits()` (per-tick) and the module reader `get_runtime_max_trade_usd()` (dashboard display), so the live bot **auto-heals the stale $1.00 on the next tick** — no manual DB surgery, no migration. The floor is read from `config` at call time (no restart to change it).
+- **`btc_5m_fv/ops/dashboard/app.py`**: `POST /api/runtime-config` now rejects `value < BTC_PAPER_MIN_TRADE_USD` with an actionable error ("must be at least the $5.00 min trade size — a smaller cap … blocks all entries") instead of silently accepting an unplaceable clip.
+- **`btc_5m_fv/ops/dashboard/panels/controls.py`**: the number input's `min` attribute now tracks the displayed `min_trade` floor (was a hardcoded `0.5`), so the browser widget and the "min $X" hint agree.
+- **Tests**: `test_runtime_config.py` (endpoint rejects sub-floor / accepts at floor); `test_risk_gate.py` (a stored $1 override is dropped → effective cap falls back to env default — the exact incident). Existing cap tests now pin `BTC_PAPER_MIN_TRADE_USD` explicitly, removing a latent dependency on the local `.env` (floor of 5 vs the CI default of 1). Full suite green (544, +3 new).
+
+### Why this shape
+- The invariant is **effective per-trade cap ≥ min-trade size** — the ceiling can't sit below the floor without inverting the sizing range. Enforced at every boundary (endpoint reject → operator feedback; gate read drop → heals legacy state; HTML `min` → honest widget), mirroring the existing "invalid override → None → env default" handling rather than adding new machinery.
+- The gate drop is silent (no per-tick log spam) and the reader masks the stale value, so the dashboard already shows the corrected env-default cap. The stored $1 is inert until overwritten.
+- **Out of scope:** #83 (backtest look-ahead leak) and #84 (entry-signal overfit) — those question whether the signal has live *edge*; this change only unblocks order *placement*.
+
+## v0.4.5 — UI-settable max trade size (2026-06-16)
+
+Part of #50 (the max-trade-size slice). Resizing the clip required editing `.env` and restarting uvicorn; with `BTC_PAPER_MIN_TRADE_USD=BTC_PAPER_MAX_TRADE_USD=5` every trade went in at a fixed $5 with no way to tune it mid-session. Now the operator sets it from the dashboard and it takes effect on the next tick — paper AND live, no restart.
+
+### What
+- **`btc_5m_fv/execution/gate.py`**: new runtime per-trade cap override. `RiskGate.refresh_runtime_limits()` re-reads `btc_runtime.max_trade_usd` from the `config` table every tick (runs in BOTH modes — it's a tuning knob, not the paper-only loss-halt bypass). New `runtime_max_trade_usd` (raw override) and `effective_max_trade_usd` (override else env default) properties; `block_reason` enforces the **effective** cap. Module helpers `set_runtime_max_trade_usd` / `get_runtime_max_trade_usd` with validation.
+- **`btc_bot/paper.py`**: `paper_tick_once` calls `refresh_runtime_limits()` each tick; `_strategy_params()` uses the runtime override for the sizing ceiling when set (else env default — fully backward-compatible). So one knob governs both the sizing ceiling and the gate cap (unified). `notional_from_confidence` already clamps to `[min, max]`, so a value below min gives a smaller fixed clip and above min re-enables confidence-scaled sizing — no `min` changes needed.
+- **Dashboard CONTROLS card** (`btc_5m_fv/ops/dashboard/panels/controls.py`, new; wired in `ems.py`, first grid row after RISK GUARDRAILS): shows current max (operator vs env default), a number input + Apply. `POST /api/runtime-config` (`app.py`) validates (0 < v ≤ $1000), persists via the gate setter, audits to `notification_feed`. `setMaxTradeSize()` in `dashboard.js`; `.ctl-input`/`.ctl-row` theme CSS. STRATEGY card's sizing line now reflects the effective cap.
+- **Tests**: `test_risk_gate.py` (override applies in both modes, refresh fallback, clear, set/get round-trip, invalid-value handling); `test_runtime_config.py` (endpoint persists + validates against an isolated DB); `test_dashboard.py` (CONTROLS card + handler render). Full suite green (503 tests, +15 new).
+
+### Why this shape
+- Mirrors the existing per-tick `refresh_overrides` + `config`-table pattern (#65), so no new machinery and no restart. Unset key = exact prior behaviour (backward-compatible). The UI follows the existing panel architecture (pure `render()` panel, data in `ems.py`, POST + `refreshAll`, theme CSS) — no bespoke surface.
+- Singleton position mode and multi-position were deliberately left untouched (deferred at operator request); `EntryRequest` / `GateConfig` / `LiveExecutor` single-position state are unchanged.
+
 ## v0.4.4 — Bankroll Cap Opt-In + RISK GUARDRAILS Panel (2026-06-15)
 
 Closes #61. Investigation of "why did the bot stop trading after lunch?" surfaced a UX gap: the daily $30 bankroll cap had been silently rejecting every entry from 10:46 UTC onward (43 BLOCKED entries journaled in `btc_live_orders`), but nothing on the dashboard showed it. Operator had to grep logs and query SQLite to figure out the cap was hit.

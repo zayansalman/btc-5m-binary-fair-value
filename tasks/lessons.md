@@ -1,0 +1,30 @@
+# Lessons
+
+## Respect the existing UI architecture for dashboard work (2026-06-16)
+**Pattern:** When adding any dashboard UI, conform to the established panel architecture instead of bolting on a bespoke surface:
+- Pure `render(...) -> str` panel module in `btc_5m_fv/ops/dashboard/panels/` (no DB access in the panel).
+- Read data in `ems.py` (or `panels/_data.py`) and pass it in; `ems.py` orchestrates and composes the grid.
+- Reuse the theme CSS vocabulary (`card`, `card-h`, `de-kv`, `gr-btn`/`btn-ok`, `pill`, `mono`, `win`) and add any new classes in `static/style.css` matching the Bloomberg-EMS variables.
+- Controls POST to a `/api/...` endpoint and call the existing global `refreshAll()`; persist to the `config` table; re-read per tick (mirror `refresh_overrides` / `set_paper_bypass_loss_halt`).
+**Why:** Keeps the dashboard consistent, testable, and SSE-refreshable; avoids one-off patterns that drift from the rest of the EMS.
+**How to apply:** Before building dashboard UI, read `panels/__init__.py`, `_shared.py`, an existing panel (e.g. `guardrails.py`), `ems.py`, `dashboard.js`, and `style.css`; then slot the new piece into those seams.
+
+## Scope tightly; don't over-build (2026-06-16)
+**Pattern:** Initial ask sounded like "max trade size + singleton/multiple mode + max positions"; after planning the full multi-position LiveExecutor refactor, the operator narrowed it to "just make max trade size settable in the UI, leave singleton."
+**Why:** The money-path refactor (scalar→map LiveExecutor) was large and risky; the operator's real need was a single runtime knob.
+**How to apply:** When a request spans a cheap change and an expensive architectural one, confirm scope before building the expensive part. A short clarifying question up front avoided a large unwanted diff here.
+
+## A "smaller clip" can be an *unplaceable* clip — validate against the venue minimum (2026-06-17, #85)
+**Pattern:** The #50 max-trade-size feature let the operator set any cap `0 < v ≤ 1000`, reasoning a value below the min-trade size "just gives a smaller fixed clip." It doesn't: a $1 cap at favourites (price ≥ 0.50) sizes every order below Polymarket's 5-share minimum, so the live executor blocked 100% of entries. Live trading was dead for a full session before anyone noticed.
+**Why:** A per-trade *ceiling* below the sizing *floor* (`BTC_PAPER_MIN_TRADE_USD`) inverts the range; `notional_from_confidence` then pins every order to the floor → sub-minimum. The UI showed "min $5.00" but only as cosmetic text — no boundary actually enforced it (endpoint, HTML `min`, and gate read all let $1 through).
+**How to apply:** Any operator-settable risk/sizing knob must be validated against the *venue* constraint it feeds, not just a sanity range. Enforce at every boundary (endpoint reject + gate read + UI widget), and make stored-state auto-heal so an already-persisted bad value doesn't keep biting after the fix ships. When a UI shows a "min/max", wire it to real validation — never leave it as a hint. See [[project-btc-5m-polymarket-bot]].
+
+## Don't over-correct a "too small" bug into a blunt restriction (2026-06-17, #87)
+**Pattern:** Fixing #85 (a $1 clip blocked all trades), I slammed a flat $5 floor on the size knob. The operator pushed back: "did you create a $5 minimum? I want to control my trade sizes." The flat floor removed legitimate control — Polymarket's real limit is **5 shares/order**, which at ≥0.50 favourites costs only **$2.50–$5** depending on price, NOT a flat $5. A blunt dollar floor forbade valid sub-$5 clips.
+**Why:** I corrected from one extreme (any value, including unplaceable $1) to another (no value below $5) without modelling the actual constraint shape: a per-order, price-dependent share minimum. The fix that preserves operator control is to **bump sub-minimum orders up to the exact venue minimum** (cap becomes a target, not a hard ceiling), so any positive clip places.
+**How to apply:** When a value is "too small/large," derive the TRUE constraint (here: shares × price, not a dollar) and prefer the option that keeps the operator in control (auto-bump/clamp-to-valid) over a blunt reject. For a real knob with a genuine trade-off (hard ceiling + partial-block vs soft cap + always-place), ASK the operator — it's their risk control. See [[project-btc-5m-polymarket-bot]] and [[feedback_cac_is_steering_not_scoreboard]].
+
+## Commit incrementally — uncommitted work can be silently discarded (2026-06-17, #89)
+**Pattern:** Mid-implementation of #89 (a multi-file feature), an external `git checkout develop` ran and discarded all my uncommitted edits + the branch checkout (reflog HEAD@{0} confirmed; the `.claude/settings.json` hooks only run gen_docs, so a hook wasn't the cause). I lost ~5 gate.py edits and had to redo them.
+**Why:** Uncommitted working-tree changes don't survive a branch switch + discard. On a repo where something (another session, a scheduled task, or the operator) may run git commands between turns, holding a large uncommitted diff is fragile.
+**How to apply:** On multi-file changes, COMMIT AFTER EACH LOGICAL CHUNK to the feature branch (gate → commit, sizing → commit, endpoint → commit, UI → commit). Committed work survives a checkout; only the current chunk is ever at risk. Verify edits actually landed (grep) after a "success" if anything seems off — a success message from Edit doesn't guarantee the change persisted if the tree is later reverted. See [[project-btc-5m-polymarket-bot]].

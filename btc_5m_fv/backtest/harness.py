@@ -9,16 +9,12 @@ market friction, and produces a complete :class:`BacktestResult`.
 from __future__ import annotations
 
 import random
-from copy import copy
-from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any
 
 from btc_5m_fv.backtest.metrics import BacktestResult, FrictionModel
 from btc_5m_fv.core.interfaces import AbstractSignalGenerator
 from btc_5m_fv.core.types import (
-    ExitReason,
     MarketWindow,
-    Side,
     Signal,
     SignalAction,
     StrategyParams,
@@ -90,7 +86,6 @@ class FullMarketBacktestHarness:
 
         # Track positions and equity
         open_position: dict[str, Any] | None = None
-        equity_curve: list[float] = []
         trades: list[dict[str, Any]] = []  # closed trade records
         exit_reasons: dict[str, int] = {
             "TARGET": 0,
@@ -292,8 +287,6 @@ class FullMarketBacktestHarness:
         notional = position["notional"]
         current = tick.spot_price
 
-        # Check reference price to determine direction
-        ref = tick.reference_price
         up_prob = tick.fair_up_prob
 
         # For Up positions: take profit if spot rises, stop if it falls

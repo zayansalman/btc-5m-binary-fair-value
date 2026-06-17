@@ -14,64 +14,41 @@ moving it toward the engineering shape expected of serious trading systems.
 - Failure visibility: loop/feed/market errors are surfaced in logs and
   dashboard state.
 
+> Several earlier roadmap items have since shipped and were removed from this
+> list: the market-data recorder (`btc_5m_fv/storage/recorder.py`), the
+> full-market replay + backtest harness (`btc_5m_fv/storage/replay.py`,
+> `btc_5m_fv/backtest/harness.py` — built, though not yet wired into the live
+> tooling; see `docs/BACKTESTING.md`), feed/latency telemetry
+> (`btc_5m_fv/ops/telemetry.py`), incident states (`btc_5m_fv/ops/incidents.py`
+> + `docs/OPERATIONS_RUNBOOK.md`), the dedicated-wallet live executor
+> (`btc_5m_fv/execution/live.py`), and CI with deterministic fixtures
+> (`.github/workflows/ci.yml`). What remains below is genuine future work.
+
 ## Priority Buildout
 
-1. **Market Data Recorder**
-
-   Persist raw market snapshots, BTC reference prices, quote timestamps, and
-   feed-source metadata. This makes signals reproducible instead of only
-   explainable after the fact.
-
-2. **Full-Market Replay And Backtest Harness**
-
-   Add a deterministic replay mode that runs the signal engine over recorded
-   market data. Include basic market-friction assumptions: stale quotes,
-   bid/ask spread, late-window liquidity, and no-fill cases.
-
-   Current status: the repo has a trade-history conditional backtest in
-   `btc_bot/backtest.py`. It is useful for optimizing filters over historical
-   user buys, but it is not yet a full-market replay.
-
-3. **Order Lifecycle Simulator**
+1. **Order Lifecycle Simulator**
 
    Model paper orders as separate acknowledgement, fill, partial-fill, cancel,
    exit, and reconciliation events. This keeps the paper system structurally
-   close to a future live executor without adding live risk.
+   close to the live executor without adding live risk.
 
-4. **Risk And PnL Console**
+2. **Risk And PnL Console**
 
    Add realized/unrealized PnL, exposure, inventory, drawdown, win/loss by
    market window, and stop-reason attribution. Keep risk metrics visible in
    both dashboard and CLI snapshots.
 
-5. **Feed Health And Latency Telemetry**
-
-   Track feed heartbeat age, HTTP latency, tick-processing time, p50/p95/p99
-   loop duration, and stale-feed halt reasons. Store telemetry in SQLite and
-   expose it in the activity feed.
-
-6. **Research-To-Production Boundary**
+3. **Research-To-Production Boundary**
 
    Separate signal research from execution state. A new signal should be
-   testable in replay before it is allowed in the live paper loop.
-
-7. **Operational Runbooks And Incidents**
-
-   Add incident states for stale market metadata, exchange/API failure,
-   unexpected open-position count, DB write failure, and stop/force-close
-   failure. Each state should have an operator action in the runbook.
-
-8. **CI And Deterministic Fixtures**
-
-   Add fixtures for market discovery, quote parsing, signal thresholds, order
-   lifecycle transitions, and DB migrations. Tests should run without network
-   access.
+   testable in replay before it is allowed in the live paper loop. The
+   human-gated params propose/apply flow (`btc_bot/params_propose.py`,
+   `btc_bot/params_apply.py`) is a first step; wiring the full-market harness
+   into that loop is the remaining work.
 
 ## Later, Explicitly Reviewed
 
 - CLOB quote integration with freshness checks.
 - Chainlink Data Streams as primary reference input.
-- Dedicated-wallet live executor.
-- Order acknowledgement/fill reconciliation.
 - Position and balance reconciliation against venue state.
 - Remote monitoring only after private-key handling is isolated.

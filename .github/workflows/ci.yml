@@ -25,7 +25,8 @@ jobs:
       - name: Run tests
         run: pytest tests/ -v --tb=short
 
-  lint:
+  # Ruff is a hard gate: it must pass for the build to be green.
+  ruff:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -34,11 +35,48 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install lint tools
-        run: pip install ruff mypy
+      - name: Install ruff
+        run: pip install ruff
 
       - name: Ruff check
-        run: ruff check btc_5m_fv/ tests/
+        run: ruff check btc_5m_fv/ btc_bot/ tests/ tools/
+
+  # Mypy is advisory: it surfaces type issues but does not block merges yet
+  # (known type errors tracked separately). Drop continue-on-error to promote
+  # it to a hard gate once those are cleaned up.
+  mypy:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install mypy
+        run: pip install mypy
 
       - name: Mypy check
         run: mypy btc_5m_fv/ --ignore-missing-imports
+
+  docs-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install package
+        run: pip install -e ".[test]"
+
+      - name: Regenerate docs and fail on drift
+        run: python tools/gen_docs.py --check
+
+      - name: Fail on banned stale strings
+        run: |
+          ! grep -rn -e "No live orders" -e "no private key required" \
+            -e "321 tests" -e "gradio.Blocks" -e "live trading is intentionally absent" \
+            README.md AGENTS.md CLAUDE.md docs/

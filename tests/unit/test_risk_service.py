@@ -12,7 +12,7 @@ from btc_5m_fv.core.types import (
     Signal,
     SignalAction,
 )
-from btc_5m_fv.execution.risk import _BREACH_DRAWDOWN_RATIO, _WARNING_DRAWDOWN_RATIO, RiskService
+from btc_5m_fv.execution.risk import RiskService
 
 
 # ---------------------------------------------------------------------------

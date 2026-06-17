@@ -90,6 +90,10 @@ body {
 .pill.on { background: rgba(43,212,125,.13); color: var(--green); border-color: rgba(43,212,125,.35); }
 .pill.off { background: rgba(127,138,163,.1); color: var(--dim); }
 .pill.warn { background: rgba(255,180,84,.14); color: var(--amber); border-color: rgba(255,180,84,.4); }
+.pill.down { background: rgba(255,84,112,.14); color: var(--red); border-color: rgba(255,84,112,.4); }
+/* STATUS pill rendered as a clickable button — toggles the loss-halt bypass (#76). */
+.pill.gr-pill-btn { cursor: pointer; font-family: var(--mono); line-height: 1.2; }
+.pill.gr-pill-btn:hover { filter: brightness(1.18); }
 
 .feeds { display: flex; gap: 6px; align-items: center; }
 .feed { font-family: var(--mono); font-size: 9.5px; letter-spacing: .5px; padding: 2px 6px; border-radius: 4px; }
@@ -215,6 +219,40 @@ body {
   font-family: var(--mono); font-size: 10.5px; color: var(--faint);
   padding: 8px 4px; font-style: italic;
 }
+.gr-toggle { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+.gr-btn {
+  font-family: var(--mono); font-size: 11px; cursor: pointer;
+  padding: 4px 8px; border-radius: 3px; border: 1px solid var(--line);
+  background: var(--bg); color: var(--fg); text-align: center;
+}
+.gr-btn:hover { filter: brightness(1.15); }
+.gr-btn:disabled { opacity: .45; cursor: not-allowed; filter: none; }
+.gr-btn.btn-warn { border-color: var(--warn, #c98a3a); color: var(--warn, #c98a3a); }
+.gr-btn.btn-ok { border-color: var(--up, #6ad07b); color: var(--up, #6ad07b); }
+.gr-toggle-hint {
+  font-family: var(--mono); font-size: 9.5px; color: var(--faint);
+  font-style: italic;
+}
+
+/* ── runtime controls (operator-editable risk knobs) ── */
+.ctl-row { display: flex; gap: 8px; align-items: center; margin: 10px 0 6px; }
+.ctl-input {
+  font-family: var(--mono); font-size: 12px; padding: 6px 8px; width: 92px;
+  border-radius: 4px; border: 1px solid var(--line);
+  background: var(--panel-2); color: var(--text);
+}
+.ctl-input:focus { outline: none; border-color: var(--accent); }
+.ctl-input::-webkit-outer-spin-button,
+.ctl-input::-webkit-inner-spin-button { opacity: 1; }
+.ctl-unit { font-family: var(--mono); font-size: 11px; color: var(--faint); }
+/* ── share-minimum infographic (#89) ── */
+.share-min { display: flex; align-items: center; gap: 8px; margin: 8px 0 4px; }
+.share-pips { display: flex; gap: 3px; }
+.shp {
+  width: 9px; height: 14px; border-radius: 2px;
+  background: var(--up, #6ad07b); opacity: 0.8;
+}
+.share-min-lbl { font-family: var(--mono); font-size: 10px; color: var(--faint); }
 @media (max-width: 1100px) {
   .gr-grid { grid-template-columns: repeat(2, 1fr); }
 }
@@ -237,6 +275,7 @@ body {
 .perf-mini-row b { font-family: var(--mono); font-weight: 600; }
 .perf-mini-row b em { color: var(--faint); font-style: normal; font-size: 10px; margin-left: 4px; }
 .perf-mini-empty { color: var(--faint); font-family: var(--mono); font-size: 10.5px; padding: 8px 0; }
+.perf-mini-sub { color: var(--faint); font-family: var(--mono); font-size: 9.5px; letter-spacing: .3px; text-transform: lowercase; margin-left: auto; }
 
 /* ── TCA / calibration ── */
 .calib-wrap { margin-top: 13px; display: flex; align-items: center; gap: 14px; }
