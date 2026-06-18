@@ -95,21 +95,23 @@ def cushion_favorite_v2(
 def late_convergence_v3(
     view: SnapshotView,
     params: strategy.StrategyParams,
-    near_certain: float = 0.88,
+    near_certain: float = 0.85,
     late_min_s: int = 5,
-    late_max_s: int = 30,
+    late_max_s: int = 45,
 ) -> ShadowSignal | None:
-    """Buy the favoured side late, when book and model both call it near-certain.
+    """Buy the favoured side late, when the BOOK calls it near-certain.
 
     Inside the late time band ``[late_min_s, late_max_s]`` this candidate
     sides with the book's favourite (Up when ``market_up_price >= 0.5``,
-    else Down) and takes it only when **both** the book's favoured price and
-    the model's fair probability for that side are at or above
-    ``near_certain``. Requiring agreement avoids buying a side the model
-    likes but the book doesn't (or vice versa). A final guard requires the
-    executable ask below ``0.99`` so there is still room to profit net of
-    cost. ``params`` is accepted for signature parity with the other
-    candidates; this gate is independent of v0's edge thresholds.
+    else Down) and takes it when the book's favoured price is at or above
+    ``near_certain`` and the fair-value model at least *weakly* agrees
+    (fair ≥ 0.5). It keys off the BOOK on purpose: the price is what predicts
+    the outcome, while the fair-value model is anti-predictive here, so the
+    original gate (requiring the model to *also* be near-certain) was
+    self-defeating and never fired. A final guard requires the executable ask
+    below ``0.99`` so there is still room to profit net of cost. ``params`` is
+    accepted for signature parity; this gate is independent of v0's edge
+    thresholds.
 
     Args:
         view: Immutable per-tick market view.
@@ -135,7 +137,9 @@ def late_convergence_v3(
     fair_fav = view.fair_up if favored == "Up" else 1.0 - view.fair_up
     fav_price = view.market_up_price if favored == "Up" else 1.0 - view.market_up_price
 
-    if fav_price < near_certain or fair_fav < near_certain:
+    # Book must be near-certain; the (anti-predictive) model need only weakly
+    # agree, not also be near-certain — the old AND gate kept this from firing.
+    if fav_price < near_certain or fair_fav < 0.5:
         return None
 
     if entry >= 0.99:

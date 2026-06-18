@@ -152,8 +152,8 @@ class TestCushionFavoriteV2:
 
 class TestLateConvergenceV3:
     def test_none_before_time_band(self, params: strategy.StrategyParams) -> None:
-        """remaining_seconds above late_max_s -> None."""
-        view = _view(remaining_seconds=45, market_up_price=0.95, fair_up=0.95)
+        """remaining_seconds above late_max_s (45) -> None."""
+        view = _view(remaining_seconds=46, market_up_price=0.95, fair_up=0.95)
         assert late_convergence_v3(view, params) is None
 
     def test_none_after_time_band(self, params: strategy.StrategyParams) -> None:
@@ -174,12 +174,12 @@ class TestLateConvergenceV3:
     def test_none_when_book_and_model_disagree(
         self, params: strategy.StrategyParams
     ) -> None:
-        """Book says near-certain Up, model does not -> None."""
+        """Book says near-certain Up, but the model leans Down (fair<0.5) -> None."""
         view = _view(
             remaining_seconds=20,
             market_up_price=0.95,
             up_ask=0.95,
-            fair_up=0.70,  # model below near_certain for Up
+            fair_up=0.40,  # model leans the other way -> weak-agreement gate fails
         )
         assert late_convergence_v3(view, params) is None
 
@@ -255,14 +255,14 @@ class TestLateConvergenceV3:
     def test_time_band_boundaries_inclusive(
         self, params: strategy.StrategyParams
     ) -> None:
-        """The late band is inclusive at both ends (5 and 30 by default)."""
+        """The late band is inclusive at both ends (5 and 45 by default)."""
         edge_view = lambda rs: _view(  # noqa: E731 - terse, test-local
             remaining_seconds=rs, market_up_price=0.93, up_ask=0.93, fair_up=0.95
         )
         assert late_convergence_v3(edge_view(5), params) is not None
-        assert late_convergence_v3(edge_view(30), params) is not None
+        assert late_convergence_v3(edge_view(45), params) is not None
         assert late_convergence_v3(edge_view(4), params) is None
-        assert late_convergence_v3(edge_view(31), params) is None
+        assert late_convergence_v3(edge_view(46), params) is None
 
 
 # ---------------------------------------------------------------------------
