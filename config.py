@@ -104,6 +104,9 @@ BTC_BOT_MODE = _env_choice("BTC_BOT_MODE", "paper", {"paper", "live"})
 # soaked -$7.87 in 70 minutes under honest fills (median hold 8s, paying the
 # spread every round trip); kept only for experiments.
 BTC_EXIT_STYLE = _env_choice("BTC_EXIT_STYLE", "settle", {"settle", "scalp"})
+# Shadow forward-tester: log candidate strategies' would-be trades in parallel
+# with the live strategy (no real orders placed). "off" disables it entirely.
+BTC_SHADOW_ENABLED = _env_choice("BTC_SHADOW_ENABLED", "on", {"on", "off"})
 
 # Adaptive risk controller (issue #36): pause NEW entries when the strategy's
 # rolling expectancy decays, before losses pile up. Complements the hard halt.

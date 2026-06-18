@@ -74,6 +74,8 @@ from btc_5m_fv.execution.gate import (
 from btc_bot.adaptive import evaluate_and_maybe_pause
 from btc_bot import calibration as _calibration
 from btc_bot import params as _params
+from btc_bot.shadow import ledger as shadow_ledger
+from btc_bot.shadow import runner as shadow_runner
 from btc_bot.strategy import (
     StrategyParams,
     fair_up_probability,
@@ -447,6 +449,7 @@ async def paper_tick_once() -> PaperSnapshot:
         await _close_due_positions(snapshot, client)
         if not kill_active:
             await _maybe_open_position(snapshot)
+        await _record_and_settle_shadow(snapshot, client)
     return snapshot
 
 
@@ -1419,6 +1422,60 @@ def _window_start_from_slug(slug: str) -> int | None:
         return int(str(slug).rsplit("-", 1)[-1])
     except (TypeError, ValueError):
         return None
+
+
+async def _settle_due_shadows(
+    client: httpx.AsyncClient, current_slug: str | None
+) -> None:
+    """Settle every resolvable OPEN shadow window via the Chainlink connector.
+
+    Resolves the ABSOLUTE window winner (Up/Down) — reusing the same settlement
+    read as live positions — so candidates that opened on windows the live bot
+    never traded are still settled. The in-progress window is skipped; the
+    connector returns ``None`` for windows not yet settleable, which we skip.
+    """
+    async with connect() as db:
+        async with db.execute(
+            "SELECT DISTINCT window_slug FROM btc_model_shadow_positions "
+            "WHERE state = 'open'"
+        ) as cur:
+            slugs = [str(row["window_slug"]) for row in await cur.fetchall()]
+    for slug in slugs:
+        if slug == current_slug:
+            continue
+        start_ts = _window_start_from_slug(slug)
+        if start_ts is None:
+            continue
+        connector = _make_settlement_connector(client, slug)
+        try:
+            up_won = await connector.settle_window(start_ts)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("shadow.settle_read_failed", window_slug=slug, error=str(exc))
+            continue
+        if up_won is None:
+            continue
+        await shadow_ledger.settle_open_shadow(
+            window_slug=slug,
+            outcome_side="Up" if up_won else "Down",
+            settlement_price=1.0,
+            resolved_at=datetime.now(UTC).isoformat(timespec="seconds"),
+        )
+
+
+async def _record_and_settle_shadow(
+    snapshot: PaperSnapshot, client: httpx.AsyncClient
+) -> None:
+    """Run the shadow forward-tester, fully isolated so it can never break the
+    live trading loop. Records each candidate's would-be trade for this window
+    and settles any now-resolvable shadow windows."""
+    if _config.BTC_SHADOW_ENABLED != "on":
+        return
+    try:
+        params = _strategy_params()
+        await shadow_runner.record_shadow(snapshot, params)
+        await _settle_due_shadows(client, snapshot.window_slug)
+    except Exception as exc:  # noqa: BLE001 — never let the harness break the loop
+        log.warning("shadow.harness_error", error=str(exc))
 
 
 async def _close_position(
