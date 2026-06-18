@@ -166,7 +166,9 @@ def compute_model_stats(rows: list[sqlite3.Row]) -> list[ModelStats]:
         for row in model_rows:
             entry = float(row["entry_price"])
             shares = float(row["shares"] or 0.0)
-            won = (row["outcome"] or "").lower() == "win"
+            # The ledger stores the winning SIDE ("Up"/"Down") in `outcome`;
+            # a row won iff its own side matches that winning side.
+            won = row["outcome"] is not None and row["side"] == row["outcome"]
             wins += 1 if won else 0
             cost += entry * shares
             shares_total += shares

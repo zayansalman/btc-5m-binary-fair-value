@@ -20,7 +20,11 @@ from __future__ import annotations
 import pytest
 
 from btc_bot import strategy
-from btc_bot.shadow.signals import cushion_favorite_v2, late_convergence_v3
+from btc_bot.shadow.signals import (
+    cushion_favorite_v2,
+    down_skeptic_v4,
+    late_convergence_v3,
+)
 from btc_bot.shadow.types import ShadowSignal, SnapshotView
 
 
@@ -259,3 +263,54 @@ class TestLateConvergenceV3:
         assert late_convergence_v3(edge_view(30), params) is not None
         assert late_convergence_v3(edge_view(4), params) is None
         assert late_convergence_v3(edge_view(31), params) is None
+
+
+# ---------------------------------------------------------------------------
+# down_skeptic_v4
+# ---------------------------------------------------------------------------
+
+
+class TestDownSkepticV4:
+    def test_none_when_v0_declines(self, params: strategy.StrategyParams) -> None:
+        """No executable quotes -> v0 returns None -> wrapper returns None."""
+        assert down_skeptic_v4(_view(up_ask=None, down_ask=None), params) is None
+
+    def test_up_pick_passes_through_unchanged(
+        self, params: strategy.StrategyParams
+    ) -> None:
+        """An Up pick is never penalised — v0's Up signal flows straight through."""
+        view = _view(up_ask=0.55, down_ask=0.46, fair_up=0.70)  # edge_up 0.15
+        sig = down_skeptic_v4(view, params)
+        assert isinstance(sig, ShadowSignal)
+        assert sig.side == "Up"
+        assert sig.edge == pytest.approx(0.15)
+        assert "down-skeptic" not in sig.reason
+
+    def test_marginal_down_pick_vetoed(
+        self, params: strategy.StrategyParams
+    ) -> None:
+        """v0 enters Down at edge 0.06, below the 0.05+0.02 bar -> vetoed."""
+        # 1-fair_up = 0.58 vs down_ask 0.52 -> edge_down 0.06; up edge negative.
+        view = _view(fair_up=0.42, up_ask=0.50, down_ask=0.52)
+        # sanity: v0 itself takes this Down (edge 0.06 >= entry_edge_min 0.05)
+        side, *_ = strategy.signal_from_executable_edges(
+            0.42 - 0.50, (1 - 0.42) - 0.52, 120, 0.50, 0.52, params
+        )
+        assert side == "Down"
+        assert down_skeptic_v4(view, params) is None
+
+    def test_strong_down_pick_kept(self, params: strategy.StrategyParams) -> None:
+        """v0 enters Down at edge 0.08, clears the 0.07 bar -> kept and tagged."""
+        # 1-fair_up = 0.62 vs down_ask 0.54 -> edge_down 0.08.
+        view = _view(fair_up=0.38, up_ask=0.50, down_ask=0.54)
+        sig = down_skeptic_v4(view, params)
+        assert isinstance(sig, ShadowSignal)
+        assert sig.side == "Down"
+        assert sig.edge == pytest.approx(0.08)
+        assert "down-skeptic" in sig.reason
+
+    def test_premium_is_tunable(self, params: strategy.StrategyParams) -> None:
+        """A zero premium reduces it to v0's Down behaviour (no extra bar)."""
+        view = _view(fair_up=0.42, up_ask=0.50, down_ask=0.52)  # Down edge 0.06
+        assert down_skeptic_v4(view, params, down_edge_premium=0.0) is not None
+        assert down_skeptic_v4(view, params, down_edge_premium=0.02) is None

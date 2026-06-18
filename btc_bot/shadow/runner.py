@@ -103,6 +103,7 @@ _MODELS: dict[
     "fair_value_v0": _v0_control,
     "cushion_favorite_v2": signals.cushion_favorite_v2,
     "late_convergence_v3": signals.late_convergence_v3,
+    "down_skeptic_v4": signals.down_skeptic_v4,
 }
 
 

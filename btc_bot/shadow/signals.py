@@ -152,3 +152,72 @@ def late_convergence_v3(
             f"book {fav_price:.2f} fair {fair_fav:.2f}"
         ),
     )
+
+
+def down_skeptic_v4(
+    view: SnapshotView,
+    params: strategy.StrategyParams,
+    down_edge_premium: float = 0.02,
+) -> ShadowSignal | None:
+    """Reuse v0's pick, but make DOWN entries clear a higher edge bar.
+
+    The settlement rule resolves ties (``spot >= reference``) to Up, so Up
+    wins ~52% of windows structurally and Down fights a ~2pp headwind the
+    fair-value model does not fully price — leaving v0 prone to over-betting
+    Down on thin edges that then lose. This candidate takes v0's pick
+    unchanged when it is **Up**, but vetoes a **Down** pick whose edge does
+    not exceed ``entry_edge_min + down_edge_premium``: Down must earn extra
+    margin to be worth taking against the structural Up edge. (With v0's
+    default edge cap this leaves Down a narrow high-edge band, so the model
+    becomes strongly Up-leaning — which is exactly the hypothesis under test:
+    that over-betting the disfavoured Down side is what bleeds.)
+
+    Args:
+        view: Immutable per-tick market view.
+        params: Active strategy parameters (v0 thresholds).
+        down_edge_premium: Extra edge a Down pick must clear above the v0
+            floor, in probability units.
+
+    Returns:
+        A :class:`ShadowSignal` when v0 wants the trade *and* (if Down) the
+        elevated edge bar is cleared, otherwise ``None``.
+    """
+    edge_up = view.fair_up - view.up_ask if view.up_ask is not None else None
+    edge_down = (1.0 - view.fair_up) - view.down_ask if view.down_ask is not None else None
+
+    side, confidence, _notional, reason = strategy.signal_from_executable_edges(
+        edge_up,
+        edge_down,
+        view.remaining_seconds,
+        view.up_ask,
+        view.down_ask,
+        params,
+    )
+    if side is None:
+        return None
+
+    if side == "Up":
+        entry_price = view.up_ask
+        edge = edge_up
+        fair_prob = view.fair_up
+    else:
+        entry_price = view.down_ask
+        edge = edge_down
+        fair_prob = 1.0 - view.fair_up
+
+    if entry_price is None or edge is None:
+        return None
+
+    # Down skeptic: a Down pick must clear a HIGHER edge bar than v0's floor.
+    if side == "Down" and edge < params.entry_edge_min + down_edge_premium:
+        return None
+
+    note = f"down-skeptic +{down_edge_premium:.02f} on Down; " if side == "Down" else ""
+    return ShadowSignal(
+        side=side,
+        entry_price=entry_price,
+        fair_prob=fair_prob,
+        edge=edge,
+        confidence=confidence,
+        reason=f"{note}{reason}",
+    )

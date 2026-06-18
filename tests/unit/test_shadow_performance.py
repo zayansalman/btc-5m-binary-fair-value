@@ -72,7 +72,9 @@ def _seed_db(path: Path) -> None:
     rows: list[tuple] = []
 
     def add(model_id: str, slug: str, side: str, entry: float, shares: float, won: bool):
-        outcome = "win" if won else "loss"
+        # The ledger stores the winning SIDE in `outcome`: a row won iff its
+        # own side is the winning side.
+        outcome = side if won else ("Down" if side == "Up" else "Up")
         rows.append(
             (
                 "2026-06-18T00:00:00+00:00",
