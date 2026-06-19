@@ -116,6 +116,30 @@ CREATE INDEX IF NOT EXISTS idx_btc_live_orders_created
   ON btc_live_orders(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_btc_live_orders_status
   ON btc_live_orders(status);
+
+CREATE TABLE IF NOT EXISTS btc_model_shadow_positions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_at TEXT,
+  window_slug TEXT,
+  model_id TEXT,
+  side TEXT,
+  entry_price REAL,
+  notional_usd REAL,
+  shares REAL,
+  fair_prob REAL,
+  edge REAL,
+  confidence REAL,
+  reason TEXT,
+  state TEXT,
+  outcome TEXT,
+  settlement_price REAL,
+  resolved_at TEXT,
+  realized_pnl_usd REAL,
+  quote_source TEXT,
+  feed_source TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_btc_model_shadow_positions_window_model
+  ON btc_model_shadow_positions(window_slug, model_id);
 """
 
 BTC_LIVE_ORDERS_COLUMN_MIGRATIONS = {

@@ -80,6 +80,12 @@ MAX_AUTO_BUMP_SHARES = 2 * DEFAULT_MIN_ORDER_SIZE
 # get_order statuses meaning the order can never trade again.
 _TERMINAL_ORDER_STATUSES = {"matched", "canceled", "cancelled"}
 
+# Boot reconciliation: Polymarket's order manager can return a transient
+# 425 "order manager not ready, please retry" right after a cold start. The
+# cancel-all is idempotent, so we retry it before refusing to boot live.
+_BOOT_CANCEL_MAX_ATTEMPTS = 5
+_BOOT_CANCEL_BACKOFF_SECONDS = 1.5
+
 
 class LiveBootRefused(RuntimeError):
     """Raised when live mode is requested but the boot gate is not satisfied."""
@@ -334,14 +340,35 @@ class LiveExecutor:
         """Cancel resting orders from dead sessions and re-adopt open positions."""
         # 1) Cancel ALL resting orders on the account. A resting GTC in the
         # book of a 5-minute market from a dead session is pure downside.
-        try:
-            raw = await asyncio.to_thread(self._client.cancel_all)
-        except Exception as e:  # noqa: BLE001
+        # Retry transient API errors (notably the 425 "order manager not ready,
+        # please retry" Polymarket returns right after a cold start) — the
+        # cancel is idempotent, so retrying is safe; only refuse after the
+        # retries are exhausted, preserving the never-trade-on-unknown-orders
+        # safety.
+        raw: Any = None
+        last_err: Exception | None = None
+        for attempt in range(1, _BOOT_CANCEL_MAX_ATTEMPTS + 1):
+            try:
+                raw = await asyncio.to_thread(self._client.cancel_all)
+                last_err = None
+                break
+            except Exception as e:  # noqa: BLE001
+                last_err = e
+                log.warning(
+                    "live.boot_cancel_retry",
+                    attempt=attempt,
+                    max_attempts=_BOOT_CANCEL_MAX_ATTEMPTS,
+                    error=f"{type(e).__name__}: {e}",
+                )
+                if attempt < _BOOT_CANCEL_MAX_ATTEMPTS:
+                    await asyncio.sleep(_BOOT_CANCEL_BACKOFF_SECONDS * attempt)
+        if last_err is not None:
             raise LiveBootRefused(
                 f"Boot reconciliation failed: could not cancel resting orders "
-                f"({type(e).__name__}: {e}). Refusing to trade on top of unknown "
-                "resting orders."
-            ) from e
+                f"after {_BOOT_CANCEL_MAX_ATTEMPTS} attempts "
+                f"({type(last_err).__name__}: {last_err}). Refusing to trade on "
+                "top of unknown resting orders."
+            ) from last_err
         await journal_live_order(
             intent="CANCEL_ALL", side="-", status="CANCELLED",
             details={"reason": "BOOT_RECONCILE", "response": raw},

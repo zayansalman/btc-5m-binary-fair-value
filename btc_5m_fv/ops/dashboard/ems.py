@@ -152,9 +152,16 @@ async def ems_html() -> str:
         mode=mode,
         bypass_loss_halt=bypass_loss_halt,
     )
+    from btc_bot.shadow import runner as _shadow_runner
+
+    active_model = (
+        await get_config(_shadow_runner.ACTIVE_MODEL_KEY, _shadow_runner.DEFAULT_MODEL)
+        or _shadow_runner.DEFAULT_MODEL
+    )
     controls_html = controls.render(
         trade_shares_current=trade_shares_current,
         current_price=current_price,
+        active_model=active_model,
     )
     strategy_html = strategy.render(
         style=style,
@@ -164,6 +171,7 @@ async def ems_html() -> str:
         max_trade=max_trade_effective,
         trade_shares=trade_shares_current,
         current_price=current_price,
+        active_model=active_model,
     )
     market_html = market.render(tick)
     decision_html = decision_engine.render(

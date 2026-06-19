@@ -53,7 +53,7 @@ _Status: `WIRED` = has non-test importers; `DEAD?` = no importers found (investi
 | `btc_5m_fv/strategy/fair_value.py` | WIRED | 2 | Fair-value probability and volatility estimation. |
 | `btc_5m_fv/strategy/signal.py` | DEAD? | 0 | Signal composition — bridge raw edge into a fully typed :class:`Signal`. |
 | `btc_5m_fv/strategy/sizing.py` | WIRED | 1 | Position sizing derived from signal confidence and strategy parameters. |
-| `btc_bot/__init__.py` | pkg | 4 | BTC 5-minute paper-trading package. |
+| `btc_bot/__init__.py` | pkg | 6 | BTC 5-minute paper-trading package. |
 | `btc_bot/adaptive.py` | WIRED | 2 | Adaptive risk controller (#36): edge-decay auto-pause + calibration. |
 | `btc_bot/backtest.py` | WIRED | 5 | Backtest and optimize the BTC 5-minute binary strategy on local history. |
 | `btc_bot/calibration.py` | WIRED | 3 | Probability calibration for the side-relative model output (#37). |
@@ -61,14 +61,20 @@ _Status: `WIRED` = has non-test importers; `DEAD?` = no importers found (investi
 | `btc_bot/chronos_signal.py` | DEAD? | 0 | Layer 3 — Chronos time-series ensemble (stub). |
 | `btc_bot/controller.py` | WIRED | 2 | Start/stop controller for the BTC 5-minute trader (paper default, live opt-in). |
 | `btc_bot/history.py` | WIRED | 3 | Load the user's exported Polymarket history for BTC sizing context. |
-| `btc_bot/paper.py` | WIRED | 4 | BTC 5-minute trading engine (paper by default, live opt-in). |
+| `btc_bot/paper.py` | WIRED | 5 | BTC 5-minute trading engine (paper by default, live opt-in). |
 | `btc_bot/params.py` | WIRED | 5 | Active strategy parameters (Layer 2 — operator-gated auto-tune). |
 | `btc_bot/params_apply.py` | cli | 0 | Layer 2 — operator-gated promotion of proposed -> active strategy params. |
 | `btc_bot/params_propose.py` | cli | 0 | Layer 2 — propose tuned strategy parameters from the existing backtest grid. |
-| `btc_bot/strategy.py` | WIRED | 3 | Shared BTC 5-minute binary strategy math. |
+| `btc_bot/shadow/__init__.py` | pkg | 6 | Shadow forward-tester: candidate strategies logged and settled net of fees. |
+| `btc_bot/shadow/fees.py` | WIRED | 2 | Polymarket taker-fee math for the shadow forward-tester. |
+| `btc_bot/shadow/ledger.py` | WIRED | 2 | Persistence for the shadow forward-tester's would-be trades. |
+| `btc_bot/shadow/runner.py` | WIRED | 5 | Shadow forward-tester runner. |
+| `btc_bot/shadow/signals.py` | WIRED | 1 | Candidate strategies for the shadow forward-tester. |
+| `btc_bot/shadow/types.py` | WIRED | 3 | Shared data contracts for the shadow forward-tester. |
+| `btc_bot/strategy.py` | WIRED | 5 | Shared BTC 5-minute binary strategy math. |
 | `config.py` | WIRED | 22 | Configuration for the local BTC 5-minute binary fair-value strategy lab. |
 | `dashboard.py` | WIRED | 1 | Local Gradio dashboard for BTC 5-minute paper trading. |
-| `db.py` | WIRED | 12 | SQLite storage for the BTC 5-minute binary fair-value strategy lab. |
+| `db.py` | WIRED | 13 | SQLite storage for the BTC 5-minute binary fair-value strategy lab. |
 | `logging_setup.py` | WIRED | 9 | Structured JSON logging with structlog. Module + trade_id context. |
 | `main.py` | cli | 0 | Entrypoint for the BTC 5-minute paper trading system. |
 | `tools/backtest_btc_strategy.py` | cli | 0 | Run the BTC strategy backtest and parameter optimizer. |
@@ -81,3 +87,4 @@ _Status: `WIRED` = has non-test importers; `DEAD?` = no importers found (investi
 | `tools/live_preflight.py` | cli | 0 | Live-launch preflight: verify the .env wallet config end to end (issue #32). |
 | `tools/live_setup.py` | cli | 0 | One-time live-trading onboarding (issues #32, #33). |
 | `tools/offline_replay.py` | cli | 0 | Offline replay of the BTC 5-m fair-value strategy on HF Polymarket data. |
+| `tools/shadow_performance.py` | cli | 0 | Per-model performance comparison for the shadow forward-tester. |
