@@ -128,6 +128,14 @@ app.mount("/static", StaticFiles(directory=str(dashboard_dir / "static")), name=
 
 templates = Jinja2Templates(directory=str(dashboard_dir / "templates"))
 
+# Cache-bust static JS by its mtime so a code change is always picked up — the
+# browser otherwise caches /static/dashboard.js across server restarts, leaving
+# new functions (e.g. setActiveModel) undefined on a stale page.
+try:
+    _STATIC_VERSION = str(int((dashboard_dir / "static" / "dashboard.js").stat().st_mtime))
+except OSError:
+    _STATIC_VERSION = "1"
+
 # ---------------------------------------------------------------------------
 # Formatting helpers (ported from original dashboard.py)
 # ---------------------------------------------------------------------------
@@ -558,6 +566,7 @@ async def dashboard(request: Request) -> Any:
             "mode": mode,
             "live_available": live_available,
             "live_hint": live_hint,
+            "static_version": _STATIC_VERSION,
         },
     )
 
