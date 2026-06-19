@@ -1000,3 +1000,38 @@ async def test_start_refreshes_balance_allowance(journal_db, tmp_path: Path) -> 
     client.update_balance_allowance.assert_called_once()
     params = client.update_balance_allowance.call_args.args[0]
     assert params.signature_type == 1  # the executor's configured type
+
+
+@pytest.mark.asyncio
+async def test_boot_cancel_retries_transient_then_succeeds(
+    journal_db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A transient 425 'order manager not ready' on cancel_all is retried,
+    not treated as fatal — reconciliation succeeds once the cancel does."""
+    monkeypatch.setattr("btc_5m_fv.execution.live._BOOT_CANCEL_BACKOFF_SECONDS", 0.0)
+    client = _mock_client()
+    client.cancel_all.side_effect = [
+        Exception("PolyApiException[status_code=425, order manager not ready]"),
+        Exception("PolyApiException[status_code=425, order manager not ready]"),
+        {"canceled": [], "not_canceled": {}},
+    ]
+    ex = _executor(client, tmp_path)
+    await ex._reconcile_account()  # must NOT raise
+    assert client.cancel_all.call_count == 3
+    rows = await _journal_rows(journal_db)
+    assert any(r["intent"] == "CANCEL_ALL" and r["status"] == "CANCELLED" for r in rows)
+
+
+@pytest.mark.asyncio
+async def test_boot_cancel_refuses_after_exhausting_retries(
+    journal_db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If the cancel keeps failing, boot is STILL refused — the never-trade-on-
+    unknown-resting-orders safety is preserved, just no longer tripped by a blip."""
+    monkeypatch.setattr("btc_5m_fv.execution.live._BOOT_CANCEL_BACKOFF_SECONDS", 0.0)
+    client = _mock_client()
+    client.cancel_all.side_effect = Exception("PolyApiException[status_code=425]")
+    ex = _executor(client, tmp_path)
+    with pytest.raises(LiveBootRefused, match="after 5 attempts"):
+        await ex._reconcile_account()
+    assert client.cancel_all.call_count == 5
