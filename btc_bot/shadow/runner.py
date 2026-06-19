@@ -107,6 +107,51 @@ _MODELS: dict[
 }
 
 
+# --- Live model selection (operator-switchable active trading model) ----------
+# The active model is stored in config under ACTIVE_MODEL_KEY and read every tick
+# by the loop, so switching it from the dashboard takes effect with no restart,
+# in paper AND live. v0 is the default and uses the loop's native signal path;
+# the others dispatch through CANDIDATE_SIGNALS.
+ACTIVE_MODEL_KEY = "btc_model.active"
+DEFAULT_MODEL = "fair_value_v0"
+MODEL_IDS: list[str] = list(_MODELS.keys())
+
+MODEL_LABELS: dict[str, str] = {
+    "fair_value_v0": "Fair-Value · Settle",
+    "cushion_favorite_v2": "Cushion Favorite",
+    "late_convergence_v3": "Late Convergence",
+    "down_skeptic_v4": "Down-Skeptic",
+}
+MODEL_DESCRIPTIONS: dict[str, str] = {
+    "fair_value_v0": "v0 baseline · edge 0.045–0.07 · favorites ≥0.50 · hold→resolution",
+    "cushion_favorite_v2": "v0 + cushion: spot clearly on the favoured side of the strike",
+    "late_convergence_v3": "final 5–45s · buy near-certainties (book ≥0.85)",
+    "down_skeptic_v4": "v0 but Down needs +0.02 extra edge (prices the ≥-tie Up bias)",
+}
+
+# Candidate signal fns for the LIVE dispatch. v0 is intentionally absent — it
+# uses the loop's native signal_from_executable_edges path.
+CANDIDATE_SIGNALS: dict[
+    str, Callable[[SnapshotView, strategy.StrategyParams], ShadowSignal | None]
+] = {
+    "cushion_favorite_v2": signals.cushion_favorite_v2,
+    "late_convergence_v3": signals.late_convergence_v3,
+    "down_skeptic_v4": signals.down_skeptic_v4,
+}
+
+
+def candidate_signal(
+    model_id: str, view: SnapshotView, params: strategy.StrategyParams
+) -> ShadowSignal | None:
+    """Live-dispatch helper: the selected candidate's would-be trade, or None.
+
+    Returns None for ``fair_value_v0`` / unknown ids — the caller falls back to
+    the native v0 path for those.
+    """
+    fn = CANDIDATE_SIGNALS.get(model_id)
+    return fn(view, params) if fn else None
+
+
 async def record_shadow(
     snapshot: PaperSnapshot, params: strategy.StrategyParams
 ) -> None:

@@ -147,3 +147,27 @@ async def test_settle_books_net_of_fee_pnl(test_db, params) -> None:
     expected = runner.SHADOW_SHARES * net_pnl_per_share(0.56, won=True)
     assert row["realized_pnl_usd"] == pytest.approx(expected)
     assert row["realized_pnl_usd"] > 0  # cushioned favourite that won, net of fee
+
+
+def test_model_registry_constants() -> None:
+    assert runner.DEFAULT_MODEL == "fair_value_v0"
+    assert set(runner.MODEL_IDS) >= {
+        "fair_value_v0",
+        "cushion_favorite_v2",
+        "late_convergence_v3",
+        "down_skeptic_v4",
+    }
+    # every selectable id has a label + description for the dashboard
+    for mid in runner.MODEL_IDS:
+        assert mid in runner.MODEL_LABELS and mid in runner.MODEL_DESCRIPTIONS
+
+
+def test_candidate_signal_dispatch(params) -> None:
+    """The live-dispatch helper routes to the candidate, and v0/unknown -> None."""
+    view = runner.build_view(_snapshot())  # cushioned Up favourite (see _snapshot)
+    # v0 and unknown ids return None — the caller uses the native v0 path.
+    assert runner.candidate_signal("fair_value_v0", view, params) is None
+    assert runner.candidate_signal("not_a_model", view, params) is None
+    # a real candidate dispatches to its function.
+    sig = runner.candidate_signal("cushion_favorite_v2", view, params)
+    assert sig is not None and sig.side == "Up"

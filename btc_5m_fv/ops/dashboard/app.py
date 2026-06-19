@@ -749,6 +749,21 @@ async def api_runtime_config(request: Request) -> dict[str, Any]:
         )
         log.info("btc.runtime_config_set", key=key, value=value)
         return {"status": "ok", "key": key, "value": value}
+    if key == "active_model":
+        from db import set_config
+        from btc_bot.shadow import runner as _shadow_runner
+
+        model = str((body or {}).get("value", ""))
+        if model not in _shadow_runner.MODEL_IDS:
+            return {"status": "error", "detail": f"unknown model {model!r}"}
+        await set_config(_shadow_runner.ACTIVE_MODEL_KEY, model)
+        await notify(
+            "btc_runtime_config",
+            f"Operator set active model to {model} (paper+live, runtime — no restart)",
+            {"key": key, "value": model},
+        )
+        log.info("btc.runtime_config_set", key=key, value=model)
+        return {"status": "ok", "key": key, "value": model}
     return {"status": "error", "detail": f"unknown runtime key {key!r}"}
 
 

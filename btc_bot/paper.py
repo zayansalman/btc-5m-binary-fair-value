@@ -76,9 +76,11 @@ from btc_bot import calibration as _calibration
 from btc_bot import params as _params
 from btc_bot.shadow import ledger as shadow_ledger
 from btc_bot.shadow import runner as shadow_runner
+from btc_bot.shadow.types import SnapshotView
 from btc_bot.strategy import (
     StrategyParams,
     fair_up_probability,
+    notional_from_confidence,
     sigma_per_second,
     signal_from_executable_edges,
 )
@@ -780,9 +782,47 @@ async def _build_snapshot(client: httpx.AsyncClient) -> PaperSnapshot:
     else:
         edge_up = edge_down = None
 
+    # Operator-selected active model (#model-selector). Read every tick so a
+    # dashboard switch applies with no restart. v0 (default) uses the native
+    # signal path below; the other candidates dispatch through the shadow
+    # registry. ONLY the side/confidence/reason signal changes — sizing and
+    # every downstream risk gate (loss-halt, caps, slippage) are untouched.
+    active_model = (
+        await get_config(shadow_runner.ACTIVE_MODEL_KEY, shadow_runner.DEFAULT_MODEL)
+        or shadow_runner.DEFAULT_MODEL
+    )
+    edge_override: float | None = None
     if degraded_reason is not None:
         side, confidence, notional = None, 0.0, 0.0
         reason = f"skip: settlement feed degraded ({degraded_reason})"
+    elif active_model in shadow_runner.CANDIDATE_SIGNALS:
+        _params = _strategy_params()
+        if up_book.best_bid is not None and up_book.best_ask is not None:
+            _market_up = (up_book.best_bid + up_book.best_ask) / 2.0
+        else:
+            _market_up = up_book.best_ask if up_book.best_ask is not None else 0.5
+        _view = SnapshotView(
+            window_slug=slug,
+            remaining_seconds=remaining,
+            spot=spot if spot is not None else 0.0,
+            reference=reference if reference is not None else 0.0,
+            up_ask=up_book.best_ask if up_book.buyable else None,
+            down_ask=down_book.best_ask if down_book.buyable else None,
+            market_up_price=_market_up,
+            fair_up=fair_up,
+            sigma_per_second=sigma if sigma is not None else 0.0,
+            feed_source="loop",
+            quote_source="clob",
+        )
+        _sig = shadow_runner.candidate_signal(active_model, _view, _params)
+        if _sig is None:
+            side, confidence, notional = None, 0.0, 0.0
+            reason = f"skip: {active_model} — no entry this tick"
+        else:
+            side, confidence = _sig.side, _sig.confidence
+            notional = notional_from_confidence(confidence, _params)
+            edge_override = _sig.edge
+            reason = f"[{active_model}] {_sig.reason}"
     else:
         side, confidence, notional, reason = signal_from_executable_edges(
             edge_up,
@@ -808,8 +848,11 @@ async def _build_snapshot(client: httpx.AsyncClient) -> PaperSnapshot:
             _risk_gate.runtime_trade_shares,
         )
 
-    candidate_edges = [e for e in (edge_up, edge_down) if e is not None]
-    edge = max(candidate_edges) if candidate_edges else 0.0
+    if edge_override is not None:
+        edge = edge_override
+    else:
+        candidate_edges = [e for e in (edge_up, edge_down) if e is not None]
+        edge = max(candidate_edges) if candidate_edges else 0.0
 
     return PaperSnapshot(
         created_at=datetime.now(UTC).isoformat(timespec="seconds"),
