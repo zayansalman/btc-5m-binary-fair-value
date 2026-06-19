@@ -74,9 +74,13 @@ from btc_5m_fv.execution.gate import (
 from btc_bot.adaptive import evaluate_and_maybe_pause
 from btc_bot import calibration as _calibration
 from btc_bot import params as _params
+from btc_bot.shadow import ledger as shadow_ledger
+from btc_bot.shadow import runner as shadow_runner
+from btc_bot.shadow.types import SnapshotView
 from btc_bot.strategy import (
     StrategyParams,
     fair_up_probability,
+    notional_from_confidence,
     sigma_per_second,
     signal_from_executable_edges,
 )
@@ -447,6 +451,7 @@ async def paper_tick_once() -> PaperSnapshot:
         await _close_due_positions(snapshot, client)
         if not kill_active:
             await _maybe_open_position(snapshot)
+        await _record_and_settle_shadow(snapshot, client)
     return snapshot
 
 
@@ -777,9 +782,47 @@ async def _build_snapshot(client: httpx.AsyncClient) -> PaperSnapshot:
     else:
         edge_up = edge_down = None
 
+    # Operator-selected active model (#model-selector). Read every tick so a
+    # dashboard switch applies with no restart. v0 (default) uses the native
+    # signal path below; the other candidates dispatch through the shadow
+    # registry. ONLY the side/confidence/reason signal changes — sizing and
+    # every downstream risk gate (loss-halt, caps, slippage) are untouched.
+    active_model = (
+        await get_config(shadow_runner.ACTIVE_MODEL_KEY, shadow_runner.DEFAULT_MODEL)
+        or shadow_runner.DEFAULT_MODEL
+    )
+    edge_override: float | None = None
     if degraded_reason is not None:
         side, confidence, notional = None, 0.0, 0.0
         reason = f"skip: settlement feed degraded ({degraded_reason})"
+    elif active_model in shadow_runner.CANDIDATE_SIGNALS:
+        _params = _strategy_params()
+        if up_book.best_bid is not None and up_book.best_ask is not None:
+            _market_up = (up_book.best_bid + up_book.best_ask) / 2.0
+        else:
+            _market_up = up_book.best_ask if up_book.best_ask is not None else 0.5
+        _view = SnapshotView(
+            window_slug=slug,
+            remaining_seconds=remaining,
+            spot=spot if spot is not None else 0.0,
+            reference=reference if reference is not None else 0.0,
+            up_ask=up_book.best_ask if up_book.buyable else None,
+            down_ask=down_book.best_ask if down_book.buyable else None,
+            market_up_price=_market_up,
+            fair_up=fair_up,
+            sigma_per_second=sigma if sigma is not None else 0.0,
+            feed_source="loop",
+            quote_source="clob",
+        )
+        _sig = shadow_runner.candidate_signal(active_model, _view, _params)
+        if _sig is None:
+            side, confidence, notional = None, 0.0, 0.0
+            reason = f"skip: {active_model} — no entry this tick"
+        else:
+            side, confidence = _sig.side, _sig.confidence
+            notional = notional_from_confidence(confidence, _params)
+            edge_override = _sig.edge
+            reason = f"[{active_model}] {_sig.reason}"
     else:
         side, confidence, notional, reason = signal_from_executable_edges(
             edge_up,
@@ -805,8 +848,11 @@ async def _build_snapshot(client: httpx.AsyncClient) -> PaperSnapshot:
             _risk_gate.runtime_trade_shares,
         )
 
-    candidate_edges = [e for e in (edge_up, edge_down) if e is not None]
-    edge = max(candidate_edges) if candidate_edges else 0.0
+    if edge_override is not None:
+        edge = edge_override
+    else:
+        candidate_edges = [e for e in (edge_up, edge_down) if e is not None]
+        edge = max(candidate_edges) if candidate_edges else 0.0
 
     return PaperSnapshot(
         created_at=datetime.now(UTC).isoformat(timespec="seconds"),
@@ -1419,6 +1465,60 @@ def _window_start_from_slug(slug: str) -> int | None:
         return int(str(slug).rsplit("-", 1)[-1])
     except (TypeError, ValueError):
         return None
+
+
+async def _settle_due_shadows(
+    client: httpx.AsyncClient, current_slug: str | None
+) -> None:
+    """Settle every resolvable OPEN shadow window via the Chainlink connector.
+
+    Resolves the ABSOLUTE window winner (Up/Down) — reusing the same settlement
+    read as live positions — so candidates that opened on windows the live bot
+    never traded are still settled. The in-progress window is skipped; the
+    connector returns ``None`` for windows not yet settleable, which we skip.
+    """
+    async with connect() as db:
+        async with db.execute(
+            "SELECT DISTINCT window_slug FROM btc_model_shadow_positions "
+            "WHERE state = 'open'"
+        ) as cur:
+            slugs = [str(row["window_slug"]) for row in await cur.fetchall()]
+    for slug in slugs:
+        if slug == current_slug:
+            continue
+        start_ts = _window_start_from_slug(slug)
+        if start_ts is None:
+            continue
+        connector = _make_settlement_connector(client, slug)
+        try:
+            up_won = await connector.settle_window(start_ts)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("shadow.settle_read_failed", window_slug=slug, error=str(exc))
+            continue
+        if up_won is None:
+            continue
+        await shadow_ledger.settle_open_shadow(
+            window_slug=slug,
+            outcome_side="Up" if up_won else "Down",
+            settlement_price=1.0,
+            resolved_at=datetime.now(UTC).isoformat(timespec="seconds"),
+        )
+
+
+async def _record_and_settle_shadow(
+    snapshot: PaperSnapshot, client: httpx.AsyncClient
+) -> None:
+    """Run the shadow forward-tester, fully isolated so it can never break the
+    live trading loop. Records each candidate's would-be trade for this window
+    and settles any now-resolvable shadow windows."""
+    if _config.BTC_SHADOW_ENABLED != "on":
+        return
+    try:
+        params = _strategy_params()
+        await shadow_runner.record_shadow(snapshot, params)
+        await _settle_due_shadows(client, snapshot.window_slug)
+    except Exception as exc:  # noqa: BLE001 — never let the harness break the loop
+        log.warning("shadow.harness_error", error=str(exc))
 
 
 async def _close_position(

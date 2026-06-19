@@ -128,6 +128,14 @@ app.mount("/static", StaticFiles(directory=str(dashboard_dir / "static")), name=
 
 templates = Jinja2Templates(directory=str(dashboard_dir / "templates"))
 
+# Cache-bust static JS by its mtime so a code change is always picked up — the
+# browser otherwise caches /static/dashboard.js across server restarts, leaving
+# new functions (e.g. setActiveModel) undefined on a stale page.
+try:
+    _STATIC_VERSION = str(int((dashboard_dir / "static" / "dashboard.js").stat().st_mtime))
+except OSError:
+    _STATIC_VERSION = "1"
+
 # ---------------------------------------------------------------------------
 # Formatting helpers (ported from original dashboard.py)
 # ---------------------------------------------------------------------------
@@ -558,6 +566,7 @@ async def dashboard(request: Request) -> Any:
             "mode": mode,
             "live_available": live_available,
             "live_hint": live_hint,
+            "static_version": _STATIC_VERSION,
         },
     )
 
@@ -749,6 +758,21 @@ async def api_runtime_config(request: Request) -> dict[str, Any]:
         )
         log.info("btc.runtime_config_set", key=key, value=value)
         return {"status": "ok", "key": key, "value": value}
+    if key == "active_model":
+        from db import set_config
+        from btc_bot.shadow import runner as _shadow_runner
+
+        model = str((body or {}).get("value", ""))
+        if model not in _shadow_runner.MODEL_IDS:
+            return {"status": "error", "detail": f"unknown model {model!r}"}
+        await set_config(_shadow_runner.ACTIVE_MODEL_KEY, model)
+        await notify(
+            "btc_runtime_config",
+            f"Operator set active model to {model} (paper+live, runtime — no restart)",
+            {"key": key, "value": model},
+        )
+        log.info("btc.runtime_config_set", key=key, value=model)
+        return {"status": "ok", "key": key, "value": model}
     return {"status": "error", "detail": f"unknown runtime key {key!r}"}
 
 

@@ -7,13 +7,17 @@ transform — no DB access here (values are loaded in ``ems.py`` and passed in).
 """
 from __future__ import annotations
 
+from html import escape
+
 from btc_5m_fv.execution.live import DEFAULT_MIN_ORDER_SIZE
+from btc_bot.shadow import runner as _shadow_runner
 
 
 def render(
     *,
     trade_shares_current: float | None,
     current_price: float | None,
+    active_model: str = "fair_value_v0",
 ) -> str:
     """Render the CONTROLS card.
 
@@ -56,6 +60,28 @@ def render(
         "<div class='gr-toggle-hint'>"
         "you set the share count · every order ≥ 5 shares (venue minimum) · "
         "applies to paper + live"
+        "</div>"
+        # --- Strategy-model selector (live-switchable) ----------------------
+        "<div class='card-h' style='margin-top:12px'>STRATEGY MODEL"
+        "<span class='win'>live-switchable</span></div>"
+        "<div class='de-kv'>"
+        f"<div><span>Active</span><b class='mono'>"
+        f"{escape(_shadow_runner.MODEL_LABELS.get(active_model, active_model))}</b></div>"
+        f"<div><span>What</span><b class='mono dim'>"
+        f"{escape(_shadow_runner.MODEL_DESCRIPTIONS.get(active_model, ''))}</b></div>"
+        "</div>"
+        "<div class='ctl-row'>"
+        "<select id='ctl-model' class='ctl-input' aria-label='Active strategy model'>"
+        + "".join(
+            f"<option value='{mid}'{' selected' if mid == active_model else ''}>"
+            f"{escape(_shadow_runner.MODEL_LABELS.get(mid, mid))}</option>"
+            for mid in _shadow_runner.MODEL_IDS
+        )
+        + "</select>"
+        "<button class='gr-btn btn-ok' onclick='setActiveModel()'>Apply</button>"
+        "</div>"
+        "<div class='gr-toggle-hint'>"
+        "switches which model the bot actually trades · paper + live · no restart"
         "</div>"
         "</section>"
     )

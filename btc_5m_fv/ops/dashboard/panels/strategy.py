@@ -6,6 +6,7 @@ from html import escape
 import config as _config
 from btc_bot import calibration as _calibration
 from btc_bot import params as _params
+from btc_bot.shadow import runner as _shadow_runner
 
 
 def render(
@@ -17,6 +18,7 @@ def render(
     max_trade: float | None = None,
     trade_shares: float | None = None,
     current_price: float | None = None,
+    active_model: str = "fair_value_v0",
 ) -> str:
     active = _params.load_active()
     # Sizing line: share-denominated when the operator set a share count (#89),
@@ -76,7 +78,8 @@ def render(
     return (
         "<section class='card'><div class='card-h'>STRATEGY</div>"
         "<div class='kv'>"
-        f"<div><span>Model</span><b>Fair-Value · Settle</b></div>"
+        f"<div><span>Model</span><b>{escape(_shadow_runner.MODEL_LABELS.get(active_model, active_model))}</b></div>"
+        f"<div><span>Logic</span><b class='dim'>{escape(_shadow_runner.MODEL_DESCRIPTIONS.get(active_model, ''))}</b></div>"
         f"<div><span>Style</span><b>{escape(style)} (1 entry/window, hold→resolution)</b></div>"
         f"<div><span>Edge band</span><b>{_config.BTC_PAPER_ENTRY_EDGE_MIN:.3f} – {_config.BTC_PAPER_ENTRY_EDGE_MAX:.3f}</b></div>"
         f"<div><span>Entry floor</span><b>≥ {_config.BTC_PAPER_MIN_ENTRY_PRICE:.2f} (favorites)</b></div>"
