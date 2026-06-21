@@ -36,6 +36,9 @@ class SnapshotView:
         market_up_price: The book's mid/last Up price (used for "favored").
         fair_up: Model fair probability the window resolves Up.
         sigma_per_second: Estimated one-second volatility, or ``None``.
+        drift_per_second: Estimated one-second directional drift (mean 1s
+            log-return), or ``None`` when the feed cannot supply it. Paired
+            with ``sigma_per_second`` to form a standardised-momentum regime.
         feed_source: Provenance label for the spot/reference feed.
         quote_source: Provenance label for the Up/Down asks.
     """
@@ -51,6 +54,7 @@ class SnapshotView:
     sigma_per_second: float | None
     feed_source: str
     quote_source: str
+    drift_per_second: float | None = None
 
 
 @dataclass(frozen=True)

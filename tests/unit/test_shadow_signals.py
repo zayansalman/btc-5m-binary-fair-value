@@ -21,6 +21,7 @@ import pytest
 
 from btc_bot import strategy
 from btc_bot.shadow.signals import (
+    cushion_drift_v5,
     cushion_favorite_v2,
     down_skeptic_v4,
     late_convergence_v3,
@@ -143,6 +144,116 @@ class TestCushionFavoriteV2:
             fair_up=0.30,
         )
         assert cushion_favorite_v2(view, params) is None
+
+
+# ---------------------------------------------------------------------------
+# drift_per_second  (directional twin of sigma_per_second)
+# ---------------------------------------------------------------------------
+
+
+class TestDriftPerSecond:
+    def test_insufficient_data_returns_zero(self) -> None:
+        """Fewer than 2 valid returns -> no drift estimate -> 0.0."""
+        assert strategy.drift_per_second([]) == pytest.approx(0.0)
+        assert strategy.drift_per_second([50000.0]) == pytest.approx(0.0)
+
+    def test_flat_prices_zero_drift(self) -> None:
+        """Constant prices have zero log-returns -> zero mean drift."""
+        assert strategy.drift_per_second([50000.0] * 10) == pytest.approx(0.0)
+
+    def test_monotone_up_positive_drift(self) -> None:
+        """A rising series has positive mean log-return."""
+        assert strategy.drift_per_second([100.0, 101.0, 102.0, 103.0]) > 0.0
+
+    def test_monotone_down_negative_drift(self) -> None:
+        """A falling series has negative mean log-return."""
+        assert strategy.drift_per_second([103.0, 102.0, 101.0, 100.0]) < 0.0
+
+    def test_value_is_mean_log_return(self) -> None:
+        """Drift equals the arithmetic mean of consecutive 1s log-returns."""
+        import math
+
+        closes = [100.0, 102.0, 101.0]
+        expected = (math.log(102.0 / 100.0) + math.log(101.0 / 102.0)) / 2
+        assert strategy.drift_per_second(closes) == pytest.approx(expected)
+
+
+# ---------------------------------------------------------------------------
+# cushion_drift_v5  (regime-adaptive asymmetric cushion)
+# ---------------------------------------------------------------------------
+
+
+class TestCushionDriftV5:
+    def test_neutral_regime_equals_v2(self, params: strategy.StrategyParams) -> None:
+        """drift=0 -> regime 0 -> identical decision to cushion_favorite_v2."""
+        view = _view(
+            spot=50000.0, reference=49980.0, up_ask=0.55, fair_up=0.70,
+            sigma_per_second=0.0003, drift_per_second=0.0,
+        )
+        v5 = cushion_drift_v5(view, params)
+        v2 = cushion_favorite_v2(view, params)
+        assert isinstance(v5, ShadowSignal) and isinstance(v2, ShadowSignal)
+        assert (v5.side, v5.entry_price, v5.edge) == (v2.side, v2.entry_price, v2.edge)
+
+    def test_drift_none_equals_v2(self, params: strategy.StrategyParams) -> None:
+        """Missing drift feed -> regime 0 -> behaves as v2 (never raises)."""
+        view = _view(
+            spot=50000.0, reference=49980.0, up_ask=0.55, fair_up=0.70,
+            drift_per_second=None,
+        )
+        assert cushion_drift_v5(view, params) is not None
+
+    def test_up_regime_vetoes_a_down_v2_took(
+        self, params: strategy.StrategyParams
+    ) -> None:
+        """Strong bull regime raises the Down bar above a 2bps cushion v2 accepted."""
+        # v0 -> Down; Down cushion = (50010-50000)/50000*1e4 = 2.0bps (> base 1.5).
+        common = dict(
+            spot=50000.0, reference=50010.0, up_ask=0.72, down_ask=0.55,
+            market_up_price=0.30, fair_up=0.30, sigma_per_second=0.0003,
+        )
+        assert cushion_favorite_v2(_view(**common), params) is not None  # v2 takes it
+        bull = _view(**common, drift_per_second=0.0003)  # drift==sigma -> regime +1
+        assert cushion_drift_v5(bull, params) is None  # Down bar 2.5 > 2.0 -> veto
+
+    def test_up_regime_takes_an_up_v2_skipped(
+        self, params: strategy.StrategyParams
+    ) -> None:
+        """Strong bull regime lowers the Up bar below a 1bps cushion v2 rejected."""
+        # v0 -> Up; Up cushion = (50005-50000)/50000*1e4 = 1.0bps (< base 1.5).
+        common = dict(
+            spot=50005.0, reference=50000.0, up_ask=0.55, fair_up=0.70,
+            sigma_per_second=0.0003,
+        )
+        assert cushion_favorite_v2(_view(**common), params) is None  # v2 skips it
+        bull = _view(**common, drift_per_second=0.0003)  # regime +1 -> Up bar 0.5
+        sig = cushion_drift_v5(bull, params)
+        assert isinstance(sig, ShadowSignal) and sig.side == "Up"
+        assert "regime" in sig.reason
+
+    def test_down_regime_takes_a_down_v2_skipped(
+        self, params: strategy.StrategyParams
+    ) -> None:
+        """Strong bear regime lowers the Down bar below a 1bps cushion v2 rejected."""
+        # v0 -> Down; Down cushion = (50005-50000)/50000*1e4 = 1.0bps (< base 1.5).
+        common = dict(
+            spot=50000.0, reference=50005.0, up_ask=0.72, down_ask=0.55,
+            market_up_price=0.30, fair_up=0.30, sigma_per_second=0.0003,
+        )
+        assert cushion_favorite_v2(_view(**common), params) is None  # v2 skips it
+        bear = _view(**common, drift_per_second=-0.0003)  # regime -1 -> Down bar 0.5
+        sig = cushion_drift_v5(bear, params)
+        assert isinstance(sig, ShadowSignal) and sig.side == "Down"
+
+    def test_floor_caps_a_strong_regime(self, params: strategy.StrategyParams) -> None:
+        """Even max bull regime cannot drop the Up bar below the 0.5bps floor."""
+        # Up cushion = 0.4bps, below the 0.5 floor -> vetoed despite full bull regime.
+        view = _view(
+            spot=50002.0, reference=50000.0, up_ask=0.55, fair_up=0.70,
+            sigma_per_second=0.0003, drift_per_second=0.0003,
+        )
+        assert (50002.0 - 50000.0) / 50000.0 * 1e4 < 0.5  # sanity: below the floor
+        assert cushion_drift_v5(view, params) is None
 
 
 # ---------------------------------------------------------------------------
