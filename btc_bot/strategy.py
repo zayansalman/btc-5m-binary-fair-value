@@ -35,6 +35,26 @@ def sigma_per_second(closes: list[float]) -> float:
     return max(statistics.stdev(returns), 0.00002)
 
 
+def drift_per_second(closes: list[float]) -> float:
+    """Estimate one-second directional drift as the MEAN of 1s log-returns.
+
+    The directional twin of :func:`sigma_per_second` (which is the *stdev* of
+    the same returns): a positive value means spot has been rising, negative
+    falling. Returns ``0.0`` when there are fewer than 2 valid returns — no
+    drift estimate rather than a fabricated one — so a caller normalising by
+    sigma sees a neutral (zero) regime. Unlike sigma there is no floor: zero
+    drift is a meaningful, unbiased reading.
+    """
+    returns = [
+        math.log(closes[i] / closes[i - 1])
+        for i in range(1, len(closes))
+        if closes[i] > 0 and closes[i - 1] > 0
+    ]
+    if len(returns) < 2:
+        return 0.0
+    return statistics.fmean(returns)
+
+
 def fair_up_probability(
     spot: float,
     reference: float,

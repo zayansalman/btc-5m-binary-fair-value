@@ -65,6 +65,7 @@ def build_view(snapshot: PaperSnapshot) -> SnapshotView:
         sigma_per_second=snapshot.sigma_per_second,
         feed_source=snapshot.feed_source,
         quote_source=snapshot.quote_source,
+        drift_per_second=snapshot.drift_per_second,
     )
 
 
@@ -104,6 +105,7 @@ _MODELS: dict[
     "cushion_favorite_v2": signals.cushion_favorite_v2,
     "late_convergence_v3": signals.late_convergence_v3,
     "down_skeptic_v4": signals.down_skeptic_v4,
+    "cushion_drift_v5": signals.cushion_drift_v5,
 }
 
 
@@ -121,12 +123,14 @@ MODEL_LABELS: dict[str, str] = {
     "cushion_favorite_v2": "Cushion Favorite",
     "late_convergence_v3": "Late Convergence",
     "down_skeptic_v4": "Down-Skeptic",
+    "cushion_drift_v5": "Cushion · Regime Drift",
 }
 MODEL_DESCRIPTIONS: dict[str, str] = {
     "fair_value_v0": "v0 baseline · edge 0.045–0.07 · favorites ≥0.50 · hold→resolution",
     "cushion_favorite_v2": "v0 + cushion: spot clearly on the favoured side of the strike",
     "late_convergence_v3": "final 5–45s · buy near-certainties (book ≥0.85)",
     "down_skeptic_v4": "v0 but Down needs +0.02 extra edge (prices the ≥-tie Up bias)",
+    "cushion_drift_v5": "v0 + regime-adaptive cushion: drift/σ momentum shifts the Up/Down bar",
 }
 
 # Candidate signal fns for the LIVE dispatch. v0 is intentionally absent — it
@@ -137,6 +141,7 @@ CANDIDATE_SIGNALS: dict[
     "cushion_favorite_v2": signals.cushion_favorite_v2,
     "late_convergence_v3": signals.late_convergence_v3,
     "down_skeptic_v4": signals.down_skeptic_v4,
+    "cushion_drift_v5": signals.cushion_drift_v5,
 }
 
 

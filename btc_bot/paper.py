@@ -79,6 +79,7 @@ from btc_bot.shadow import runner as shadow_runner
 from btc_bot.shadow.types import SnapshotView
 from btc_bot.strategy import (
     StrategyParams,
+    drift_per_second,
     fair_up_probability,
     notional_from_confidence,
     sigma_per_second,
@@ -227,6 +228,12 @@ class PaperSnapshot:
     # the dashboard can show raw vs calibrated and the journal stays auditable.
     # Equals fair_up_prob when the identity calibrator is in use.
     fair_up_prob_raw: float | None = None
+    # One-second directional drift (mean 1s log-return) from the settlement
+    # series, paired with sigma to form the regime input the adaptive-cushion
+    # candidates consume (#94). In-memory only — not journaled to the tick
+    # table — and defaults to 0.0 (neutral regime) so historical replays and
+    # the many existing constructors are unaffected.
+    drift_per_second: float = 0.0
 
     @property
     def has_executable_quote(self) -> bool:
@@ -751,6 +758,13 @@ async def _build_snapshot(client: httpx.AsyncClient) -> PaperSnapshot:
     reference = await _get_window_reference(client, slug, start_ts)
 
     sigma, vol_source = await _sigma_with_fallback(client, chainlink_closes)
+    # Directional drift for the regime-adaptive candidates (#94), from the SAME
+    # settlement series as sigma. Chainlink-only on purpose: a thin series ->
+    # 0.0 -> neutral regime (candidates fall back to their fixed cushion), and
+    # the Binance shape-fallback is a different instrument's level path, so its
+    # drift direction would be misleading even though its return shape is fine
+    # for volatility.
+    drift = drift_per_second(chainlink_closes)
 
     degraded_reason: str | None = None
     if spot is None:
@@ -813,6 +827,7 @@ async def _build_snapshot(client: httpx.AsyncClient) -> PaperSnapshot:
             sigma_per_second=sigma if sigma is not None else 0.0,
             feed_source="loop",
             quote_source="clob",
+            drift_per_second=drift,
         )
         _sig = shadow_runner.candidate_signal(active_model, _view, _params)
         if _sig is None:
@@ -862,6 +877,7 @@ async def _build_snapshot(client: httpx.AsyncClient) -> PaperSnapshot:
         spot_price=spot if spot is not None else 0.0,
         reference_price=reference if reference is not None else 0.0,
         sigma_per_second=sigma,
+        drift_per_second=drift,
         market_up_price=up_book.best_ask,
         market_down_price=down_book.best_ask,
         fair_up_prob=fair_up,
