@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.4.14 — Record the real average fill price, not the limit (2026-06-22)
+
+Addresses #103. A matched live entry recorded `self._entry_price = price` — the posted **limit**, not the price the order actually filled at. Since `_entry_price` feeds settlement PnL, an order that filled *better* than the ask (the common case, buying at the best ask into a moving book) silently **overstated** PnL.
+
+### What
+- **`btc_5m_fv/execution/live.py`** — new `_avg_fill_price(response, side, limit)`: a market-matched order reports `makingAmount` (USDC paid) / `takingAmount` (tokens received), so the realised price is their ratio (inverse for a SELL). `submit_entry` now records that real average for a matched fill. **Safe fallback:** any missing/unparseable amount, or a price outside `(0, 1]`, returns the limit — zero regression for resting/later-matched orders.
+- **Tests** (`test_live_executor.py`): matched response with `makingAmount/takingAmount` records the real avg (0.55, not the 0.57 limit); a response without `makingAmount` falls back to the limit. Full suite **640 green**, ruff clean.
+
+### Fees & remaining for #103
+Real **fees** are already captured by the Data-API reconciliation (`tools/reconcile_live_ledger.py`, #102) — it books economic PnL from actual USDC flows, net of any fee. The order-placement response does not reliably expose a per-fill fee (and real fees on these 5m markets are ≈ 0). Remaining hardening: real **exit** fill price (entry is the dominant PnL term for held-to-resolution), and an automatic post-stop reconcile so the ledger self-heals each session.
+
 ## v0.4.13 — Settle from real held size; stop phantom wins + paper double-count (2026-06-22)
 
 Addresses #103 (the root cause behind the #102 reconciliation). At settlement, `record_settlement` already books the **real** matched/held size to the live counter — but `_close_position(settled=True)` was booking the **ledger** row from `pos["shares"]` (the *recorded* size, which includes entries that never filled on-venue). Two bugs:
