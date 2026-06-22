@@ -1437,6 +1437,7 @@ async def _close_rolled_position(
             window_slug=pos["window_slug"],
         )
         return False
+    settled_held: float | None = None
     if _live_executor is not None:
         # Settle-style live: no exit order — register the resolution with the
         # executor (PnL into the daily halt, slot freed; winning tokens await
@@ -1445,8 +1446,12 @@ async def _close_rolled_position(
         result = await _live_executor.record_settlement(won, pos["window_slug"])
         if not result.ok and result.status != "SKIPPED":
             return False
+        # Real held size the venue actually settled (0 when the entry never
+        # filled) — the ledger books on THIS, not the recorded shares (#103).
+        settled_held = result.size or 0.0
     return await _close_position(
-        pos, snapshot, 1.0 if won else 0.0, "WINDOW_ROLL", settled=True
+        pos, snapshot, 1.0 if won else 0.0, "WINDOW_ROLL",
+        settled=True, settled_held=settled_held,
     )
 
 
@@ -1543,6 +1548,7 @@ async def _close_position(
     exit_price: float,
     reason: str,
     settled: bool = False,
+    settled_held: float | None = None,
 ) -> bool:
     """Close one position; returns True when the ledger row was closed.
 
@@ -1602,6 +1608,16 @@ async def _close_position(
             if exit_result.price is not None:
                 exit_price = exit_result.price
             pnl = prior_pnl + sold * (exit_price - entry_price)
+    elif executor is not None:
+        # Live settled (#103). record_settlement already booked the REAL held-size
+        # PnL to the LIVE counter, so the ledger row must use that same real held
+        # — NOT the recorded shares, which can include an entry that never filled
+        # (a phantom that would otherwise book a fictional win). And we must NOT
+        # re-book here: a second record_realized_pnl(is_live=False) would
+        # double-count this live PnL into the PAPER leg (the bug behind
+        # paper_pnl mirroring live_pnl).
+        held = settled_held if settled_held is not None else float(pos["shares"])
+        pnl = prior_pnl + held * (exit_price - entry_price)
     else:
         pnl = float(pos["shares"]) * (exit_price - entry_price)
         # Paper closes feed the SAME daily-loss-halt counter live closes do

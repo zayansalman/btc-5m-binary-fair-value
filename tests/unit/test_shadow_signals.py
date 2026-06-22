@@ -23,6 +23,7 @@ from btc_bot import strategy
 from btc_bot.shadow.signals import (
     cushion_drift_v5,
     cushion_favorite_v2,
+    down_skeptic_drift_v6,
     down_skeptic_v4,
     late_convergence_v3,
 )
@@ -425,3 +426,65 @@ class TestDownSkepticV4:
         view = _view(fair_up=0.42, up_ask=0.50, down_ask=0.52)  # Down edge 0.06
         assert down_skeptic_v4(view, params, down_edge_premium=0.0) is not None
         assert down_skeptic_v4(view, params, down_edge_premium=0.02) is None
+
+
+# ---------------------------------------------------------------------------
+# down_skeptic_drift_v6  (regime-aware two-sided edge toll)
+# ---------------------------------------------------------------------------
+
+
+class TestDownSkepticDriftV6:
+    def test_neutral_regime_equals_v4_up(self, params: strategy.StrategyParams) -> None:
+        """drift=0 -> regime 0 -> same Up decision as down_skeptic_v4."""
+        view = _view(
+            up_ask=0.55, down_ask=0.46, fair_up=0.70,
+            sigma_per_second=0.0003, drift_per_second=0.0,
+        )
+        v6 = down_skeptic_drift_v6(view, params)
+        v4 = down_skeptic_v4(view, params)
+        assert isinstance(v6, ShadowSignal) and isinstance(v4, ShadowSignal)
+        assert (v6.side, v6.entry_price, v6.edge) == (v4.side, v4.entry_price, v4.edge)
+
+    def test_neutral_regime_equals_v4_down_marginal(
+        self, params: strategy.StrategyParams
+    ) -> None:
+        """drift=0 -> a marginal Down (edge 0.06 < 0.07) is vetoed, like v4."""
+        view = _view(
+            fair_up=0.42, up_ask=0.50, down_ask=0.52,
+            sigma_per_second=0.0003, drift_per_second=0.0,
+        )
+        assert down_skeptic_v4(view, params) is None
+        assert down_skeptic_drift_v6(view, params) is None
+
+    def test_drift_none_equals_v4(self, params: strategy.StrategyParams) -> None:
+        """Missing drift feed -> regime 0 -> Up passes through like v4."""
+        view = _view(up_ask=0.55, down_ask=0.46, fair_up=0.70, drift_per_second=None)
+        v6 = down_skeptic_drift_v6(view, params)
+        assert isinstance(v6, ShadowSignal) and v6.side == "Up"
+
+    def test_bear_regime_vetoes_thin_up_that_v4_takes(
+        self, params: strategy.StrategyParams
+    ) -> None:
+        """Full bear regime tolls Up by +0.02; a 0.06-edge Up v4 takes is vetoed."""
+        # edge_up = 0.62 - 0.56 = 0.06 (in [0.05, 0.07)); Down not executable.
+        common = dict(fair_up=0.62, up_ask=0.56, down_ask=0.46, sigma_per_second=0.0003)
+        v4_sig = down_skeptic_v4(_view(**common), params)
+        assert isinstance(v4_sig, ShadowSignal) and v4_sig.side == "Up"  # v4 takes it
+        bear = _view(**common, drift_per_second=-0.0003)  # drift/sigma=-1 -> regime -1
+        assert down_skeptic_drift_v6(bear, params) is None  # Up bar 0.07 > 0.06 -> veto
+
+    def test_bull_regime_vetoes_thin_down_that_v4_takes(
+        self, params: strategy.StrategyParams
+    ) -> None:
+        """Full bull regime tolls Down by +0.04; a 0.08-edge Down v4 keeps is vetoed."""
+        # edge_down = (1-0.38) - 0.54 = 0.08 (>= v4 bar 0.07, < v6 bull bar 0.09).
+        common = dict(fair_up=0.38, up_ask=0.50, down_ask=0.54, sigma_per_second=0.0003)
+        v4_sig = down_skeptic_v4(_view(**common), params)
+        assert isinstance(v4_sig, ShadowSignal) and v4_sig.side == "Down"  # v4 keeps it
+        bull = _view(**common, drift_per_second=0.0003)  # drift/sigma=+1 -> regime +1
+        assert down_skeptic_drift_v6(bull, params) is None  # Down bar 0.09 > 0.08 -> veto
+
+    def test_none_when_v0_declines(self, params: strategy.StrategyParams) -> None:
+        """No executable quotes -> v0 picks no side -> None (v6 never forces a side)."""
+        view = _view(up_ask=None, down_ask=None, drift_per_second=-0.0003)
+        assert down_skeptic_drift_v6(view, params) is None

@@ -148,3 +148,78 @@ class TestApiStop:
 class TestApiStream:
     def test_stream_route_exists(self):
         assert any(r.path == "/api/stream" for r in app.routes)
+
+
+class TestPerformanceReconLine:
+    """The 'Reconciled vs Polymarket' footer surfaces real account truth (#102)."""
+
+    _PERF = dict(
+        n=5, wins=3, losses=2, pnl=1.2, roi=0.05, win_rate=0.6,
+        expectancy=0.24, profit_factor=1.5, max_dd=-0.5, equity=[0.0, 1.0, 2.0],
+    )
+    _RECON = {
+        "real_btc_pnl_lifetime": "-14.5139",
+        "real_account_pnl_lifetime": "-34.096",
+        "open_positions_value": "6.2578",
+        "asof": "2026-06-22T05:03:56Z",
+        "source": "polymarket-data-api",
+    }
+
+    def test_recon_line_renders_real_numbers(self) -> None:
+        from btc_5m_fv.ops.dashboard.panels import performance
+
+        html = performance.render(
+            style="settle", perf=self._PERF, perf_live={"n": 0}, perf_paper={"n": 0},
+            recon=self._RECON,
+        )
+        assert "Reconciled vs Polymarket" in html
+        assert "$-14.51" in html  # BTC bot real
+        assert "$-34.10" in html  # account real
+        assert "2026-06-22T05:03:56" in html
+
+    def test_recon_line_absent_without_data(self) -> None:
+        from btc_5m_fv.ops.dashboard.panels import performance
+
+        html = performance.render(
+            style="settle", perf=self._PERF, perf_live={"n": 0}, perf_paper={"n": 0},
+            recon=None,
+        )
+        assert "Reconciled vs Polymarket" not in html
+class TestModelSelector:
+    """The dropdown lists the full logged roster (SELECTABLE_MODELS); an unknown
+    active model still renders (orphan guard); the switch rejects unknown ids."""
+
+    def test_selector_lists_all_selectable_models(self) -> None:
+        from btc_5m_fv.ops.dashboard.panels import controls
+        from btc_bot.shadow import runner
+
+        html = controls.render(
+            trade_shares_current=None, current_price=None, active_model="down_skeptic_v4"
+        )
+        for mid in runner.SELECTABLE_MODELS:
+            assert f"value='{mid}'" in html
+        # The full roster is selectable now (#111): the former controls and the
+        # restored late_convergence_v3 all appear as options.
+        assert "value='fair_value_v0'" in html
+        assert "value='cushion_favorite_v2'" in html
+        assert "value='late_convergence_v3'" in html
+        # An unknown id is never rendered as an option.
+        assert "value='no_such_model'" not in html
+
+    def test_selector_includes_orphaned_active_model(self) -> None:
+        """An unknown / non-selectable active model still renders (orphan guard)."""
+        from btc_5m_fv.ops.dashboard.panels import controls
+
+        html = controls.render(
+            trade_shares_current=None, current_price=None, active_model="ghost_model"
+        )
+        assert "value='ghost_model'" in html
+
+    def test_active_model_rejects_unknown(self, client: TestClient) -> None:
+        """Posting an unknown / non-selectable model id is rejected (no write)."""
+        r = client.post(
+            "/api/runtime-config",
+            json={"key": "active_model", "value": "no_such_model"},
+        )
+        assert r.status_code == 200
+        assert r.json()["status"] == "error"

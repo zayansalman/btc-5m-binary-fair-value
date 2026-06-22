@@ -1,5 +1,116 @@
 # Changelog
 
+## v0.4.19 — Restore full model roster to the strategy-model selector (2026-06-22)
+
+Reverses the #100 roster trim per operator request (#111): all six logged models are operator-selectable from the dashboard again.
+
+### What
+- **`btc_bot/shadow/runner.py`** — `SELECTABLE_MODELS` is now the full roster in vN-experiment order (`fair_value_v0`, `cushion_favorite_v2`, `late_convergence_v3`, `down_skeptic_v4`, `cushion_drift_v5`, `down_skeptic_drift_v6`); the former silent controls (`fair_value_v0`, `cushion_favorite_v2`) are no longer hidden from the dropdown.
+- **`btc_bot/shadow/signals.py`** — **resurrects `late_convergence_v3`** (deleted in #100), restored faithfully from git `39649c8`; re-registered in `_MODELS`, `MODEL_LABELS` ("Late Convergence (v3)"), `MODEL_DESCRIPTIONS`, and `CANDIDATE_SIGNALS` (live-dispatchable).
+- **`panels/controls.py`** — comment refresh (controls no longer hidden); the orphan guard that always renders an unknown active model is unchanged.
+- **Tests** — `TestLateConvergenceV3` restored (11 cases); `test_shadow_runner` asserts the full selectable roster; `test_dashboard` lists all six options and exercises the orphan guard + allow-list rejection with a genuinely unknown id. Full suite **656 green**, ruff clean.
+
+### Caveat
+`late_convergence_v3` is net-negative in shadow (91% win rate, ~-$14 PnL — the favorite-soak trap). It is on the live selector at the operator's explicit request, not because it has a proven edge.
+
+## v0.4.18 — Stop phantom fills at settlement on a venue lookup failure (2026-06-22)
+
+Addresses #109 — the dominant live-PnL inflation channel surfaced by the strategy assessment + reconciliation (#102/#103). A **settle-style** position whose entry **rested and never matched on-venue** was booked at the **full submitted size** when the `get_order` fill lookup failed at settlement — manufacturing a phantom WIN (`won`) or phantom LOSS (`!won`). This is why the as-booked live ledger showed a profit that flips to a real loss once the never-executed rows are voided.
+
+### Root cause
+`_order_fill_info` returns its `default_size` on lookup failure. The entry callers passed `default_size=self._entry_size` (**assume fully filled**) — correct for the EXIT/SELL path (under-selling strands real tokens) but wrong for SETTLE (no SELL, so over-counting books fiction). The optimism leaked into `record_settlement` via `cancel_open` (live.py:960) and `_matched_entry_size` (live.py:1109).
+
+### What
+- **`btc_5m_fv/execution/live.py`** — `_matched_entry_size` and `cancel_open` gain `assume_filled_on_error` (default `True`, preserving exit/flatten/kill behavior). `record_settlement` passes `False`, so a failed venue lookup on a never-matched entry settles to **held=0** — no phantom PnL, in either direction.
+- **Tests** (`test_live_executor.py`): phantom-WIN, phantom-LOSS, and an exit-vs-settle asymmetry guard. Full suite **646 green**, ruff clean.
+
+### Not fixed here (follow-up)
+A distinct, smaller channel — premature loss-booking of *matched-but-unresolved* windows from settlement-source (Chainlink vs Polymarket) timing — needs its own reproduction and is tracked separately, not rushed in.
+
+## v0.4.17 — Fix red CI: offline-harness deps missing from pyproject test extra (2026-06-22)
+
+`develop` CI was failing. CI installs `pip install -e ".[test]"` (pyproject), but `polars` and `huggingface-hub` lived only in `requirements.txt` — so CI never installed them and `tests/unit/test_offline_replay.py` + `test_chainlink_lead_lag.py` broke pytest **collection** (`ModuleNotFoundError: polars`), failing the test job and zeroing `docs-drift`'s `count_tests()` (#79). Passed locally only because the dev venv happened to have polars (requirements/pyproject drift).
+
+### What
+- **`pyproject.toml`** — add `polars>=1.17`, `huggingface-hub>=0.26` to the `test` optional-dependencies group so `.[test]` (and therefore CI) installs them. No runtime/core dependency change.
+- **Verified** in a clean venv mimicking CI (`pip install -e ".[test]"`, no requirements.txt): the two modules now collect (12 tests); full local suite **643 passed**.
+
+## v0.4.16 — Selector labels carry the model version (2026-06-22)
+
+Addresses #108. The shadow-model dropdown showed semantic labels (`Down-Skeptic`, `Down-Skeptic · Regime Drift`) that didn't map back to the persisted `model_id`s (`down_skeptic_v4`, `down_skeptic_drift_v6`). The version jump compounds the confusion: down-skeptic is **v4** and its regime-drift child is **v6** because the `vN` suffix is a *global* experiment counter — `cushion_drift` (v5) was logged between them — not a per-family version.
+
+### What
+- **`btc_bot/shadow/runner.py`** — `MODEL_LABELS` now appends the version tag, e.g. `Down-Skeptic (v4)`, `Down-Skeptic · Regime Drift (v6)`, so each dropdown label maps 1:1 to its `model_id`. **Display-only**: the `model_id`s — persisted keys behind 828 ledger rows, the `btc_model.active` pointer (currently `down_skeptic_v4`), and ~121 code refs — are untouched. No rename, no DB migration, no behavior change.
+- **Tests**: `test_shadow_runner.py` green (label/description key coverage unchanged); ruff clean.
+
+## v0.4.15 — Real exit fill price + reconcile staleness guard (2026-06-22)
+
+Completes #103's fill-price work. The **exit** (SELL) path recorded the posted limit, mirroring the entry bug fixed in v0.4.14. Now both sides record the real fill.
+
+### What
+- **`btc_5m_fv/execution/live.py`** — `submit_exit` registers exit fills at `_avg_fill_price(result.raw, SELL, price)` (a SELL's realised price is `takingAmount`/`makingAmount`), with the same safe limit fallback for resting/unmatched orders. Exits are rare (≈7 vs 383 buys) and most positions settle held-to-resolution, so the entry price dominates — this just makes the recording symmetric and correct.
+- **`tools/reconcile_live_ledger.py`** — **staleness guard**: `--apply` now refuses when the ledger holds live positions newer than the Data-API snapshot (they'd be voided as phantoms before the API indexes them — the near-miss from the manual run). `--force` overrides.
+- **Tests** (`test_live_executor.py`): `_avg_fill_price` direct unit coverage (BUY ratio, SELL inverse, limit fallbacks). Full suite **643 green**, ruff clean.
+
+### #103 closed
+Phantom wins + paper double-count (v0.4.13), real entry fill price (v0.4.14), real exit fill price + staleness guard (this). **Auto post-stop reconcile is intentionally not built**: with the recording fixed at the source (real fills, no phantoms, no double-count), the ledger now stays accurate going forward, so auto-mutating the financial ledger on a Data-API pull (which races API indexing) would add risk for no benefit. The manual reconcile tool remains as an audit backstop; fees are captured there via real USDC flows.
+
+## v0.4.14 — Record the real average fill price, not the limit (2026-06-22)
+
+Addresses #103. A matched live entry recorded `self._entry_price = price` — the posted **limit**, not the price the order actually filled at. Since `_entry_price` feeds settlement PnL, an order that filled *better* than the ask (the common case, buying at the best ask into a moving book) silently **overstated** PnL.
+
+### What
+- **`btc_5m_fv/execution/live.py`** — new `_avg_fill_price(response, side, limit)`: a market-matched order reports `makingAmount` (USDC paid) / `takingAmount` (tokens received), so the realised price is their ratio (inverse for a SELL). `submit_entry` now records that real average for a matched fill. **Safe fallback:** any missing/unparseable amount, or a price outside `(0, 1]`, returns the limit — zero regression for resting/later-matched orders.
+- **Tests** (`test_live_executor.py`): matched response with `makingAmount/takingAmount` records the real avg (0.55, not the 0.57 limit); a response without `makingAmount` falls back to the limit. Full suite **640 green**, ruff clean.
+
+### Fees & remaining for #103
+Real **fees** are already captured by the Data-API reconciliation (`tools/reconcile_live_ledger.py`, #102) — it books economic PnL from actual USDC flows, net of any fee. The order-placement response does not reliably expose a per-fill fee (and real fees on these 5m markets are ≈ 0). Remaining hardening: real **exit** fill price (entry is the dominant PnL term for held-to-resolution), and an automatic post-stop reconcile so the ledger self-heals each session.
+
+## v0.4.13 — Settle from real held size; stop phantom wins + paper double-count (2026-06-22)
+
+Addresses #103 (the root cause behind the #102 reconciliation). At settlement, `record_settlement` already books the **real** matched/held size to the live counter — but `_close_position(settled=True)` was booking the **ledger** row from `pos["shares"]` (the *recorded* size, which includes entries that never filled on-venue). Two bugs:
+
+1. **Phantom wins** — a never-filled entry (`held=0`) booked `recorded_shares × (payout − entry)` as a fictional profit into the ledger (the 6 phantoms / +$14.44 the reconciliation found).
+2. **Paper double-count** — a *live* settled close also called `record_realized_pnl(is_live=False)`, polluting the **paper** PnL leg with live PnL (the bug behind `paper_realized_pnl` mirroring `live_realized_pnl`).
+
+### What
+- **`btc_bot/paper.py`** — `_close_position` gains `settled_held`; the settled branch splits: a **live** settle uses the executor's real held size for the ledger row (so `held=0` → PnL 0, no phantom) and does **not** re-book to the gate; **paper** settles keep the existing `is_live=False` halt feed. `_settle_position_outcome` threads `record_settlement(...).size` through.
+- **Tests** (`test_settle_style.py`): real-held sizing (4 of 6 filled → books 2.0 not 3.0), phantom books 0, live settle skips the paper counter. Full suite **638 green**, ruff clean.
+
+### Remaining for #103 (follow-up)
+- Capture the **actual average fill price** (not the limit) and **taker fees** from the CLOB order response; settle from the venue's real resolution. A lightweight periodic Data-API reconcile to self-heal drift.
+
+## v0.4.12 — Reconcile live ledger to real Polymarket fills (2026-06-22)
+
+Closes #102. The dashboard/DB did not reflect the real Polymarket account. Verified read-only against the Polymarket **Data API** (`/activity` + `/positions` + `/value`, funder `0xc1Daa…00c5`):
+
+| | DB claimed | Real (Polymarket) |
+|---|---|---|
+| Bot live PnL (recorded windows) | **+$3.33** | **−$6.74** |
+| BTC bot (full history, realized) | — | **−$14.51** |
+| Whole account (incl. manual non-BTC bets) | — | **−$34.10** |
+
+The ~$20 overstatement was driven by **6 phantom positions** (+$14.44 of fictional wins — orders the bot recorded as filled+won that **never executed on-venue**), plus fee/fill-price drift. Resolved-window PnL was already accurate (Δ −$2.56 across 119). Root cause tracked in #103 (live.py books assumed fills/resolution/zero-fees).
+
+### What
+- **`tools/reconcile_live_ledger.py`** — idempotent, auditable (`--dry-run`/`--apply`). Per window, economic PnL = `sell + redeem + open_currentValue − buy_cost`. Rewrites the 191 real `btc_paper_positions(mode='live')` rows to real entry/exit/shares/notional/PnL (tagged `recon:dataapi`, resolution-disagreements flagged), voids the 6 phantoms (`state='void'`), writes `btc_recon.*` truth keys. Atomic transaction; DB backed up first.
+- **Dashboard "Reconciled vs Polymarket" line** (`panels/performance.py`, `panels/_data.py:reconciliation()`, `ems.py`): surfaces the whole-account ground truth (real BTC PnL, account PnL, open value, as-of) under the LIVE/PAPER cards — the per-window rows can't show it.
+- **Process**: reconciliation only runs against a **stopped** bot (frozen ledger) with a **fresh** Data-API pull; the agent never stops/starts live trading.
+- **Tests**: `test_dashboard.py::TestPerformanceReconLine`. Full suite green (DB-isolated), ruff clean.
+## v0.4.11 — Regime-aware Down-Skeptic + roster trim (2026-06-22)
+
+Closes #100. The live bot bled on a one-sided book: the last 15 live trades were **15/15 Up, 6W/9L, net −$9.71 (−24.3% ROI)**. Root cause was structural — the active model `down_skeptic_v4` charges a **fixed +0.02 edge toll on every Down pick** (to fight v0's `spot >= reference` Up bias), which leans the book almost entirely Up. That is correct in a flat/up market but backwards when the regime turns **bearish** (over the same window, Down bets won 8/9). At ~0.53 entries the asymmetric payoff (break-even win rate 53%) turns a sub-53% Up hit-rate into a steady bleed.
+
+### What
+- **New shadow candidate `down_skeptic_drift_v6`** (`btc_bot/shadow/signals.py`): v4's exact structure (reuse v0's side pick, gate by an edge toll), but the toll **flexes with the same standardised-momentum regime as `cushion_drift_v5`** — `regime = clamp((drift/σ)/0.3, −1, +1)`. `down_extra = 0.02·clamp(1+regime, 0, 2)` and `up_extra = 0.02·clamp(−regime, 0, 1)`: a bear regime tolls Up and frees Down; a bull regime strengthens the Down toll. At `regime == 0` (or no drift feed) it is **byte-for-byte identical to `down_skeptic_v4`**, which is therefore its exact control.
+- **Roster trim** (`btc_bot/shadow/runner.py`): new `SELECTABLE_MODELS = [down_skeptic_v4, cushion_drift_v5, down_skeptic_drift_v6]` **decouples** the operator selector from the logged set. `fair_value_v0` + `cushion_favorite_v2` keep logging as silent controls but are hidden from the dropdown; `late_convergence_v3` is **removed entirely**.
+- **Selector wiring** (`panels/controls.py`, `app.py`): the dropdown and the `POST /api/runtime-config` allow-list both use `SELECTABLE_MODELS`, with an orphan guard so the currently-active model always renders even if hidden.
+- **Shadow-first:** v6 logs alongside live from registration; the agent does **not** flip `btc_model.active` (stays `down_skeptic_v4`). The operator promotes v6 via the selector after a validation window.
+- **Tests**: `test_shadow_signals.py` (v6 ≡ v4 at regime 0 / no drift; bear vetoes a thin Up v4 takes; bull vetoes a thin Down v4 keeps), `test_shadow_runner.py` (registries + `SELECTABLE_MODELS`; late_convergence gone), `test_dashboard.py` (selector lists only selectable; orphan guard; allow-list rejects hidden controls). Full suite **633 green** (DB-isolated), ruff clean, no new mypy errors.
+
+### Out of scope (separate issue)
+- DB/panel reconciliation vs **real Polymarket fills** — the zero-fee assumption, assumed-fill-price-as-limit, and the four divergent on-screen live-PnL numbers (+8.92 / +6.98 / −2.75 / −7.30). Investigated; to be reconciled separately.
+
 ## v0.4.10 — Heal phantom "max 1" singleton block (live) (2026-06-17)
 
 Closes #91. Live trading silently stopped: the BLOCKED panel showed every entry rejected with **"an open position/order already exists (max 1)"** while the position ledger was **flat (0 open rows)** and Polymarket history showed the last position fully **bought and sold** (flat, funds intact). The bot's trade blotter and Polymarket history therefore *agreed* — both flat — but the live executor's **in-memory** singleton flag was stranded `True`, so it blocked forever until a clean restart.

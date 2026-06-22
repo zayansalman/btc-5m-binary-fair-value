@@ -187,6 +187,31 @@ def _filled_shares(response: dict[str, Any]) -> float:
         return 0.0
 
 
+def _avg_fill_price(response: dict[str, Any], side: str, limit_price: float) -> float:
+    """Average executed price from a matched order, else the limit (#103).
+
+    A market-matched order reports ``makingAmount`` / ``takingAmount``. For a
+    BUY the maker asset is USDC (paid) and the taker asset is outcome tokens
+    (received), so the realised average price is ``makingAmount / takingAmount``;
+    a SELL is the inverse. Falls back to ``limit_price`` whenever the amounts are
+    absent or unusable (a resting / later-matched / unparseable order, or a price
+    outside ``(0, 1]``), so this never regresses below the prior limit-price
+    behaviour — it only *improves* the recorded price when the venue reports a
+    real fill.
+    """
+    if str(response.get("status") or "").lower() != "matched":
+        return limit_price
+    try:
+        making = float(response.get("makingAmount") or 0.0)
+        taking = float(response.get("takingAmount") or 0.0)
+    except (TypeError, ValueError):
+        return limit_price
+    if making <= 0 or taking <= 0:
+        return limit_price
+    px = (making / taking) if side == BUY else (taking / making)
+    return px if 0.0 < px <= 1.0 else limit_price
+
+
 class LiveExecutor:
     """Wraps a (synchronous) ``ClobClient`` behind an async, risk-gated API.
 
@@ -544,8 +569,10 @@ class LiveExecutor:
         if self._entry_order_id is not None:
             # The market has resolved; any resting entry remainder is dead.
             # Cancel it so boot reconciliation never re-adopts a ghost order.
-            await self.cancel_open(reason="SETTLEMENT")
-        matched = await self._matched_entry_size()
+            # Conservative fill fallback: settling never sells, so a failed
+            # venue lookup must NOT manufacture held size (#109).
+            await self.cancel_open(reason="SETTLEMENT", assume_filled_on_error=False)
+        matched = await self._matched_entry_size(assume_filled_on_error=False)
         held = _round_size_down(max(0.0, matched - self._entry_sold_size))
         entry_price = self._entry_price or 0.0
         payout = 1.0 if won else 0.0
@@ -737,7 +764,10 @@ class LiveExecutor:
         )
         if result.ok:
             self._entry_token_id = token_id
-            self._entry_price = price
+            # Record the REAL average fill price when the venue matched the order
+            # (makingAmount/takingAmount), not the posted limit — the limit
+            # overstates PnL whenever the order fills better than the ask (#103).
+            self._entry_price = _avg_fill_price(result.raw, BUY, price)
             self._entry_size = size
             self._entry_sold_size = 0.0
             self._position_open = True
@@ -861,7 +891,9 @@ class LiveExecutor:
         if filled >= sellable:
             self._exit_order_id = None
             self._exit_price = None
-            await self._register_exit_fill(sellable, price)
+            await self._register_exit_fill(
+                sellable, _avg_fill_price(result.raw, SELL, price)
+            )
             if self._entry_sold_size >= matched:
                 self._clear_position()
             return result
@@ -878,7 +910,7 @@ class LiveExecutor:
         final, _ = await self._order_fill_info(result.order_id, default_size=0.0)
         self._exit_order_id = None
         self._exit_price = None
-        await self._register_exit_fill(final, price)
+        await self._register_exit_fill(final, _avg_fill_price(result.raw, SELL, price))
         if matched > 0 and self._entry_sold_size >= matched:
             # The order actually filled completely during the cancel race.
             self._clear_position()
@@ -900,7 +932,9 @@ class LiveExecutor:
             order_id=result.order_id, price=price, size=final,
         )
 
-    async def cancel_open(self, reason: str = "CANCEL_REQUEST") -> list[str]:
+    async def cancel_open(
+        self, reason: str = "CANCEL_REQUEST", *, assume_filled_on_error: bool = True
+    ) -> list[str]:
         """Cancel tracked resting orders (entry, and any stale exit).
 
         The matched (filled) size of the entry is captured AFTER the cancel
@@ -909,6 +943,11 @@ class LiveExecutor:
         remainder's notional is credited back to the daily bankroll cap.
         On cancel failure the order id stays tracked so a later attempt can
         retry — the order is never silently forgotten while possibly live.
+
+        ``assume_filled_on_error`` mirrors :meth:`_matched_entry_size`: the
+        exit/flatten callers keep the optimistic default (don't strand
+        tokens), but the SETTLEMENT caller passes ``False`` so a failed fill
+        lookup captures 0, never a phantom held size (#109).
         """
         cancelled: list[str] = []
         # Stale exit order first (only set if an exit cancel failed earlier).
@@ -927,7 +966,10 @@ class LiveExecutor:
         if not await self._try_cancel(order_id, reason=reason):
             return cancelled
         cancelled.append(order_id)
-        matched, _ = await self._order_fill_info(order_id, default_size=self._entry_size)
+        matched, _ = await self._order_fill_info(
+            order_id,
+            default_size=self._entry_size if assume_filled_on_error else 0.0,
+        )
         self._entry_matched_size = matched
         unfilled = max(0.0, self._entry_size - matched)
         if unfilled > 0 and self._entry_price:
@@ -1070,14 +1112,23 @@ class LiveExecutor:
             price = None
         return matched, price
 
-    async def _matched_entry_size(self) -> float:
-        """Matched (filled) share size of the tracked entry order."""
+    async def _matched_entry_size(self, *, assume_filled_on_error: bool = True) -> float:
+        """Matched (filled) share size of the tracked entry order.
+
+        ``assume_filled_on_error`` picks the fallback when the venue fill
+        lookup fails. The EXIT/SELL path passes ``True`` (the default): an
+        oversized SELL is rejected by the exchange and retried, while
+        underselling strands real tokens, so assuming fully filled is safe.
+        The SETTLE path passes ``False``: there is no SELL, so over-counting
+        a never-matched entry books a phantom win/loss into the ledger (#103,
+        #109). Conservative 0 is correct there — an under-counted winner is
+        just a token the operator redeems later, never a fictional PnL.
+        """
         if self._entry_order_id is None:
             return self._entry_matched_size or 0.0
-        # On lookup failure assume fully filled: an oversized SELL is rejected
-        # by the exchange and retried, while underselling strands real tokens.
         matched, _ = await self._order_fill_info(
-            self._entry_order_id, default_size=self._entry_size
+            self._entry_order_id,
+            default_size=self._entry_size if assume_filled_on_error else 0.0,
         )
         return matched
 

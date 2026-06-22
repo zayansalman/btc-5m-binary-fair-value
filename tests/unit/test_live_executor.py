@@ -19,10 +19,13 @@ from py_clob_client_v2 import OrderPayload
 import config as _config
 import db as _db
 from btc_5m_fv.execution.live import (
+    BUY,
     CONFIRM_PHRASE,
+    SELL,
     LiveBootRefused,
     LiveExecutor,
     LiveOrderResult,
+    _avg_fill_price,
     _round_price_to_tick,
     _round_size_down,
     assert_live_boot_allowed,
@@ -30,6 +33,27 @@ from btc_5m_fv.execution.live import (
 )
 
 UP_TOKEN = "1234567890"
+
+
+def test_avg_fill_price_buy_uses_making_over_taking() -> None:
+    """BUY: makingAmount (USDC) / takingAmount (tokens) = realised price."""
+    resp = {"status": "matched", "makingAmount": "2.893", "takingAmount": "5.26"}
+    assert _avg_fill_price(resp, BUY, 0.57) == pytest.approx(0.550, abs=1e-3)
+
+
+def test_avg_fill_price_sell_uses_taking_over_making() -> None:
+    """SELL: takingAmount (USDC) / makingAmount (tokens) = realised price."""
+    resp = {"status": "matched", "makingAmount": "5.0", "takingAmount": "2.9"}
+    assert _avg_fill_price(resp, SELL, 0.55) == pytest.approx(0.58, abs=1e-3)
+
+
+def test_avg_fill_price_falls_back_to_limit() -> None:
+    """Resting / missing amounts / out-of-range price -> the posted limit."""
+    assert _avg_fill_price({"status": "live"}, BUY, 0.57) == 0.57  # not matched
+    assert _avg_fill_price({"status": "matched", "takingAmount": "5"}, BUY, 0.57) == 0.57
+    # making/taking implying price > 1 is rejected as nonsense.
+    bad = {"status": "matched", "makingAmount": "10", "takingAmount": "5"}
+    assert _avg_fill_price(bad, BUY, 0.57) == 0.57
 
 
 # ---------------------------------------------------------------------------
@@ -445,6 +469,52 @@ async def test_fully_matched_entry_is_not_tracked_as_resting(
     assert executor._entry_matched_size == 5.26
     # The slot is still held by the open position (singleton honoured).
     assert "max 1" in (executor.entry_block_reason(3.0) or "")
+
+
+@pytest.mark.asyncio
+async def test_entry_records_real_avg_fill_price(
+    journal_db, tmp_path: Path
+) -> None:
+    """A matched BUY records the REAL average fill price, not the limit (#103).
+
+    Polymarket reports makingAmount (USDC paid) / takingAmount (tokens received);
+    the realised price is their ratio. Booking the limit instead overstates PnL
+    when the order fills better than the posted ask.
+    """
+    client = _mock_client()
+    client.create_and_post_order.return_value = {
+        "success": True,
+        "errorMsg": "",
+        "orderID": "0xORDER1",
+        "status": "matched",
+        "makingAmount": "2.893",  # USDC actually paid
+        "takingAmount": "5.26",   # tokens received -> avg 2.893/5.26 = 0.550
+    }
+    executor = _executor(client, tmp_path)
+
+    result = await executor.submit_entry(UP_TOKEN, 0.57, 3.0, window_slug="w1")
+
+    assert result.ok
+    assert executor._entry_price == pytest.approx(0.550, abs=1e-3)  # NOT the 0.57 limit
+
+
+@pytest.mark.asyncio
+async def test_entry_fill_price_falls_back_to_limit(
+    journal_db, tmp_path: Path
+) -> None:
+    """No makingAmount (resting / unparseable) -> entry price stays the limit."""
+    client = _mock_client()
+    client.create_and_post_order.return_value = {
+        "success": True,
+        "orderID": "0xORDER1",
+        "status": "matched",
+        "takingAmount": "5.26",  # no makingAmount -> avg price not computable
+    }
+    executor = _executor(client, tmp_path)
+
+    await executor.submit_entry(UP_TOKEN, 0.57, 3.0, window_slug="w1")
+
+    assert executor._entry_price == pytest.approx(0.57)  # safe fallback to limit
 
 
 @pytest.mark.asyncio
@@ -1035,3 +1105,75 @@ async def test_boot_cancel_refuses_after_exhausting_retries(
     with pytest.raises(LiveBootRefused, match="after 5 attempts"):
         await ex._reconcile_account()
     assert client.cancel_all.call_count == 5
+
+
+# ---------------------------------------------------------------------------
+# Settlement must not book a phantom fill on a venue lookup failure (#103/#109).
+# A resting entry that never matched on-venue must settle to held=0 when the
+# get_order lookup fails — the "assume filled" default is for the EXIT/SELL path
+# (under-selling strands tokens), NOT for settle (over-counting books fiction).
+# ---------------------------------------------------------------------------
+
+
+def _resting_unfilled_entry(executor: LiveExecutor) -> None:
+    """Put the executor in the state of a submitted entry that never matched."""
+    executor._position_open = True
+    executor._entry_order_id = "0xRESTING"
+    executor._entry_token_id = UP_TOKEN
+    executor._entry_matched_size = None  # never matched on venue
+    executor._entry_size = 5.0
+    executor._entry_price = 0.55
+
+
+@pytest.mark.asyncio
+async def test_settlement_no_phantom_win_when_fill_lookup_fails(
+    journal_db, tmp_path: Path
+) -> None:
+    """won=True + failed fill lookup on a never-matched entry -> held 0, PnL 0."""
+    client = _mock_client()
+    client.get_order.side_effect = RuntimeError("get_order down")  # lookup failure
+    executor = _executor(client, tmp_path)
+    _resting_unfilled_entry(executor)
+
+    result = await executor.record_settlement(
+        won=True, window_slug="btc-updown-5m-1781827800"
+    )
+
+    assert result.status == "SETTLED"
+    assert result.size == 0.0  # no phantom held size
+    assert executor.daily_realized_pnl == 0.0  # no phantom WIN booked
+
+
+@pytest.mark.asyncio
+async def test_settlement_no_phantom_loss_when_fill_lookup_fails(
+    journal_db, tmp_path: Path
+) -> None:
+    """won=False + failed fill lookup on a never-matched entry -> held 0, PnL 0."""
+    client = _mock_client()
+    client.get_order.side_effect = RuntimeError("get_order down")
+    executor = _executor(client, tmp_path)
+    _resting_unfilled_entry(executor)
+
+    result = await executor.record_settlement(
+        won=False, window_slug="btc-updown-5m-1781827800"
+    )
+
+    assert result.size == 0.0
+    assert executor.daily_realized_pnl == 0.0  # no phantom LOSS booked
+
+
+@pytest.mark.asyncio
+async def test_matched_entry_size_asymmetry_on_lookup_failure(
+    journal_db, tmp_path: Path
+) -> None:
+    """Exit path stays optimistic (assume filled); settle path is conservative."""
+    client = _mock_client()
+    client.get_order.side_effect = RuntimeError("get_order down")
+    executor = _executor(client, tmp_path)
+    executor._entry_order_id = "0xRESTING"
+    executor._entry_size = 5.0
+
+    # EXIT default: assume filled so the follow-up SELL never strands tokens.
+    assert await executor._matched_entry_size() == 5.0
+    # SETTLE: no SELL, so a failed lookup must not manufacture held size.
+    assert await executor._matched_entry_size(assume_filled_on_error=False) == 0.0

@@ -36,6 +36,12 @@ def render(
     lo, hi = shares * 0.50, shares * 1.00
     # Infographic: one pip per venue-minimum share, with a label.
     pips = "".join("<span class='shp'></span>" for _ in range(int(minsh)))
+    # Operator-selectable models (the full logged roster; see
+    # runner.SELECTABLE_MODELS). Always include the active model so a
+    # currently-selected id is never orphaned even if one is hidden later.
+    selectable = list(_shadow_runner.SELECTABLE_MODELS)
+    if active_model not in selectable:
+        selectable = [active_model, *selectable]
     return (
         "<section class='card'>"
         "<div class='card-h'>CONTROLS<span class='win'>runtime · no restart</span></div>"
@@ -75,7 +81,7 @@ def render(
         + "".join(
             f"<option value='{mid}'{' selected' if mid == active_model else ''}>"
             f"{escape(_shadow_runner.MODEL_LABELS.get(mid, mid))}</option>"
-            for mid in _shadow_runner.MODEL_IDS
+            for mid in selectable
         )
         + "</select>"
         "<button class='gr-btn btn-ok' onclick='setActiveModel()'>Apply</button>"

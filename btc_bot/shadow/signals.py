@@ -8,7 +8,7 @@ this tick". No database, no clock, no I/O — the loop wiring (built
 separately) owns persistence and settlement, so these functions can be
 unit-tested with hand-built fixtures and reasoned about in isolation.
 
-The two candidates here layer an extra gate on top of the live v0 signal
+The candidates here layer an extra gate on top of the live v0 signal
 (:func:`btc_bot.strategy.signal_from_executable_edges`), which is reused
 verbatim rather than reimplemented:
 
@@ -327,4 +327,95 @@ def cushion_drift_v5(
         edge=edge,
         confidence=confidence,
         reason=f"cushion {cushion_bps:.1f}bps vs bar {bar_bps:.1f} (regime {regime:+.2f}); {reason}",
+    )
+
+
+def down_skeptic_drift_v6(
+    view: SnapshotView,
+    params: strategy.StrategyParams,
+    down_edge_premium: float = 0.02,
+    regime_full_scale: float = 0.3,
+) -> ShadowSignal | None:
+    """v4's down-skeptic edge toll, made regime-aware and two-sided.
+
+    Reuses v0's side selection (:func:`strategy.signal_from_executable_edges`)
+    exactly like :func:`down_skeptic_v4`, then gates by an edge toll. v4 charges
+    a fixed ``down_edge_premium`` on every Down pick — correct against the
+    structural ``spot >= reference`` Up bias in a flat/up market, but backwards
+    in a bearish regime, where it leans the book into the losing Up side. Here
+    the toll flexes with the same standardised-momentum regime as
+    :func:`cushion_drift_v5`:
+
+    * ``regime = clamp((drift/sigma)/regime_full_scale, -1, +1)`` (bullish
+      positive); ``0`` when the drift feed or volatility is unavailable.
+    * ``down_extra = down_edge_premium * clamp(1 + regime, 0, 2)`` — Down's toll
+      grows in a bull regime and shrinks to ``0`` in a full bear regime.
+    * ``up_extra = down_edge_premium * clamp(-regime, 0, 1)`` — Up earns a toll
+      only in a bear regime.
+
+    At ``regime == 0`` (or no drift feed) ``up_extra == 0`` and
+    ``down_extra == down_edge_premium`` -> the decision is **identical to**
+    :func:`down_skeptic_v4`, which is therefore its exact control.
+
+    Args:
+        view: Immutable per-tick market view.
+        params: Active strategy parameters (v0 thresholds).
+        down_edge_premium: Base toll a disfavoured side must clear above the v0
+            floor, in probability units (v4's fixed value).
+        regime_full_scale: drift/sigma ratio mapped to full (``±1``) regime.
+
+    Returns:
+        A :class:`ShadowSignal` when v0 wants the trade *and* the chosen side
+        clears its regime-adjusted edge bar, otherwise ``None``.
+    """
+    edge_up = view.fair_up - view.up_ask if view.up_ask is not None else None
+    edge_down = (1.0 - view.fair_up) - view.down_ask if view.down_ask is not None else None
+
+    side, confidence, _notional, reason = strategy.signal_from_executable_edges(
+        edge_up,
+        edge_down,
+        view.remaining_seconds,
+        view.up_ask,
+        view.down_ask,
+        params,
+    )
+    if side is None:
+        return None
+
+    if side == "Up":
+        entry_price = view.up_ask
+        edge = edge_up
+        fair_prob = view.fair_up
+    else:
+        entry_price = view.down_ask
+        edge = edge_down
+        fair_prob = 1.0 - view.fair_up
+
+    if entry_price is None or edge is None:
+        return None
+
+    drift = view.drift_per_second
+    sigma = view.sigma_per_second
+    if drift is None or not sigma or sigma <= 0:
+        regime = 0.0
+    else:
+        regime = _clamp((drift / sigma) / regime_full_scale, -1.0, 1.0)
+
+    up_extra = down_edge_premium * _clamp(-regime, 0.0, 1.0)
+    down_extra = down_edge_premium * _clamp(1.0 + regime, 0.0, 2.0)
+
+    if side == "Up" and edge < params.entry_edge_min + up_extra:
+        return None
+    if side == "Down" and edge < params.entry_edge_min + down_extra:
+        return None
+
+    extra = up_extra if side == "Up" else down_extra
+    note = f"down-skeptic-drift regime={regime:+.2f} +{extra:.03f} on {side}; "
+    return ShadowSignal(
+        side=side,
+        entry_price=entry_price,
+        fair_prob=fair_prob,
+        edge=edge,
+        confidence=confidence,
+        reason=f"{note}{reason}",
     )

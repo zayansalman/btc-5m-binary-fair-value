@@ -7,12 +7,16 @@ independent (see ``paper._settle_due_shadows``) and PnL is booked NET of the
 Polymarket 7% taker fee. No real orders are ever placed from here — this is a
 pure paper comparison harness.
 
-Candidates:
-- ``fair_value_v0``      — the live strategy, logged as the control baseline.
-- ``cushion_favorite_v2``— v0 + a cushion gate (spot clearly on the favoured
+Candidates (all are logged AND operator-selectable; see ``SELECTABLE_MODELS``):
+- ``fair_value_v0``       — the live strategy, logged as the control baseline.
+- ``cushion_favorite_v2`` — v0 + a cushion gate (spot clearly on the favoured
   side of the strike): the only entry-knowable taker lean that survived.
-- ``late_convergence_v3``— enters the final 5-30s on near-certainties the book
+- ``late_convergence_v3`` — enters the final 5–45s on near-certainties the book
   under-prices (a regime v0's >=60s filter never trades).
+- ``down_skeptic_v4``     — v0 but a Down pick must clear a +0.02 edge premium.
+- ``cushion_drift_v5``    — v0 + a regime-adaptive, two-sided cushion bar.
+- ``down_skeptic_drift_v6``— v4's edge toll made regime-aware: a bear regime
+  tolls Up, a bull regime tolls Down (reduces to v4 at regime 0).
 """
 
 from __future__ import annotations
@@ -106,6 +110,7 @@ _MODELS: dict[
     "late_convergence_v3": signals.late_convergence_v3,
     "down_skeptic_v4": signals.down_skeptic_v4,
     "cushion_drift_v5": signals.cushion_drift_v5,
+    "down_skeptic_drift_v6": signals.down_skeptic_drift_v6,
 }
 
 
@@ -118,12 +123,31 @@ ACTIVE_MODEL_KEY = "btc_model.active"
 DEFAULT_MODEL = "fair_value_v0"
 MODEL_IDS: list[str] = list(_MODELS.keys())
 
+# Operator-selectable models for the dashboard dropdown. The full logged roster
+# is selectable (ordered by the global vN experiment counter); v0's native path
+# stays the default. Kept as an explicit list (not just MODEL_IDS) so a model can
+# be hidden from the selector later without dropping it from the logged set.
+SELECTABLE_MODELS: list[str] = [
+    "fair_value_v0",
+    "cushion_favorite_v2",
+    "late_convergence_v3",
+    "down_skeptic_v4",
+    "cushion_drift_v5",
+    "down_skeptic_drift_v6",
+]
+
+# Labels carry the model's version tag (vN) so the dashboard dropdown maps 1:1
+# back to the persisted `model_id` (e.g. "Down-Skeptic (v4)" -> down_skeptic_v4).
+# The vN is a global experiment counter, not a per-family version: down_skeptic
+# is v4 and its regime-drift child is v6 because cushion_drift (v5) was logged
+# between them (#108).
 MODEL_LABELS: dict[str, str] = {
-    "fair_value_v0": "Fair-Value · Settle",
-    "cushion_favorite_v2": "Cushion Favorite",
-    "late_convergence_v3": "Late Convergence",
-    "down_skeptic_v4": "Down-Skeptic",
-    "cushion_drift_v5": "Cushion · Regime Drift",
+    "fair_value_v0": "Fair-Value · Settle (v0)",
+    "cushion_favorite_v2": "Cushion Favorite (v2)",
+    "late_convergence_v3": "Late Convergence (v3)",
+    "down_skeptic_v4": "Down-Skeptic (v4)",
+    "cushion_drift_v5": "Cushion · Regime Drift (v5)",
+    "down_skeptic_drift_v6": "Down-Skeptic · Regime Drift (v6)",
 }
 MODEL_DESCRIPTIONS: dict[str, str] = {
     "fair_value_v0": "v0 baseline · edge 0.045–0.07 · favorites ≥0.50 · hold→resolution",
@@ -131,6 +155,7 @@ MODEL_DESCRIPTIONS: dict[str, str] = {
     "late_convergence_v3": "final 5–45s · buy near-certainties (book ≥0.85)",
     "down_skeptic_v4": "v0 but Down needs +0.02 extra edge (prices the ≥-tie Up bias)",
     "cushion_drift_v5": "v0 + regime-adaptive cushion: drift/σ momentum shifts the Up/Down bar",
+    "down_skeptic_drift_v6": "v4 but the edge toll flexes with drift/σ: bear → Up tolled, bull → Down",
 }
 
 # Candidate signal fns for the LIVE dispatch. v0 is intentionally absent — it
@@ -142,6 +167,7 @@ CANDIDATE_SIGNALS: dict[
     "late_convergence_v3": signals.late_convergence_v3,
     "down_skeptic_v4": signals.down_skeptic_v4,
     "cushion_drift_v5": signals.cushion_drift_v5,
+    "down_skeptic_drift_v6": signals.down_skeptic_drift_v6,
 }
 
 
