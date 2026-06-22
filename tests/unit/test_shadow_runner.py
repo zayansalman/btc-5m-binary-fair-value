@@ -131,27 +131,28 @@ async def test_settle_books_net_of_fee_pnl(test_db, params) -> None:
 
 def test_model_registry_constants() -> None:
     assert runner.DEFAULT_MODEL == "fair_value_v0"
-    # Logged set keeps the controls; late_convergence_v3 is gone, v6 is in.
+    # Logged set: full roster incl. the restored late_convergence_v3 (#111).
     assert set(runner.MODEL_IDS) == {
         "fair_value_v0",
         "cushion_favorite_v2",
+        "late_convergence_v3",
         "down_skeptic_v4",
         "cushion_drift_v5",
         "down_skeptic_drift_v6",
     }
-    assert "late_convergence_v3" not in runner.MODEL_IDS
-    # Operator-selectable set is the curated subset (controls hidden).
+    # Operator-selectable set is the full roster, in vN experiment order (#111).
     assert runner.SELECTABLE_MODELS == [
+        "fair_value_v0",
+        "cushion_favorite_v2",
+        "late_convergence_v3",
         "down_skeptic_v4",
         "cushion_drift_v5",
         "down_skeptic_drift_v6",
     ]
-    assert "fair_value_v0" not in runner.SELECTABLE_MODELS
-    assert "cushion_favorite_v2" not in runner.SELECTABLE_MODELS
-    # v6 is live-dispatchable; v0 stays out (native path); late_conv is gone.
+    # v3/v4/v6 are live-dispatchable; v0 stays out (native path).
     assert "down_skeptic_drift_v6" in runner.CANDIDATE_SIGNALS
+    assert "late_convergence_v3" in runner.CANDIDATE_SIGNALS
     assert "fair_value_v0" not in runner.CANDIDATE_SIGNALS
-    assert "late_convergence_v3" not in runner.CANDIDATE_SIGNALS
     # every logged id has a label + description for the dashboard
     for mid in runner.MODEL_IDS:
         assert mid in runner.MODEL_LABELS and mid in runner.MODEL_DESCRIPTIONS

@@ -36,9 +36,9 @@ def render(
     lo, hi = shares * 0.50, shares * 1.00
     # Infographic: one pip per venue-minimum share, with a label.
     pips = "".join("<span class='shp'></span>" for _ in range(int(minsh)))
-    # Operator-selectable models only; the logged-but-hidden controls
-    # (fair_value_v0, cushion_favorite_v2) stay out of the dropdown. Always
-    # include the active model so a currently-selected id is never orphaned.
+    # Operator-selectable models (the full logged roster; see
+    # runner.SELECTABLE_MODELS). Always include the active model so a
+    # currently-selected id is never orphaned even if one is hidden later.
     selectable = list(_shadow_runner.SELECTABLE_MODELS)
     if active_model not in selectable:
         selectable = [active_model, *selectable]

@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.4.19 — Restore full model roster to the strategy-model selector (2026-06-22)
+
+Reverses the #100 roster trim per operator request (#111): all six logged models are operator-selectable from the dashboard again.
+
+### What
+- **`btc_bot/shadow/runner.py`** — `SELECTABLE_MODELS` is now the full roster in vN-experiment order (`fair_value_v0`, `cushion_favorite_v2`, `late_convergence_v3`, `down_skeptic_v4`, `cushion_drift_v5`, `down_skeptic_drift_v6`); the former silent controls (`fair_value_v0`, `cushion_favorite_v2`) are no longer hidden from the dropdown.
+- **`btc_bot/shadow/signals.py`** — **resurrects `late_convergence_v3`** (deleted in #100), restored faithfully from git `39649c8`; re-registered in `_MODELS`, `MODEL_LABELS` ("Late Convergence (v3)"), `MODEL_DESCRIPTIONS`, and `CANDIDATE_SIGNALS` (live-dispatchable).
+- **`panels/controls.py`** — comment refresh (controls no longer hidden); the orphan guard that always renders an unknown active model is unchanged.
+- **Tests** — `TestLateConvergenceV3` restored (11 cases); `test_shadow_runner` asserts the full selectable roster; `test_dashboard` lists all six options and exercises the orphan guard + allow-list rejection with a genuinely unknown id. Full suite **656 green**, ruff clean.
+
+### Caveat
+`late_convergence_v3` is net-negative in shadow (91% win rate, ~-$14 PnL — the favorite-soak trap). It is on the live selector at the operator's explicit request, not because it has a proven edge.
+
 ## v0.4.18 — Stop phantom fills at settlement on a venue lookup failure (2026-06-22)
 
 Addresses #109 — the dominant live-PnL inflation channel surfaced by the strategy assessment + reconciliation (#102/#103). A **settle-style** position whose entry **rested and never matched on-venue** was booked at the **full submitted size** when the `get_order` fill lookup failed at settlement — manufacturing a phantom WIN (`won`) or phantom LOSS (`!won`). This is why the as-booked live ledger showed a profit that flips to a real loss once the never-executed rows are voided.
