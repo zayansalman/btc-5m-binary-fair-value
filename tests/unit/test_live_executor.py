@@ -448,6 +448,52 @@ async def test_fully_matched_entry_is_not_tracked_as_resting(
 
 
 @pytest.mark.asyncio
+async def test_entry_records_real_avg_fill_price(
+    journal_db, tmp_path: Path
+) -> None:
+    """A matched BUY records the REAL average fill price, not the limit (#103).
+
+    Polymarket reports makingAmount (USDC paid) / takingAmount (tokens received);
+    the realised price is their ratio. Booking the limit instead overstates PnL
+    when the order fills better than the posted ask.
+    """
+    client = _mock_client()
+    client.create_and_post_order.return_value = {
+        "success": True,
+        "errorMsg": "",
+        "orderID": "0xORDER1",
+        "status": "matched",
+        "makingAmount": "2.893",  # USDC actually paid
+        "takingAmount": "5.26",   # tokens received -> avg 2.893/5.26 = 0.550
+    }
+    executor = _executor(client, tmp_path)
+
+    result = await executor.submit_entry(UP_TOKEN, 0.57, 3.0, window_slug="w1")
+
+    assert result.ok
+    assert executor._entry_price == pytest.approx(0.550, abs=1e-3)  # NOT the 0.57 limit
+
+
+@pytest.mark.asyncio
+async def test_entry_fill_price_falls_back_to_limit(
+    journal_db, tmp_path: Path
+) -> None:
+    """No makingAmount (resting / unparseable) -> entry price stays the limit."""
+    client = _mock_client()
+    client.create_and_post_order.return_value = {
+        "success": True,
+        "orderID": "0xORDER1",
+        "status": "matched",
+        "takingAmount": "5.26",  # no makingAmount -> avg price not computable
+    }
+    executor = _executor(client, tmp_path)
+
+    await executor.submit_entry(UP_TOKEN, 0.57, 3.0, window_slug="w1")
+
+    assert executor._entry_price == pytest.approx(0.57)  # safe fallback to limit
+
+
+@pytest.mark.asyncio
 async def test_resync_flat_heals_phantom_open_state(
     journal_db, tmp_path: Path
 ) -> None:

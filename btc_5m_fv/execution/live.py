@@ -187,6 +187,31 @@ def _filled_shares(response: dict[str, Any]) -> float:
         return 0.0
 
 
+def _avg_fill_price(response: dict[str, Any], side: str, limit_price: float) -> float:
+    """Average executed price from a matched order, else the limit (#103).
+
+    A market-matched order reports ``makingAmount`` / ``takingAmount``. For a
+    BUY the maker asset is USDC (paid) and the taker asset is outcome tokens
+    (received), so the realised average price is ``makingAmount / takingAmount``;
+    a SELL is the inverse. Falls back to ``limit_price`` whenever the amounts are
+    absent or unusable (a resting / later-matched / unparseable order, or a price
+    outside ``(0, 1]``), so this never regresses below the prior limit-price
+    behaviour — it only *improves* the recorded price when the venue reports a
+    real fill.
+    """
+    if str(response.get("status") or "").lower() != "matched":
+        return limit_price
+    try:
+        making = float(response.get("makingAmount") or 0.0)
+        taking = float(response.get("takingAmount") or 0.0)
+    except (TypeError, ValueError):
+        return limit_price
+    if making <= 0 or taking <= 0:
+        return limit_price
+    px = (making / taking) if side == BUY else (taking / making)
+    return px if 0.0 < px <= 1.0 else limit_price
+
+
 class LiveExecutor:
     """Wraps a (synchronous) ``ClobClient`` behind an async, risk-gated API.
 
@@ -737,7 +762,10 @@ class LiveExecutor:
         )
         if result.ok:
             self._entry_token_id = token_id
-            self._entry_price = price
+            # Record the REAL average fill price when the venue matched the order
+            # (makingAmount/takingAmount), not the posted limit — the limit
+            # overstates PnL whenever the order fills better than the ask (#103).
+            self._entry_price = _avg_fill_price(result.raw, BUY, price)
             self._entry_size = size
             self._entry_sold_size = 0.0
             self._position_open = True
