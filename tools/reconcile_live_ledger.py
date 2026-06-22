@@ -190,6 +190,7 @@ def apply_plan(
     corrections: list[dict],
     phantoms: list[dict],
     recon_keys: dict[str, str],
+    updated_at: str,
 ) -> None:
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
@@ -225,9 +226,9 @@ def apply_plan(
         )
     for k, v in recon_keys.items():
         cur.execute(
-            "INSERT INTO config(key, value) VALUES(?, ?) "
-            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            (k, str(v)),
+            "INSERT INTO config(key, value, updated_at) VALUES(?, ?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+            (k, str(v), updated_at),
         )
     conn.commit()
     conn.close()
@@ -273,6 +274,7 @@ def main() -> None:
         print("\nDRY RUN — no DB writes. Re-run with --apply to commit.")
         return
 
+    asof = args.asof or datetime.now(UTC).isoformat()
     recon_keys = {
         "btc_recon.real_btc_pnl_lifetime": btc_pnl,
         "btc_recon.real_account_pnl_lifetime": acct_pnl,
@@ -280,10 +282,10 @@ def main() -> None:
         "btc_recon.corrected_live_pnl": round(real_sum, 4),
         "btc_recon.phantoms_voided": len(phantoms),
         "btc_recon.source": "polymarket-data-api",
-        "btc_recon.asof": args.asof or datetime.now(UTC).isoformat(),
+        "btc_recon.asof": asof,
         "btc_recon.note": "live ledger reconciled to real fills/redemptions; phantoms voided (#102)",
     }
-    apply_plan(args.db, corrections, phantoms, recon_keys)
+    apply_plan(args.db, corrections, phantoms, recon_keys, asof)
     print(f"\nAPPLIED to {args.db}. Wrote {len(recon_keys)} btc_recon.* keys.")
 
 
