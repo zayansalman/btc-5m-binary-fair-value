@@ -186,9 +186,10 @@ class TestPerformanceReconLine:
         )
         assert "Reconciled vs Polymarket" not in html
 class TestModelSelector:
-    """The dropdown shows only SELECTABLE_MODELS; controls stay logged-but-hidden."""
+    """The dropdown lists the full logged roster (SELECTABLE_MODELS); an unknown
+    active model still renders (orphan guard); the switch rejects unknown ids."""
 
-    def test_selector_lists_only_selectable_models(self) -> None:
+    def test_selector_lists_all_selectable_models(self) -> None:
         from btc_5m_fv.ops.dashboard.panels import controls
         from btc_bot.shadow import runner
 
@@ -197,25 +198,28 @@ class TestModelSelector:
         )
         for mid in runner.SELECTABLE_MODELS:
             assert f"value='{mid}'" in html
-        # Hidden controls + removed model never appear as options.
-        assert "value='fair_value_v0'" not in html
-        assert "value='cushion_favorite_v2'" not in html
-        assert "value='late_convergence_v3'" not in html
+        # The full roster is selectable now (#111): the former controls and the
+        # restored late_convergence_v3 all appear as options.
+        assert "value='fair_value_v0'" in html
+        assert "value='cushion_favorite_v2'" in html
+        assert "value='late_convergence_v3'" in html
+        # An unknown id is never rendered as an option.
+        assert "value='no_such_model'" not in html
 
     def test_selector_includes_orphaned_active_model(self) -> None:
-        """A non-selectable active model (e.g. a logged control) still renders."""
+        """An unknown / non-selectable active model still renders (orphan guard)."""
         from btc_5m_fv.ops.dashboard.panels import controls
 
         html = controls.render(
-            trade_shares_current=None, current_price=None, active_model="fair_value_v0"
+            trade_shares_current=None, current_price=None, active_model="ghost_model"
         )
-        assert "value='fair_value_v0'" in html
+        assert "value='ghost_model'" in html
 
-    def test_active_model_rejects_non_selectable(self, client: TestClient) -> None:
-        """Posting a logged-but-hidden control is rejected (no config write)."""
+    def test_active_model_rejects_unknown(self, client: TestClient) -> None:
+        """Posting an unknown / non-selectable model id is rejected (no write)."""
         r = client.post(
             "/api/runtime-config",
-            json={"key": "active_model", "value": "fair_value_v0"},
+            json={"key": "active_model", "value": "no_such_model"},
         )
         assert r.status_code == 200
         assert r.json()["status"] == "error"

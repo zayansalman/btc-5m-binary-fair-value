@@ -4,6 +4,8 @@ Covers the two candidate strategies in :mod:`btc_bot.shadow.signals`:
 
 * ``cushion_favorite_v2`` — None when v0 declines, None when the cushion is
   below the floor, a signal when both pass.
+* ``late_convergence_v3`` — None outside the time band, None below
+  near-certain, None when book and model disagree, a signal when all pass.
 
 The signals are pure, so every case is a hand-built
 :class:`~btc_bot.shadow.types.SnapshotView` plus a small local
@@ -23,6 +25,7 @@ from btc_bot.shadow.signals import (
     cushion_favorite_v2,
     down_skeptic_drift_v6,
     down_skeptic_v4,
+    late_convergence_v3,
 )
 from btc_bot.shadow.types import ShadowSignal, SnapshotView
 
@@ -252,6 +255,126 @@ class TestCushionDriftV5:
         )
         assert (50002.0 - 50000.0) / 50000.0 * 1e4 < 0.5  # sanity: below the floor
         assert cushion_drift_v5(view, params) is None
+
+
+# ---------------------------------------------------------------------------
+# late_convergence_v3
+# ---------------------------------------------------------------------------
+
+
+class TestLateConvergenceV3:
+    def test_none_before_time_band(self, params: strategy.StrategyParams) -> None:
+        """remaining_seconds above late_max_s (45) -> None."""
+        view = _view(remaining_seconds=46, market_up_price=0.95, fair_up=0.95)
+        assert late_convergence_v3(view, params) is None
+
+    def test_none_after_time_band(self, params: strategy.StrategyParams) -> None:
+        """remaining_seconds below late_min_s -> None."""
+        view = _view(remaining_seconds=3, market_up_price=0.95, fair_up=0.95)
+        assert late_convergence_v3(view, params) is None
+
+    def test_none_below_near_certain(self, params: strategy.StrategyParams) -> None:
+        """In band, but neither book nor model is near-certain -> None."""
+        view = _view(
+            remaining_seconds=20,
+            market_up_price=0.60,
+            up_ask=0.60,
+            fair_up=0.60,
+        )
+        assert late_convergence_v3(view, params) is None
+
+    def test_none_when_book_and_model_disagree(
+        self, params: strategy.StrategyParams
+    ) -> None:
+        """Book says near-certain Up, but the model leans Down (fair<0.5) -> None."""
+        view = _view(
+            remaining_seconds=20,
+            market_up_price=0.95,
+            up_ask=0.95,
+            fair_up=0.40,  # model leans the other way -> weak-agreement gate fails
+        )
+        assert late_convergence_v3(view, params) is None
+
+    def test_none_when_model_certain_book_not(
+        self, params: strategy.StrategyParams
+    ) -> None:
+        """Model says near-certain Up, book does not -> None (symmetric guard)."""
+        view = _view(
+            remaining_seconds=20,
+            market_up_price=0.80,  # book below near_certain for Up
+            up_ask=0.80,
+            fair_up=0.95,
+        )
+        assert late_convergence_v3(view, params) is None
+
+    def test_none_when_no_executable_quote(
+        self, params: strategy.StrategyParams
+    ) -> None:
+        """Favoured side has no ask -> None."""
+        view = _view(
+            remaining_seconds=20,
+            market_up_price=0.95,
+            up_ask=None,
+            fair_up=0.95,
+        )
+        assert late_convergence_v3(view, params) is None
+
+    def test_none_when_no_room_to_profit(
+        self, params: strategy.StrategyParams
+    ) -> None:
+        """Ask at/above 0.99 leaves no room -> None even if near-certain."""
+        view = _view(
+            remaining_seconds=20,
+            market_up_price=0.99,
+            up_ask=0.99,
+            fair_up=0.99,
+        )
+        assert late_convergence_v3(view, params) is None
+
+    def test_signal_when_all_pass_up(self, params: strategy.StrategyParams) -> None:
+        """In band, book and model both near-certain Up, room to profit -> Up."""
+        view = _view(
+            remaining_seconds=20,
+            market_up_price=0.93,
+            up_ask=0.93,
+            fair_up=0.95,
+        )
+        sig = late_convergence_v3(view, params)
+        assert isinstance(sig, ShadowSignal)
+        assert sig.side == "Up"
+        assert sig.entry_price == pytest.approx(0.93)
+        assert sig.fair_prob == pytest.approx(0.95)
+        assert sig.edge == pytest.approx(0.95 - 0.93)
+        assert sig.confidence == pytest.approx(0.95)
+        assert sig.reason == "late-convergence rs=20; book 0.93 fair 0.95"
+
+    def test_signal_when_all_pass_down(self, params: strategy.StrategyParams) -> None:
+        """Book favours Down (market_up_price < 0.5); model agrees -> Down."""
+        view = _view(
+            remaining_seconds=10,
+            market_up_price=0.06,  # favoured price for Down = 0.94
+            down_ask=0.93,
+            fair_up=0.04,  # fair_down = 0.96
+        )
+        sig = late_convergence_v3(view, params)
+        assert isinstance(sig, ShadowSignal)
+        assert sig.side == "Down"
+        assert sig.entry_price == pytest.approx(0.93)
+        assert sig.fair_prob == pytest.approx(0.96)
+        assert sig.edge == pytest.approx(0.96 - 0.93)
+        assert sig.reason == "late-convergence rs=10; book 0.94 fair 0.96"
+
+    def test_time_band_boundaries_inclusive(
+        self, params: strategy.StrategyParams
+    ) -> None:
+        """The late band is inclusive at both ends (5 and 45 by default)."""
+        edge_view = lambda rs: _view(  # noqa: E731 - terse, test-local
+            remaining_seconds=rs, market_up_price=0.93, up_ask=0.93, fair_up=0.95
+        )
+        assert late_convergence_v3(edge_view(5), params) is not None
+        assert late_convergence_v3(edge_view(45), params) is not None
+        assert late_convergence_v3(edge_view(4), params) is None
+        assert late_convergence_v3(edge_view(46), params) is None
 
 
 # ---------------------------------------------------------------------------
