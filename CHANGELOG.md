@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.4.16 — Selector labels carry the model version (2026-06-22)
+
+Addresses #108. The shadow-model dropdown showed semantic labels (`Down-Skeptic`, `Down-Skeptic · Regime Drift`) that didn't map back to the persisted `model_id`s (`down_skeptic_v4`, `down_skeptic_drift_v6`). The version jump compounds the confusion: down-skeptic is **v4** and its regime-drift child is **v6** because the `vN` suffix is a *global* experiment counter — `cushion_drift` (v5) was logged between them — not a per-family version.
+
+### What
+- **`btc_bot/shadow/runner.py`** — `MODEL_LABELS` now appends the version tag, e.g. `Down-Skeptic (v4)`, `Down-Skeptic · Regime Drift (v6)`, so each dropdown label maps 1:1 to its `model_id`. **Display-only**: the `model_id`s — persisted keys behind 828 ledger rows, the `btc_model.active` pointer (currently `down_skeptic_v4`), and ~121 code refs — are untouched. No rename, no DB migration, no behavior change.
+- **Tests**: `test_shadow_runner.py` green (label/description key coverage unchanged); ruff clean.
+
 ## v0.4.15 — Real exit fill price + reconcile staleness guard (2026-06-22)
 
 Completes #103's fill-price work. The **exit** (SELL) path recorded the posted limit, mirroring the entry bug fixed in v0.4.14. Now both sides record the real fill.

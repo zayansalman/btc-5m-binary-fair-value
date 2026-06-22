@@ -130,12 +130,17 @@ SELECTABLE_MODELS: list[str] = [
     "down_skeptic_drift_v6",
 ]
 
+# Labels carry the model's version tag (vN) so the dashboard dropdown maps 1:1
+# back to the persisted `model_id` (e.g. "Down-Skeptic (v4)" -> down_skeptic_v4).
+# The vN is a global experiment counter, not a per-family version: down_skeptic
+# is v4 and its regime-drift child is v6 because cushion_drift (v5) was logged
+# between them (#108).
 MODEL_LABELS: dict[str, str] = {
-    "fair_value_v0": "Fair-Value · Settle",
-    "cushion_favorite_v2": "Cushion Favorite",
-    "down_skeptic_v4": "Down-Skeptic",
-    "cushion_drift_v5": "Cushion · Regime Drift",
-    "down_skeptic_drift_v6": "Down-Skeptic · Regime Drift",
+    "fair_value_v0": "Fair-Value · Settle (v0)",
+    "cushion_favorite_v2": "Cushion Favorite (v2)",
+    "down_skeptic_v4": "Down-Skeptic (v4)",
+    "cushion_drift_v5": "Cushion · Regime Drift (v5)",
+    "down_skeptic_drift_v6": "Down-Skeptic · Regime Drift (v6)",
 }
 MODEL_DESCRIPTIONS: dict[str, str] = {
     "fair_value_v0": "v0 baseline · edge 0.045–0.07 · favorites ≥0.50 · hold→resolution",
