@@ -17,6 +17,19 @@ The ~$20 overstatement was driven by **6 phantom positions** (+$14.44 of fiction
 - **Dashboard "Reconciled vs Polymarket" line** (`panels/performance.py`, `panels/_data.py:reconciliation()`, `ems.py`): surfaces the whole-account ground truth (real BTC PnL, account PnL, open value, as-of) under the LIVE/PAPER cards — the per-window rows can't show it.
 - **Process**: reconciliation only runs against a **stopped** bot (frozen ledger) with a **fresh** Data-API pull; the agent never stops/starts live trading.
 - **Tests**: `test_dashboard.py::TestPerformanceReconLine`. Full suite green (DB-isolated), ruff clean.
+## v0.4.11 — Regime-aware Down-Skeptic + roster trim (2026-06-22)
+
+Closes #100. The live bot bled on a one-sided book: the last 15 live trades were **15/15 Up, 6W/9L, net −$9.71 (−24.3% ROI)**. Root cause was structural — the active model `down_skeptic_v4` charges a **fixed +0.02 edge toll on every Down pick** (to fight v0's `spot >= reference` Up bias), which leans the book almost entirely Up. That is correct in a flat/up market but backwards when the regime turns **bearish** (over the same window, Down bets won 8/9). At ~0.53 entries the asymmetric payoff (break-even win rate 53%) turns a sub-53% Up hit-rate into a steady bleed.
+
+### What
+- **New shadow candidate `down_skeptic_drift_v6`** (`btc_bot/shadow/signals.py`): v4's exact structure (reuse v0's side pick, gate by an edge toll), but the toll **flexes with the same standardised-momentum regime as `cushion_drift_v5`** — `regime = clamp((drift/σ)/0.3, −1, +1)`. `down_extra = 0.02·clamp(1+regime, 0, 2)` and `up_extra = 0.02·clamp(−regime, 0, 1)`: a bear regime tolls Up and frees Down; a bull regime strengthens the Down toll. At `regime == 0` (or no drift feed) it is **byte-for-byte identical to `down_skeptic_v4`**, which is therefore its exact control.
+- **Roster trim** (`btc_bot/shadow/runner.py`): new `SELECTABLE_MODELS = [down_skeptic_v4, cushion_drift_v5, down_skeptic_drift_v6]` **decouples** the operator selector from the logged set. `fair_value_v0` + `cushion_favorite_v2` keep logging as silent controls but are hidden from the dropdown; `late_convergence_v3` is **removed entirely**.
+- **Selector wiring** (`panels/controls.py`, `app.py`): the dropdown and the `POST /api/runtime-config` allow-list both use `SELECTABLE_MODELS`, with an orphan guard so the currently-active model always renders even if hidden.
+- **Shadow-first:** v6 logs alongside live from registration; the agent does **not** flip `btc_model.active` (stays `down_skeptic_v4`). The operator promotes v6 via the selector after a validation window.
+- **Tests**: `test_shadow_signals.py` (v6 ≡ v4 at regime 0 / no drift; bear vetoes a thin Up v4 takes; bull vetoes a thin Down v4 keeps), `test_shadow_runner.py` (registries + `SELECTABLE_MODELS`; late_convergence gone), `test_dashboard.py` (selector lists only selectable; orphan guard; allow-list rejects hidden controls). Full suite **633 green** (DB-isolated), ruff clean, no new mypy errors.
+
+### Out of scope (separate issue)
+- DB/panel reconciliation vs **real Polymarket fills** — the zero-fee assumption, assumed-fill-price-as-limit, and the four divergent on-screen live-PnL numbers (+8.92 / +6.98 / −2.75 / −7.30). Investigated; to be reconciled separately.
 
 ## v0.4.10 — Heal phantom "max 1" singleton block (live) (2026-06-17)
 
