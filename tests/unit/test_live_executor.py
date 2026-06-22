@@ -1105,3 +1105,75 @@ async def test_boot_cancel_refuses_after_exhausting_retries(
     with pytest.raises(LiveBootRefused, match="after 5 attempts"):
         await ex._reconcile_account()
     assert client.cancel_all.call_count == 5
+
+
+# ---------------------------------------------------------------------------
+# Settlement must not book a phantom fill on a venue lookup failure (#103/#109).
+# A resting entry that never matched on-venue must settle to held=0 when the
+# get_order lookup fails — the "assume filled" default is for the EXIT/SELL path
+# (under-selling strands tokens), NOT for settle (over-counting books fiction).
+# ---------------------------------------------------------------------------
+
+
+def _resting_unfilled_entry(executor: LiveExecutor) -> None:
+    """Put the executor in the state of a submitted entry that never matched."""
+    executor._position_open = True
+    executor._entry_order_id = "0xRESTING"
+    executor._entry_token_id = UP_TOKEN
+    executor._entry_matched_size = None  # never matched on venue
+    executor._entry_size = 5.0
+    executor._entry_price = 0.55
+
+
+@pytest.mark.asyncio
+async def test_settlement_no_phantom_win_when_fill_lookup_fails(
+    journal_db, tmp_path: Path
+) -> None:
+    """won=True + failed fill lookup on a never-matched entry -> held 0, PnL 0."""
+    client = _mock_client()
+    client.get_order.side_effect = RuntimeError("get_order down")  # lookup failure
+    executor = _executor(client, tmp_path)
+    _resting_unfilled_entry(executor)
+
+    result = await executor.record_settlement(
+        won=True, window_slug="btc-updown-5m-1781827800"
+    )
+
+    assert result.status == "SETTLED"
+    assert result.size == 0.0  # no phantom held size
+    assert executor.daily_realized_pnl == 0.0  # no phantom WIN booked
+
+
+@pytest.mark.asyncio
+async def test_settlement_no_phantom_loss_when_fill_lookup_fails(
+    journal_db, tmp_path: Path
+) -> None:
+    """won=False + failed fill lookup on a never-matched entry -> held 0, PnL 0."""
+    client = _mock_client()
+    client.get_order.side_effect = RuntimeError("get_order down")
+    executor = _executor(client, tmp_path)
+    _resting_unfilled_entry(executor)
+
+    result = await executor.record_settlement(
+        won=False, window_slug="btc-updown-5m-1781827800"
+    )
+
+    assert result.size == 0.0
+    assert executor.daily_realized_pnl == 0.0  # no phantom LOSS booked
+
+
+@pytest.mark.asyncio
+async def test_matched_entry_size_asymmetry_on_lookup_failure(
+    journal_db, tmp_path: Path
+) -> None:
+    """Exit path stays optimistic (assume filled); settle path is conservative."""
+    client = _mock_client()
+    client.get_order.side_effect = RuntimeError("get_order down")
+    executor = _executor(client, tmp_path)
+    executor._entry_order_id = "0xRESTING"
+    executor._entry_size = 5.0
+
+    # EXIT default: assume filled so the follow-up SELL never strands tokens.
+    assert await executor._matched_entry_size() == 5.0
+    # SETTLE: no SELL, so a failed lookup must not manufacture held size.
+    assert await executor._matched_entry_size(assume_filled_on_error=False) == 0.0
