@@ -94,8 +94,9 @@ async def test_favorite_window_logs_v0_and_cushion(test_db, params) -> None:
     # A clean cushioned favourite: v0 fires AND the cushion gate passes.
     assert "fair_value_v0" in rows
     assert "cushion_favorite_v2" in rows
-    # Not a final-seconds window -> late-convergence stays out.
-    assert "late_convergence_v3" not in rows
+    # v0 fires Up here and the regime is neutral -> the regime-aware skeptic
+    # logs too (it reduces to v4, which never tolls an Up pick).
+    assert "down_skeptic_drift_v6" in rows
     assert rows["cushion_favorite_v2"]["side"] == "Up"
     assert rows["cushion_favorite_v2"]["entry_price"] == pytest.approx(0.56)
     assert rows["cushion_favorite_v2"]["shares"] == runner.SHADOW_SHARES
@@ -108,27 +109,6 @@ async def test_recording_is_idempotent_per_window(test_db, params) -> None:
     rows = await _models_for(test_db, "btc-updown-5m-1700000000")
     # The first signal per (window, model) wins; the second tick is dropped.
     assert rows["cushion_favorite_v2"]["entry_price"] == pytest.approx(0.56)
-
-
-@pytest.mark.asyncio
-async def test_late_convergence_window(test_db, params) -> None:
-    snap = _snapshot(
-        window_slug="btc-updown-5m-1700000300",
-        remaining_seconds=20,
-        fair_up_prob=0.95,
-        up_best_bid=0.93,
-        up_best_ask=0.95,
-        market_up_price=0.95,
-        down_best_ask=0.06,
-        spot_price=64100.0,
-    )
-    await runner.record_shadow(snap, params)
-    rows = await _models_for(test_db, "btc-updown-5m-1700000300")
-    # Final-seconds near-certainty: only late-convergence trades it (v0's
-    # >=60s gate and thin edge keep it out).
-    assert "late_convergence_v3" in rows
-    assert "fair_value_v0" not in rows
-    assert rows["late_convergence_v3"]["side"] == "Up"
 
 
 @pytest.mark.asyncio
@@ -151,13 +131,28 @@ async def test_settle_books_net_of_fee_pnl(test_db, params) -> None:
 
 def test_model_registry_constants() -> None:
     assert runner.DEFAULT_MODEL == "fair_value_v0"
-    assert set(runner.MODEL_IDS) >= {
+    # Logged set keeps the controls; late_convergence_v3 is gone, v6 is in.
+    assert set(runner.MODEL_IDS) == {
         "fair_value_v0",
         "cushion_favorite_v2",
-        "late_convergence_v3",
         "down_skeptic_v4",
+        "cushion_drift_v5",
+        "down_skeptic_drift_v6",
     }
-    # every selectable id has a label + description for the dashboard
+    assert "late_convergence_v3" not in runner.MODEL_IDS
+    # Operator-selectable set is the curated subset (controls hidden).
+    assert runner.SELECTABLE_MODELS == [
+        "down_skeptic_v4",
+        "cushion_drift_v5",
+        "down_skeptic_drift_v6",
+    ]
+    assert "fair_value_v0" not in runner.SELECTABLE_MODELS
+    assert "cushion_favorite_v2" not in runner.SELECTABLE_MODELS
+    # v6 is live-dispatchable; v0 stays out (native path); late_conv is gone.
+    assert "down_skeptic_drift_v6" in runner.CANDIDATE_SIGNALS
+    assert "fair_value_v0" not in runner.CANDIDATE_SIGNALS
+    assert "late_convergence_v3" not in runner.CANDIDATE_SIGNALS
+    # every logged id has a label + description for the dashboard
     for mid in runner.MODEL_IDS:
         assert mid in runner.MODEL_LABELS and mid in runner.MODEL_DESCRIPTIONS
 
