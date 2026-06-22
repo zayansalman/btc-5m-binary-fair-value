@@ -763,8 +763,9 @@ async def api_runtime_config(request: Request) -> dict[str, Any]:
         from btc_bot.shadow import runner as _shadow_runner
 
         model = str((body or {}).get("value", ""))
-        if model not in _shadow_runner.MODEL_IDS:
-            return {"status": "error", "detail": f"unknown model {model!r}"}
+        if model not in _shadow_runner.SELECTABLE_MODELS:
+            # Hidden controls / unknown ids are not operator-selectable.
+            return {"status": "error", "detail": f"unknown or non-selectable model {model!r}"}
         await set_config(_shadow_runner.ACTIVE_MODEL_KEY, model)
         await notify(
             "btc_runtime_config",
