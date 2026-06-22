@@ -35,6 +35,25 @@ async def last_live_order_at() -> str | None:
     return (row["last_at"] if row else None) if row is not None else None
 
 
+async def reconciliation() -> dict[str, Any] | None:
+    """Latest Polymarket reconciliation snapshot (``btc_recon.*`` keys), or None.
+
+    Written by ``tools/reconcile_live_ledger.py`` (#102). Surfaces the real
+    account truth the per-position rows cannot — full-history account PnL and
+    open value pulled from the Polymarket Data API — so the operator sees
+    reconciled-vs-recorded at a glance instead of trusting the bot's own
+    assumed-fill ledger.
+    """
+    async with connect() as db:
+        async with db.execute(
+            "SELECT key, value FROM config WHERE key LIKE 'btc_recon.%'"
+        ) as cur:
+            rows = await cur.fetchall()
+    if not rows:
+        return None
+    return {r["key"].split(".", 1)[1]: r["value"] for r in rows}
+
+
 async def closed(
     style: str,
     since: str | None,

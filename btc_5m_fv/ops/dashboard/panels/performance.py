@@ -14,12 +14,45 @@ from typing import Any
 from . import _shared as s
 
 
+def _recon_line(recon: dict[str, Any] | None) -> str:
+    """A 'Reconciled vs Polymarket' footer — the real account truth (#102).
+
+    The mini-cards above are the bot's recorded ledger (now corrected to real
+    fills). This line is the whole-account ground truth from the Polymarket
+    Data API, which the per-window rows can't show: full-history account PnL
+    (incl. non-bot trades) and current open value.
+    """
+    if not recon:
+        return ""
+
+    def _f(key: str) -> float | None:
+        try:
+            return float(recon[key])
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    btc = _f("real_btc_pnl_lifetime")
+    acct = _f("real_account_pnl_lifetime")
+    openv = _f("open_positions_value")
+    asof = escape(str(recon.get("asof", "")))[:19]
+    return (
+        "<div class='perf-recon'>"
+        "<span class='perf-recon-h'>Reconciled vs Polymarket</span>"
+        f"<span>BTC bot <b class='{s.cls(btc)}'>{s.money(btc, True)}</b></span>"
+        f"<span>account <b class='{s.cls(acct)}'>{s.money(acct, True)}</b></span>"
+        f"<span>open value <b>{s.money(openv)}</b></span>"
+        f"<span class='perf-recon-asof'>as-of {asof}Z · data-api</span>"
+        "</div>"
+    )
+
+
 def render(
     *,
     style: str,
     perf: dict[str, Any],
     perf_live: dict[str, Any],
     perf_paper: dict[str, Any],
+    recon: dict[str, Any] | None = None,
 ) -> str:
     if not perf.get("n"):
         return (
@@ -81,5 +114,6 @@ def render(
         f"{_mini(live_label, perf_live)}"
         f"{_mini(paper_label, perf_paper)}"
         "</div>"
+        f"{_recon_line(recon)}"
         "</section>"
     )
