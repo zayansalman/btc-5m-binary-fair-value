@@ -889,7 +889,9 @@ class LiveExecutor:
         if filled >= sellable:
             self._exit_order_id = None
             self._exit_price = None
-            await self._register_exit_fill(sellable, price)
+            await self._register_exit_fill(
+                sellable, _avg_fill_price(result.raw, SELL, price)
+            )
             if self._entry_sold_size >= matched:
                 self._clear_position()
             return result
@@ -906,7 +908,7 @@ class LiveExecutor:
         final, _ = await self._order_fill_info(result.order_id, default_size=0.0)
         self._exit_order_id = None
         self._exit_price = None
-        await self._register_exit_fill(final, price)
+        await self._register_exit_fill(final, _avg_fill_price(result.raw, SELL, price))
         if matched > 0 and self._entry_sold_size >= matched:
             # The order actually filled completely during the cancel race.
             self._clear_position()
