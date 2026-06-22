@@ -7,12 +7,15 @@ independent (see ``paper._settle_due_shadows``) and PnL is booked NET of the
 Polymarket 7% taker fee. No real orders are ever placed from here — this is a
 pure paper comparison harness.
 
-Candidates:
-- ``fair_value_v0``      — the live strategy, logged as the control baseline.
-- ``cushion_favorite_v2``— v0 + a cushion gate (spot clearly on the favoured
+Candidates (controls are logged but hidden from the operator selector; see
+``SELECTABLE_MODELS``):
+- ``fair_value_v0``       — the live strategy, logged as the control baseline.
+- ``cushion_favorite_v2`` — v0 + a cushion gate (spot clearly on the favoured
   side of the strike): the only entry-knowable taker lean that survived.
-- ``late_convergence_v3``— enters the final 5-30s on near-certainties the book
-  under-prices (a regime v0's >=60s filter never trades).
+- ``down_skeptic_v4``     — v0 but a Down pick must clear a +0.02 edge premium.
+- ``cushion_drift_v5``    — v0 + a regime-adaptive, two-sided cushion bar.
+- ``down_skeptic_drift_v6``— v4's edge toll made regime-aware: a bear regime
+  tolls Up, a bull regime tolls Down (reduces to v4 at regime 0).
 """
 
 from __future__ import annotations

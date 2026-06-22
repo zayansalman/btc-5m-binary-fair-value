@@ -8,16 +8,13 @@ this tick". No database, no clock, no I/O — the loop wiring (built
 separately) owns persistence and settlement, so these functions can be
 unit-tested with hand-built fixtures and reasoned about in isolation.
 
-The two candidates here layer an extra gate on top of the live v0 signal
+The candidates here layer an extra gate on top of the live v0 signal
 (:func:`btc_bot.strategy.signal_from_executable_edges`), which is reused
 verbatim rather than reimplemented:
 
 * :func:`cushion_favorite_v2` — take v0's pick only when spot sits a minimum
   number of basis points on the favourable side of the reference print, so
   a hair-thin lead near a pinned price does not count as a real cushion.
-* :func:`late_convergence_v3` — late in the window, buy the favoured side
-  only when the book *and* the model both call it near-certain and the ask
-  still leaves room to profit.
 """
 from __future__ import annotations
 
@@ -93,72 +90,6 @@ def cushion_favorite_v2(
         edge=edge,
         confidence=confidence,
         reason=f"cushion {cushion_bps:.1f}bps; {reason}",
-    )
-
-
-def late_convergence_v3(
-    view: SnapshotView,
-    params: strategy.StrategyParams,
-    near_certain: float = 0.85,
-    late_min_s: int = 5,
-    late_max_s: int = 45,
-) -> ShadowSignal | None:
-    """Buy the favoured side late, when the BOOK calls it near-certain.
-
-    Inside the late time band ``[late_min_s, late_max_s]`` this candidate
-    sides with the book's favourite (Up when ``market_up_price >= 0.5``,
-    else Down) and takes it when the book's favoured price is at or above
-    ``near_certain`` and the fair-value model at least *weakly* agrees
-    (fair ≥ 0.5). It keys off the BOOK on purpose: the price is what predicts
-    the outcome, while the fair-value model is anti-predictive here, so the
-    original gate (requiring the model to *also* be near-certain) was
-    self-defeating and never fired. A final guard requires the executable ask
-    below ``0.99`` so there is still room to profit net of cost. ``params`` is
-    accepted for signature parity; this gate is independent of v0's edge
-    thresholds.
-
-    Args:
-        view: Immutable per-tick market view.
-        params: Active strategy parameters (unused here; kept for parity).
-        near_certain: Minimum price/fair probability for the favoured side.
-        late_min_s: Inclusive lower bound of the late time band, seconds.
-        late_max_s: Inclusive upper bound of the late time band, seconds.
-
-    Returns:
-        A :class:`ShadowSignal` when the time band, the book-and-model
-        near-certainty, and the room-to-profit guard all pass, else ``None``.
-    """
-    del params  # signature parity with the other candidates; not used here
-
-    if not (late_min_s <= view.remaining_seconds <= late_max_s):
-        return None
-
-    favored = "Up" if view.market_up_price >= 0.5 else "Down"
-    entry = view.up_ask if favored == "Up" else view.down_ask
-    if entry is None:
-        return None
-
-    fair_fav = view.fair_up if favored == "Up" else 1.0 - view.fair_up
-    fav_price = view.market_up_price if favored == "Up" else 1.0 - view.market_up_price
-
-    # Book must be near-certain; the (anti-predictive) model need only weakly
-    # agree, not also be near-certain — the old AND gate kept this from firing.
-    if fav_price < near_certain or fair_fav < 0.5:
-        return None
-
-    if entry >= 0.99:
-        return None
-
-    return ShadowSignal(
-        side=favored,
-        entry_price=entry,
-        fair_prob=fair_fav,
-        edge=fair_fav - entry,
-        confidence=fair_fav,
-        reason=(
-            f"late-convergence rs={view.remaining_seconds}; "
-            f"book {fav_price:.2f} fair {fair_fav:.2f}"
-        ),
     )
 
 
