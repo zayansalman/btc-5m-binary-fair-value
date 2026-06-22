@@ -209,6 +209,87 @@ async def test_settled_close_places_no_exit_order(
     assert row["realized_pnl_usd"] == pytest.approx(3.0)  # 6 * (1.0 - 0.5)
 
 
+async def _insert_settle_pos(snap) -> None:
+    async with paper.connect() as db:
+        await db.execute(
+            "INSERT INTO btc_paper_positions(opened_at, window_slug, side, state,"
+            " entry_price, notional_usd, shares, quote_source, strategy_style)"
+            " VALUES (?, ?, 'Up', 'open', 0.5, 3.0, 6.0, 'clob', 'settle')",
+            (snap.created_at, snap.window_slug),
+        )
+        await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_settled_close_uses_real_held_size(
+    test_db, monkeypatch: pytest.MonkeyPatch
+):
+    """Ledger PnL uses the executor's REAL held size, not the recorded shares.
+
+    Only 4 of the 6 recorded shares actually filled on-venue (#103): the ledger
+    must book 4 * (1.0 - 0.5) = 2.0, not the recorded-shares 3.0.
+    """
+    executor = MagicMock()
+    executor.submit_exit = AsyncMock()
+    monkeypatch.setattr(paper, "_live_executor", executor)
+    snap = _snapshot()
+    await _insert_settle_pos(snap)
+    await paper._close_position(
+        dict(_POS), snap, 1.0, "WINDOW_ROLL", settled=True, settled_held=4.0
+    )
+    async with paper.connect() as db:
+        async with db.execute(
+            "SELECT realized_pnl_usd FROM btc_paper_positions"
+        ) as cur:
+            row = dict(await cur.fetchone())
+    assert row["realized_pnl_usd"] == pytest.approx(2.0)  # 4 * (1.0 - 0.5)
+
+
+@pytest.mark.asyncio
+async def test_settled_close_phantom_books_zero(
+    test_db, monkeypatch: pytest.MonkeyPatch
+):
+    """An entry that never filled on-venue (held 0) books 0 — no phantom win (#103)."""
+    executor = MagicMock()
+    executor.submit_exit = AsyncMock()
+    monkeypatch.setattr(paper, "_live_executor", executor)
+    snap = _snapshot()
+    await _insert_settle_pos(snap)
+    await paper._close_position(
+        dict(_POS), snap, 1.0, "WINDOW_ROLL", settled=True, settled_held=0.0
+    )
+    async with paper.connect() as db:
+        async with db.execute(
+            "SELECT realized_pnl_usd FROM btc_paper_positions"
+        ) as cur:
+            row = dict(await cur.fetchone())
+    assert row["realized_pnl_usd"] == pytest.approx(0.0)
+
+
+@pytest.mark.asyncio
+async def test_settled_live_close_skips_paper_counter(
+    test_db, monkeypatch: pytest.MonkeyPatch
+):
+    """Live settle must NOT re-book to the paper counter (#103).
+
+    record_settlement already booked the real-held PnL to the LIVE leg; the
+    close booking is_live=False would double-count it into the paper leg (the
+    bug behind paper_pnl mirroring live_pnl).
+    """
+    executor = MagicMock()
+    executor.submit_exit = AsyncMock()
+    monkeypatch.setattr(paper, "_live_executor", executor)
+    gate = MagicMock()
+    gate.record_realized_pnl = AsyncMock()
+    monkeypatch.setattr(paper, "_risk_gate", gate)
+    snap = _snapshot()
+    await _insert_settle_pos(snap)
+    await paper._close_position(
+        dict(_POS), snap, 1.0, "WINDOW_ROLL", settled=True, settled_held=6.0
+    )
+    gate.record_realized_pnl.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # Anti-adverse-selection entry filters (issue #29)
 # ---------------------------------------------------------------------------
