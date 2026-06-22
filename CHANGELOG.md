@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.4.13 — Settle from real held size; stop phantom wins + paper double-count (2026-06-22)
+
+Addresses #103 (the root cause behind the #102 reconciliation). At settlement, `record_settlement` already books the **real** matched/held size to the live counter — but `_close_position(settled=True)` was booking the **ledger** row from `pos["shares"]` (the *recorded* size, which includes entries that never filled on-venue). Two bugs:
+
+1. **Phantom wins** — a never-filled entry (`held=0`) booked `recorded_shares × (payout − entry)` as a fictional profit into the ledger (the 6 phantoms / +$14.44 the reconciliation found).
+2. **Paper double-count** — a *live* settled close also called `record_realized_pnl(is_live=False)`, polluting the **paper** PnL leg with live PnL (the bug behind `paper_realized_pnl` mirroring `live_realized_pnl`).
+
+### What
+- **`btc_bot/paper.py`** — `_close_position` gains `settled_held`; the settled branch splits: a **live** settle uses the executor's real held size for the ledger row (so `held=0` → PnL 0, no phantom) and does **not** re-book to the gate; **paper** settles keep the existing `is_live=False` halt feed. `_settle_position_outcome` threads `record_settlement(...).size` through.
+- **Tests** (`test_settle_style.py`): real-held sizing (4 of 6 filled → books 2.0 not 3.0), phantom books 0, live settle skips the paper counter. Full suite **638 green**, ruff clean.
+
+### Remaining for #103 (follow-up)
+- Capture the **actual average fill price** (not the limit) and **taker fees** from the CLOB order response; settle from the venue's real resolution. A lightweight periodic Data-API reconcile to self-heal drift.
+
 ## v0.4.12 — Reconcile live ledger to real Polymarket fills (2026-06-22)
 
 Closes #102. The dashboard/DB did not reflect the real Polymarket account. Verified read-only against the Polymarket **Data API** (`/activity` + `/positions` + `/value`, funder `0xc1Daa…00c5`):
