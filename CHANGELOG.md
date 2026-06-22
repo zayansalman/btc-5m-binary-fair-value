@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.4.12 — Reconcile live ledger to real Polymarket fills (2026-06-22)
+
+Closes #102. The dashboard/DB did not reflect the real Polymarket account. Verified read-only against the Polymarket **Data API** (`/activity` + `/positions` + `/value`, funder `0xc1Daa…00c5`):
+
+| | DB claimed | Real (Polymarket) |
+|---|---|---|
+| Bot live PnL (recorded windows) | **+$3.33** | **−$6.74** |
+| BTC bot (full history, realized) | — | **−$14.51** |
+| Whole account (incl. manual non-BTC bets) | — | **−$34.10** |
+
+The ~$20 overstatement was driven by **6 phantom positions** (+$14.44 of fictional wins — orders the bot recorded as filled+won that **never executed on-venue**), plus fee/fill-price drift. Resolved-window PnL was already accurate (Δ −$2.56 across 119). Root cause tracked in #103 (live.py books assumed fills/resolution/zero-fees).
+
+### What
+- **`tools/reconcile_live_ledger.py`** — idempotent, auditable (`--dry-run`/`--apply`). Per window, economic PnL = `sell + redeem + open_currentValue − buy_cost`. Rewrites the 191 real `btc_paper_positions(mode='live')` rows to real entry/exit/shares/notional/PnL (tagged `recon:dataapi`, resolution-disagreements flagged), voids the 6 phantoms (`state='void'`), writes `btc_recon.*` truth keys. Atomic transaction; DB backed up first.
+- **Dashboard "Reconciled vs Polymarket" line** (`panels/performance.py`, `panels/_data.py:reconciliation()`, `ems.py`): surfaces the whole-account ground truth (real BTC PnL, account PnL, open value, as-of) under the LIVE/PAPER cards — the per-window rows can't show it.
+- **Process**: reconciliation only runs against a **stopped** bot (frozen ledger) with a **fresh** Data-API pull; the agent never stops/starts live trading.
+- **Tests**: `test_dashboard.py::TestPerformanceReconLine`. Full suite green (DB-isolated), ruff clean.
 ## v0.4.11 — Regime-aware Down-Skeptic + roster trim (2026-06-22)
 
 Closes #100. The live bot bled on a one-sided book: the last 15 live trades were **15/15 Up, 6W/9L, net −$9.71 (−24.3% ROI)**. Root cause was structural — the active model `down_skeptic_v4` charges a **fixed +0.02 edge toll on every Down pick** (to fight v0's `spot >= reference` Up bias), which leans the book almost entirely Up. That is correct in a flat/up market but backwards when the regime turns **bearish** (over the same window, Down bets won 8/9). At ~0.53 entries the asymmetric payoff (break-even win rate 53%) turns a sub-53% Up hit-rate into a steady bleed.

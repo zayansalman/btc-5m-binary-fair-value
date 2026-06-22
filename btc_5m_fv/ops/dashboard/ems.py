@@ -77,6 +77,7 @@ async def ems_html() -> str:
     perf = data.performance(closed)
     perf_live = data.performance(closed_live)
     perf_paper = data.performance(closed_paper)
+    recon = await data.reconciliation()
     is_live = mode == "live"
 
     # ---- panels ----
@@ -178,7 +179,7 @@ async def ems_html() -> str:
         tick, _GateParams(), recent_ticks, paused, pause_reason
     )
     performance_html = performance.render(
-        style=style, perf=perf, perf_live=perf_live, perf_paper=perf_paper
+        style=style, perf=perf, perf_live=perf_live, perf_paper=perf_paper, recon=recon
     )
     tca_html = tca.render(perf=perf, spread=spread)
     blotter_html = blotter.render(closed=closed, open_pos=open_pos)
