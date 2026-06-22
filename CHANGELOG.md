@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.4.18 — Stop phantom fills at settlement on a venue lookup failure (2026-06-22)
+
+Addresses #109 — the dominant live-PnL inflation channel surfaced by the strategy assessment + reconciliation (#102/#103). A **settle-style** position whose entry **rested and never matched on-venue** was booked at the **full submitted size** when the `get_order` fill lookup failed at settlement — manufacturing a phantom WIN (`won`) or phantom LOSS (`!won`). This is why the as-booked live ledger showed a profit that flips to a real loss once the never-executed rows are voided.
+
+### Root cause
+`_order_fill_info` returns its `default_size` on lookup failure. The entry callers passed `default_size=self._entry_size` (**assume fully filled**) — correct for the EXIT/SELL path (under-selling strands real tokens) but wrong for SETTLE (no SELL, so over-counting books fiction). The optimism leaked into `record_settlement` via `cancel_open` (live.py:960) and `_matched_entry_size` (live.py:1109).
+
+### What
+- **`btc_5m_fv/execution/live.py`** — `_matched_entry_size` and `cancel_open` gain `assume_filled_on_error` (default `True`, preserving exit/flatten/kill behavior). `record_settlement` passes `False`, so a failed venue lookup on a never-matched entry settles to **held=0** — no phantom PnL, in either direction.
+- **Tests** (`test_live_executor.py`): phantom-WIN, phantom-LOSS, and an exit-vs-settle asymmetry guard. Full suite **646 green**, ruff clean.
+
+### Not fixed here (follow-up)
+A distinct, smaller channel — premature loss-booking of *matched-but-unresolved* windows from settlement-source (Chainlink vs Polymarket) timing — needs its own reproduction and is tracked separately, not rushed in.
+
 ## v0.4.17 — Fix red CI: offline-harness deps missing from pyproject test extra (2026-06-22)
 
 `develop` CI was failing. CI installs `pip install -e ".[test]"` (pyproject), but `polars` and `huggingface-hub` lived only in `requirements.txt` — so CI never installed them and `tests/unit/test_offline_replay.py` + `test_chainlink_lead_lag.py` broke pytest **collection** (`ModuleNotFoundError: polars`), failing the test job and zeroing `docs-drift`'s `count_tests()` (#79). Passed locally only because the dev venv happened to have polars (requirements/pyproject drift).
