@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.4.17 — Fix red CI: offline-harness deps missing from pyproject test extra (2026-06-22)
+
+`develop` CI was failing. CI installs `pip install -e ".[test]"` (pyproject), but `polars` and `huggingface-hub` lived only in `requirements.txt` — so CI never installed them and `tests/unit/test_offline_replay.py` + `test_chainlink_lead_lag.py` broke pytest **collection** (`ModuleNotFoundError: polars`), failing the test job and zeroing `docs-drift`'s `count_tests()` (#79). Passed locally only because the dev venv happened to have polars (requirements/pyproject drift).
+
+### What
+- **`pyproject.toml`** — add `polars>=1.17`, `huggingface-hub>=0.26` to the `test` optional-dependencies group so `.[test]` (and therefore CI) installs them. No runtime/core dependency change.
+- **Verified** in a clean venv mimicking CI (`pip install -e ".[test]"`, no requirements.txt): the two modules now collect (12 tests); full local suite **643 passed**.
+
 ## v0.4.16 — Selector labels carry the model version (2026-06-22)
 
 Addresses #108. The shadow-model dropdown showed semantic labels (`Down-Skeptic`, `Down-Skeptic · Regime Drift`) that didn't map back to the persisted `model_id`s (`down_skeptic_v4`, `down_skeptic_drift_v6`). The version jump compounds the confusion: down-skeptic is **v4** and its regime-drift child is **v6** because the `vN` suffix is a *global* experiment counter — `cushion_drift` (v5) was logged between them — not a per-family version.
