@@ -141,6 +141,25 @@ def lifetime_pnls(addr_activity: list[dict]) -> tuple[float, float]:
 # ---------------------------------------------------------------------------
 
 
+def _iso(epoch: int) -> str:
+    return datetime.fromtimestamp(epoch, UTC).isoformat()
+
+
+def _newest_live_epoch(db_path: Path) -> int:
+    """Unix-seconds of the most recent live position's opened_at (0 if none)."""
+    conn = sqlite3.connect(db_path)
+    row = conn.execute(
+        "SELECT MAX(opened_at) FROM btc_paper_positions WHERE mode='live'"
+    ).fetchone()
+    conn.close()
+    if not row or not row[0]:
+        return 0
+    try:
+        return int(datetime.fromisoformat(row[0]).timestamp())
+    except ValueError:
+        return 0
+
+
 def build_plan(db_path: Path, win: dict, open_val: dict) -> tuple[list[dict], list[dict]]:
     """Return (corrections, phantoms) for the live closed positions."""
     conn = sqlite3.connect(db_path)
@@ -241,6 +260,10 @@ def main() -> None:
     g.add_argument("--apply", action="store_true", help="apply the corrections to the DB")
     ap.add_argument("--db", type=Path, default=_config.DB_PATH)
     ap.add_argument("--asof", default=None, help="ISO timestamp recorded in btc_recon.asof")
+    ap.add_argument(
+        "--force", action="store_true",
+        help="apply even when the snapshot looks stale vs the ledger (skips the staleness guard)",
+    )
     args = ap.parse_args()
 
     addr = _config.POLYMARKET_FUNDER
@@ -273,6 +296,19 @@ def main() -> None:
     if args.dry_run:
         print("\nDRY RUN — no DB writes. Re-run with --apply to commit.")
         return
+
+    # Staleness guard (#103): refuse to --apply when the ledger holds live trades
+    # newer than the Data-API snapshot — the API has not indexed them yet, so they
+    # would be voided as phantoms (the near-miss that put 2 fresh real trades in
+    # the phantom list mid-session). Stop the bot and re-pull fresh data first.
+    newest_activity = max((int(r.get("timestamp") or 0) for r in activity), default=0)
+    newest_db = _newest_live_epoch(args.db)
+    if not args.force and newest_db and newest_activity and newest_db > newest_activity + 120:
+        raise SystemExit(
+            f"STALE snapshot: newest live position ({_iso(newest_db)}) is newer than the "
+            f"activity snapshot ({_iso(newest_activity)}). Stop the bot, re-pull fresh data, "
+            f"then --apply (or pass --force if the recent windows are already settled)."
+        )
 
     asof = args.asof or datetime.now(UTC).isoformat()
     recon_keys = {

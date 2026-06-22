@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.4.15 — Real exit fill price + reconcile staleness guard (2026-06-22)
+
+Completes #103's fill-price work. The **exit** (SELL) path recorded the posted limit, mirroring the entry bug fixed in v0.4.14. Now both sides record the real fill.
+
+### What
+- **`btc_5m_fv/execution/live.py`** — `submit_exit` registers exit fills at `_avg_fill_price(result.raw, SELL, price)` (a SELL's realised price is `takingAmount`/`makingAmount`), with the same safe limit fallback for resting/unmatched orders. Exits are rare (≈7 vs 383 buys) and most positions settle held-to-resolution, so the entry price dominates — this just makes the recording symmetric and correct.
+- **`tools/reconcile_live_ledger.py`** — **staleness guard**: `--apply` now refuses when the ledger holds live positions newer than the Data-API snapshot (they'd be voided as phantoms before the API indexes them — the near-miss from the manual run). `--force` overrides.
+- **Tests** (`test_live_executor.py`): `_avg_fill_price` direct unit coverage (BUY ratio, SELL inverse, limit fallbacks). Full suite **643 green**, ruff clean.
+
+### #103 closed
+Phantom wins + paper double-count (v0.4.13), real entry fill price (v0.4.14), real exit fill price + staleness guard (this). **Auto post-stop reconcile is intentionally not built**: with the recording fixed at the source (real fills, no phantoms, no double-count), the ledger now stays accurate going forward, so auto-mutating the financial ledger on a Data-API pull (which races API indexing) would add risk for no benefit. The manual reconcile tool remains as an audit backstop; fees are captured there via real USDC flows.
+
 ## v0.4.14 — Record the real average fill price, not the limit (2026-06-22)
 
 Addresses #103. A matched live entry recorded `self._entry_price = price` — the posted **limit**, not the price the order actually filled at. Since `_entry_price` feeds settlement PnL, an order that filled *better* than the ask (the common case, buying at the best ask into a moving book) silently **overstated** PnL.

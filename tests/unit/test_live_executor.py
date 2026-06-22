@@ -19,10 +19,13 @@ from py_clob_client_v2 import OrderPayload
 import config as _config
 import db as _db
 from btc_5m_fv.execution.live import (
+    BUY,
     CONFIRM_PHRASE,
+    SELL,
     LiveBootRefused,
     LiveExecutor,
     LiveOrderResult,
+    _avg_fill_price,
     _round_price_to_tick,
     _round_size_down,
     assert_live_boot_allowed,
@@ -30,6 +33,27 @@ from btc_5m_fv.execution.live import (
 )
 
 UP_TOKEN = "1234567890"
+
+
+def test_avg_fill_price_buy_uses_making_over_taking() -> None:
+    """BUY: makingAmount (USDC) / takingAmount (tokens) = realised price."""
+    resp = {"status": "matched", "makingAmount": "2.893", "takingAmount": "5.26"}
+    assert _avg_fill_price(resp, BUY, 0.57) == pytest.approx(0.550, abs=1e-3)
+
+
+def test_avg_fill_price_sell_uses_taking_over_making() -> None:
+    """SELL: takingAmount (USDC) / makingAmount (tokens) = realised price."""
+    resp = {"status": "matched", "makingAmount": "5.0", "takingAmount": "2.9"}
+    assert _avg_fill_price(resp, SELL, 0.55) == pytest.approx(0.58, abs=1e-3)
+
+
+def test_avg_fill_price_falls_back_to_limit() -> None:
+    """Resting / missing amounts / out-of-range price -> the posted limit."""
+    assert _avg_fill_price({"status": "live"}, BUY, 0.57) == 0.57  # not matched
+    assert _avg_fill_price({"status": "matched", "takingAmount": "5"}, BUY, 0.57) == 0.57
+    # making/taking implying price > 1 is rejected as nonsense.
+    bad = {"status": "matched", "makingAmount": "10", "takingAmount": "5"}
+    assert _avg_fill_price(bad, BUY, 0.57) == 0.57
 
 
 # ---------------------------------------------------------------------------
