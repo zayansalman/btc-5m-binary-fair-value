@@ -103,9 +103,9 @@ _MODELS: dict[
 ] = {
     "fair_value_v0": _v0_control,
     "cushion_favorite_v2": signals.cushion_favorite_v2,
-    "late_convergence_v3": signals.late_convergence_v3,
     "down_skeptic_v4": signals.down_skeptic_v4,
     "cushion_drift_v5": signals.cushion_drift_v5,
+    "down_skeptic_drift_v6": signals.down_skeptic_drift_v6,
 }
 
 
@@ -118,19 +118,28 @@ ACTIVE_MODEL_KEY = "btc_model.active"
 DEFAULT_MODEL = "fair_value_v0"
 MODEL_IDS: list[str] = list(_MODELS.keys())
 
+# Operator-selectable models for the dashboard dropdown. A curated subset of
+# MODEL_IDS: the controls (fair_value_v0, cushion_favorite_v2) keep logging in
+# _MODELS but are hidden from the selector. v0's native path stays the default.
+SELECTABLE_MODELS: list[str] = [
+    "down_skeptic_v4",
+    "cushion_drift_v5",
+    "down_skeptic_drift_v6",
+]
+
 MODEL_LABELS: dict[str, str] = {
     "fair_value_v0": "Fair-Value · Settle",
     "cushion_favorite_v2": "Cushion Favorite",
-    "late_convergence_v3": "Late Convergence",
     "down_skeptic_v4": "Down-Skeptic",
     "cushion_drift_v5": "Cushion · Regime Drift",
+    "down_skeptic_drift_v6": "Down-Skeptic · Regime Drift",
 }
 MODEL_DESCRIPTIONS: dict[str, str] = {
     "fair_value_v0": "v0 baseline · edge 0.045–0.07 · favorites ≥0.50 · hold→resolution",
     "cushion_favorite_v2": "v0 + cushion: spot clearly on the favoured side of the strike",
-    "late_convergence_v3": "final 5–45s · buy near-certainties (book ≥0.85)",
     "down_skeptic_v4": "v0 but Down needs +0.02 extra edge (prices the ≥-tie Up bias)",
     "cushion_drift_v5": "v0 + regime-adaptive cushion: drift/σ momentum shifts the Up/Down bar",
+    "down_skeptic_drift_v6": "v4 but the edge toll flexes with drift/σ: bear → Up tolled, bull → Down",
 }
 
 # Candidate signal fns for the LIVE dispatch. v0 is intentionally absent — it
@@ -139,9 +148,9 @@ CANDIDATE_SIGNALS: dict[
     str, Callable[[SnapshotView, strategy.StrategyParams], ShadowSignal | None]
 ] = {
     "cushion_favorite_v2": signals.cushion_favorite_v2,
-    "late_convergence_v3": signals.late_convergence_v3,
     "down_skeptic_v4": signals.down_skeptic_v4,
     "cushion_drift_v5": signals.cushion_drift_v5,
+    "down_skeptic_drift_v6": signals.down_skeptic_drift_v6,
 }
 
 
