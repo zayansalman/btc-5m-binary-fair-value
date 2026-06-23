@@ -1,3 +1,25 @@
+# Regime-attribution instrument (#120) (2026-06-23)
+
+Operator pushed back on my stance re: regime ID + auto strategy selection. Decision,
+owned: **do NOT build a live auto-selector** (overfitting trap on a null surface); build
+the **measuring instrument** that decides the question rigorously when the sample is powered.
+
+## Plan
+- [x] Recon (4 parallel agents): shadow pipeline/schema, attribution record, power audit, stats primitives.
+- [x] `tools/regime_attribution.py` — read-only, never in live path. A-priori bands; attribute by side-BET; two-sided-edge gate; permutation test + Benjamini-Hochberg FDR; power gate.
+- [x] TDD: `tests/unit/test_regime_attribution.py` (29 tests, incl. positive controls proving it CAN find a constructed two-sided edge).
+- [x] Verify on real ledger (read-only, both axes).
+- [ ] Adversarial stats review (workflow running) — apply confirmed fixes.
+- [ ] Commit + PR to develop.
+- [ ] Follow-up issues: schema migration to log spot/reference/sigma/drift on shadow rows (unlocks vol/basis axes); dashboard panel.
+
+## REVIEW (2026-06-23)
+- **Recon ground truth:** shadow ledger `btc_model_shadow_positions` = clean fee-netted counterfactual (8 models, not 6); side-BET recoverable; only time-of-day + edge axes available without schema change; ~5.7 days, only `fair_value_v0` individually powered → instrument ships **dormant**, lights up as sample grows.
+- **Real-data verdict (both axes):** *"no regime clears the bar — no significant two-sided regime edge."* Every model permutation p∈[0.11,1.0], nothing survives FDR, zero regimes pass the two-sided gate. Confirms: eye-catching cells are one-sided tilt or high-win/negative-expectancy (late_convergence_v3 90%+ win, NEGATIVE exp — the "91%-win loses money" lesson, made visible).
+- **Verification:** 696 unit tests green; ruff clean; 29 new tests incl. positive controls.
+
+---
+
 # PnL accuracy + open-position widget + trailing loss-halt (2026-06-23)
 
 Two operator asks from this session, investigated via two parallel agent workflows.

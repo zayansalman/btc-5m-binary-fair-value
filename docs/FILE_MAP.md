@@ -88,4 +88,5 @@ _Status: `WIRED` = has non-test importers; `DEAD?` = no importers found (investi
 | `tools/live_setup.py` | cli | 0 | One-time live-trading onboarding (issues #32, #33). |
 | `tools/offline_replay.py` | cli | 0 | Offline replay of the BTC 5-m fair-value strategy on HF Polymarket data. |
 | `tools/reconcile_live_ledger.py` | cli | 0 | Reconcile the live paper-ledger against the REAL Polymarket account (issue #102). |
-| `tools/shadow_performance.py` | cli | 0 | Per-model performance comparison for the shadow forward-tester. |
+| `tools/regime_attribution.py` | cli | 0 | Regime-attribution instrument for the shadow forward-tester (issue #120). |
+| `tools/shadow_performance.py` | cli | 1 | Per-model performance comparison for the shadow forward-tester. |

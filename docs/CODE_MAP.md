@@ -73,7 +73,7 @@ Env knobs: `BTC_TRADE_*` are canonical; `BTC_LIVE_*` are deprecated read-aliases
 <!-- BEGIN GENERATED:summary -->
 - **Trees:** `btc_bot/` = live loop + signal math; `btc_5m_fv/` = execution/connectors/dashboard/backtest; top-level `config.py`/`db.py`/`logging_setup.py` = foundation. Both ACTIVE, bidirectionally coupled.
 - **Entry:** `python main.py` → FastAPI `btc_5m_fv/ops/dashboard/app.py`; loop starts on operator ▶ Start → `btc_bot/controller.py:request_start`.
-- **Tests:** 699.
+- **Tests:** 729.
 - **Built-but-dead (do not edit expecting runtime effect):** `btc_5m_fv/backtest/conditional.py`, `btc_5m_fv/backtest/harness.py`, `btc_5m_fv/connectors/base.py`, `btc_5m_fv/connectors/binance.py`, `btc_5m_fv/connectors/chainlink.py`, `btc_5m_fv/connectors/polymarket.py`, `btc_5m_fv/ops/controller.py`, `btc_5m_fv/ops/dashboard/panels/_shared.py`, `btc_5m_fv/storage/replay.py`, `btc_5m_fv/strategy/signal.py`, `btc_bot/chronos_signal.py`.
 <!-- END GENERATED:summary -->
 
@@ -162,7 +162,8 @@ Env knobs: `BTC_TRADE_*` are canonical; `BTC_LIVE_*` are deprecated read-aliases
 | `tools/live_setup.py` | cli | 0 | One-time live-trading onboarding (issues #32, #33). |
 | `tools/offline_replay.py` | cli | 0 | Offline replay of the BTC 5-m fair-value strategy on HF Polymarket data. |
 | `tools/reconcile_live_ledger.py` | cli | 0 | Reconcile the live paper-ledger against the REAL Polymarket account (issue #102). |
-| `tools/shadow_performance.py` | cli | 0 | Per-model performance comparison for the shadow forward-tester. |
+| `tools/regime_attribution.py` | cli | 0 | Regime-attribution instrument for the shadow forward-tester (issue #120). |
+| `tools/shadow_performance.py` | cli | 1 | Per-model performance comparison for the shadow forward-tester. |
 <!-- END GENERATED:inventory -->
 
 See `docs/FILE_MAP.md` for the full generated index.
