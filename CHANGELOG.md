@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.4.22 — Fix: bot never trades — crypto-price reference 403 over HTTP/1.1 (2026-06-23)
+
+The live bot SKIPped every window (`skip: settlement feed degraded`, `reference_price=0`, zero entries). Not the signal logic — the **reference data feed** was blocked.
+
+### Root cause
+Polymarket's `crypto-price` reference endpoint is behind Cloudflare bot management, which now 403s ("Just a moment...") a Chrome-spoofed request sent over **HTTP/1.1** — real Chrome speaks HTTP/2, so the UA-vs-protocol mismatch reads as a bot. The connector already sent browser headers, but the client defaulted to HTTP/1.1. Measured from the bot's host: HTTP/1.1 **0/5**, HTTP/2 **5/5** (plain curl over h2 also 200) — so it's the client, not the IP.
+
+### Fix
+- **`btc_bot/paper.py`** — new `_make_settlement_client()` factory builds the reference/settlement httpx client with `http2=True`; both client sites use it. Over HTTP/2 the reference fetch returns a valid `openPrice`, so fair value computes and the bot can trade again.
+- **`pyproject.toml`** — `httpx[http2]` is now a hard dependency (the `h2` extra is load-bearing, not optional).
+- Test guards that the factory enables HTTP/2.
+
 ## v0.4.21 — Reset halt also clears the adaptive auto-pause (2026-06-23)
 
 Operator ask (#117): "I should be able to clear auto-pause when I hit Reset halt." The Reset button is now the single "let me trade again" control.
