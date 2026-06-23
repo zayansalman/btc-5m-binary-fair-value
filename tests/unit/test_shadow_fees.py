@@ -6,32 +6,9 @@ import pytest
 
 from btc_bot.shadow.fees import (
     breakeven_winrate,
-    maker_fee_per_share,
-    maker_net_pnl_per_share,
     net_pnl_per_share,
     taker_fee_per_share,
 )
-
-
-class TestMakerFee:
-    """#130: no separate Polymarket maker schedule is modeled, so the default
-    rate equals the taker rate (no assumed rebate); fee_rate=0 is the
-    zero-fee sensitivity."""
-
-    def test_maker_fee_defaults_to_taker_rate(self) -> None:
-        assert maker_fee_per_share(0.6) == taker_fee_per_share(0.6)
-
-    def test_maker_fee_zero_rate_sensitivity(self) -> None:
-        assert maker_fee_per_share(0.6, fee_rate=0.0) == 0.0
-
-    def test_maker_net_pnl_win_and_loss(self) -> None:
-        f = maker_fee_per_share(0.4)
-        assert maker_net_pnl_per_share(0.4, won=True) == pytest.approx(0.6 - f)
-        assert maker_net_pnl_per_share(0.4, won=False) == pytest.approx(-0.4 - f)
-
-    def test_maker_net_pnl_zero_fee(self) -> None:
-        assert maker_net_pnl_per_share(0.4, won=True, fee_rate=0.0) == pytest.approx(0.6)
-        assert maker_net_pnl_per_share(0.4, won=False, fee_rate=0.0) == pytest.approx(-0.4)
 
 
 # ============================================================================

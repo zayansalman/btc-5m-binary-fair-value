@@ -35,26 +35,6 @@ def net_pnl_per_share(entry_price: float, won: bool, fee_rate: float = 0.07) -> 
     return gross - taker_fee_per_share(entry_price, fee_rate)
 
 
-def maker_fee_per_share(price: float, fee_rate: float = 0.07) -> float:
-    """Fee per share for a MAKER (resting limit) entry (#130).
-
-    Polymarket exposes no separate maker schedule we can rely on, so the model
-    reuses the taker formula and the default rate equals the taker rate — i.e.
-    no assumed maker rebate. Pass ``fee_rate=0.0`` for the zero-fee sensitivity
-    (the upside case where making is genuinely cheaper than taking).
-    """
-    return taker_fee_per_share(price, fee_rate)
-
-
-def maker_net_pnl_per_share(
-    entry_price: float, won: bool, fee_rate: float = 0.07
-) -> float:
-    """Net PnL per share for a maker fill at ``entry_price`` — same payout math
-    as the taker leg, charged the maker fee (default = taker rate)."""
-    gross = (1.0 - entry_price) if won else -entry_price
-    return gross - maker_fee_per_share(entry_price, fee_rate)
-
-
 def breakeven_winrate(entry_price: float, fee_rate: float = 0.07) -> float:
     """Win-rate at which expected net PnL per share is exactly zero.
 
