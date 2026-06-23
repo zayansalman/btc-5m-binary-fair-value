@@ -100,18 +100,28 @@ def render(
         f".then(()=>setTimeout(refreshAll,300))\">{status_label}</button>"
     )
 
-    # RESET clears today's realized-loss tally so the halt lifts. Stopped-only:
-    # the running loop owns the in-memory counters. The halt auto-stops the bot,
-    # so after a halt the bot is already stopped and this is live.
-    if state == "running":
+    # RESET is the operator's "let me trade again": it always clears the adaptive
+    # auto-pause (a live config the loop honours next tick) and, when stopped,
+    # also zeroes the loss-halt tally + peaks. So it's enabled whenever there's
+    # something to clear — a running-but-auto-paused bot, or any stopped state.
+    # Disabled only when running with no pause (the loss-halt tally is owned by
+    # the loop then, and a real halt would have auto-stopped the bot).
+    if state == "running" and not paused:
         reset_btn = (
             "<button class='gr-btn' disabled "
-            "title='Stop the bot to reset the loss-halt tally'>Reset halt</button>"
+            "title='Stop the bot to reset the loss-halt tally "
+            "(nothing to clear while running)'>Reset halt</button>"
         )
     else:
+        reset_title = (
+            "Clear the auto-pause and resume entries"
+            if (state == "running" and paused)
+            else "Clear the auto-pause and zero today&#39;s loss-halt tally + peaks "
+            "so entries resume"
+        )
         reset_btn = (
             "<button class='gr-btn btn-ok' "
-            "title='Zero today&#39;s realized-loss tally so the halt clears' "
+            f"title='{reset_title}' "
             "onclick=\"fetch('/api/loss_halt/reset',{method:'POST'})"
             ".then(()=>setTimeout(refreshAll,300))\">Reset halt</button>"
         )
