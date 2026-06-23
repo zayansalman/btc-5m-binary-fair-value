@@ -17,6 +17,10 @@ websockets==16.0
 # polars and it's materially lighter than pandas for the orderbook scale.
 huggingface-hub==0.26.2
 polars==1.17.1
+# numpy backs the regime-attribution instrument (tools/regime_attribution.py, #128)
+# — FDR + permutation stats. Declared here + in the pyproject [test] extra so CI
+# can import it (gen_docs + test collection), matching polars/hf-hub above.
+numpy>=1.26
 
 pytest==8.3.3
 pytest-asyncio==0.24.0
