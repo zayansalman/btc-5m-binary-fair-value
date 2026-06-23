@@ -333,3 +333,15 @@ body {
 .perf-recon-h{font-weight:600;color:var(--fg,#ccc);letter-spacing:.02em}
 .perf-recon b{font-variant-numeric:tabular-nums}
 .perf-recon-asof{margin-left:auto;color:var(--dim,#8a8a8a)}
+.perf-fresh{margin-left:8px;font-size:9px}
+
+/* Open-position live P&L widget inside the LIVE MARKET card (#113) */
+.open-pos{margin-top:10px;padding-top:9px;border-top:1px dashed var(--line)}
+.op-h{font-size:9.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--accent);margin-bottom:7px}
+.op-h .win{margin-left:6px}
+.op-row{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:11.5px;margin-bottom:5px}
+.op-row span{color:var(--dim)}
+.op-row b{margin-left:auto;font-variant-numeric:tabular-nums}
+.op-agg{display:flex;justify-content:space-between;align-items:baseline;margin-top:6px;padding-top:6px;
+  border-top:1px dashed var(--line);font-size:9.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)}
+.op-agg b{font-family:var(--mono);font-size:12.5px;font-variant-numeric:tabular-nums}

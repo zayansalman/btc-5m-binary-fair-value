@@ -70,6 +70,18 @@ class TestLossHaltStopDetail:
         assert "Reset" in detail
 
     @pytest.mark.asyncio
+    async def test_stop_detail_cites_trailing_floor(self, isolated_db) -> None:
+        # With a banked peak the halt fires at a POSITIVE pnl (#112); the operator
+        # message must cite the trailing floor, not the nonsensical fixed "-limit".
+        g = RiskGate(_cfg(), is_live=True)
+        await g.record_realized_pnl(30.0, is_live=True)   # peak 30
+        await g.record_realized_pnl(-12.0, is_live=True)  # +18 <= floor +20 → halt
+        detail = _loss_halt_stop_detail(g, "live")
+        assert detail is not None
+        assert "peak" in detail.lower()
+        assert "+20.00" in detail  # the trailing floor = peak 30 − limit 10
+
+    @pytest.mark.asyncio
     async def test_none_within_limit(self, isolated_db) -> None:
         g = RiskGate(_cfg(), is_live=True)
         await g.record_realized_pnl(-5.0, is_live=True)
@@ -111,13 +123,26 @@ class TestLossHaltEndpoints:
         assert r.json()["bypass_loss_halt"] is False
         assert asyncio.run(get_loss_halt_bypass()) is False
 
-    def test_reset_rejected_when_running(self, client: TestClient) -> None:
+    def test_reset_running_clears_pause_keeps_tally(self, client: TestClient) -> None:
+        # While running, Reset clears the adaptive auto-pause (a live config the
+        # loop honours) but leaves the loss-halt tally to the loop (it owns it
+        # in memory). The operator's one-click "let me trade again".
         asyncio.run(_db.set_config("btc_bot.state", "running"))
         asyncio.run(_db.set_config("btc_risk.live_realized_pnl", "-8.0"))
+        asyncio.run(_db.set_config("btc_bot.auto_paused", "1"))
         r = client.post("/api/loss_halt/reset")
-        assert r.json()["status"] == "error"
-        # Tally untouched.
+        body = r.json()
+        assert body["status"] == "ok"
+        assert body["halt_reset"] is False
         assert asyncio.run(_db.get_config("btc_risk.live_realized_pnl")) == "-8.0"
+        assert asyncio.run(_db.get_config("btc_bot.auto_paused")) == "0"
+
+    def test_reset_clears_auto_pause_when_stopped(self, client: TestClient) -> None:
+        asyncio.run(_db.set_config("btc_bot.state", "stopped"))
+        asyncio.run(_db.set_config("btc_bot.auto_paused", "1"))
+        r = client.post("/api/loss_halt/reset")
+        assert r.json()["status"] == "ok"
+        assert asyncio.run(_db.get_config("btc_bot.auto_paused")) == "0"
 
     def test_reset_zeroes_when_stopped(self, client: TestClient) -> None:
         asyncio.run(_db.set_config("btc_bot.state", "stopped"))
@@ -127,6 +152,31 @@ class TestLossHaltEndpoints:
         assert r.json()["status"] == "ok"
         assert float(asyncio.run(_db.get_config("btc_risk.live_realized_pnl"))) == 0.0
         assert float(asyncio.run(_db.get_config("btc_risk.paper_realized_pnl"))) == 0.0
+
+    def test_reset_clears_trailing_halt_after_banked_peak(
+        self, client: TestClient
+    ) -> None:
+        """The #112 trailing halt fires at ``peak - limit``, so zeroing PnL alone
+        leaves a banked peak holding the floor above 0 and the operator stays
+        halted. Reset must also clear the peaks. Proven through a freshly loaded
+        gate (what the loop sees on the next Start), not just the raw keys."""
+        asyncio.run(_db.set_config("btc_bot.state", "stopped"))
+        asyncio.run(_db.set_config("btc_risk.date", RiskGate._today()))
+        # Banked +$30 peak, bled back to +$20 → floor +20, 20 <= 20 → HALTED.
+        asyncio.run(_db.set_config("btc_risk.live_realized_pnl", "20.0"))
+        asyncio.run(_db.set_config("btc_risk.live_peak_pnl", "30.0"))
+
+        before = RiskGate(_cfg(), is_live=True)
+        asyncio.run(before.load())
+        assert before.loss_halt_breached() is True  # precondition: halted
+
+        r = client.post("/api/loss_halt/reset")
+        assert r.json()["status"] == "ok"
+
+        after = RiskGate(_cfg(), is_live=True)
+        asyncio.run(after.load())
+        assert after.halt_peak == 0.0
+        assert after.loss_halt_breached() is False
 
 
 # ---------------------------------------------------------------------------
@@ -219,10 +269,44 @@ class TestGuardrailsPanel:
         assert "/api/loss_halt/reset" in html
         assert "Reset halt" in html
 
-    def test_reset_disabled_when_running(self) -> None:
-        html = _render(mode="live", state="running")
+    def test_reset_disabled_when_running_and_not_paused(self) -> None:
+        html = _render(mode="live", state="running", paused=False)
         assert "Stop the bot to reset" in html
+
+    def test_reset_enabled_when_running_and_paused(self) -> None:
+        # An auto-pause IS clearable while running (#36) — the button must be
+        # live so the operator can resume without stopping the bot.
+        html = _render(mode="live", state="running", paused=True)
+        assert "/api/loss_halt/reset" in html
+        assert "Stop the bot to reset" not in html
 
     def test_no_cannot_disable_text(self) -> None:
         html = _render(mode="live")
         assert "cannot disable" not in html
+
+
+class TestGatePanelParity:
+    """The LOSS HALT panel verdict MUST match RiskGate enforcement for the same
+    inputs (#112). A divergence — a different comparison or peak derivation —
+    would tell the operator they're OK while the loop has actually halted (or
+    vice versa) on real money. This guards the two formulas against drift."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "seq",
+        [
+            [],              # 0/0 → full headroom, not halted
+            [30.0, -10.0],   # pnl 20, peak 30, floor 20 → halted (boundary, <=)
+            [30.0, -9.0],    # pnl 21, peak 30, floor 20 → not halted
+            [30.0, -11.0],   # pnl 19, peak 30, floor 20 → halted
+            [-10.0],         # never profitable → halted (== old fixed floor)
+            [-9.99],         # never profitable → not halted
+            [2.0, -2.0],     # pnl 0, peak 2, floor -8 → not halted
+        ],
+    )
+    async def test_panel_matches_gate(self, isolated_db, seq) -> None:
+        gate = RiskGate(_cfg(), is_live=True)
+        for pnl in seq:
+            await gate.record_realized_pnl(pnl, is_live=True)
+        html = _render(mode="live", live_pnl=gate.halt_pnl, live_peak=gate.halt_peak)
+        assert (">HALTED<" in html) == gate.loss_halt_breached()

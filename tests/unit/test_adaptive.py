@@ -26,14 +26,14 @@ async def test_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 
 async def _add(db, *, pnl, notional=5.0, edge=0.06, entry=0.55, style="settle",
-               quote="clob", state="closed"):
+               quote="clob", state="closed", opened_at="t"):
     async with db.connect() as conn:
         await conn.execute(
             "INSERT INTO btc_paper_positions(opened_at, window_slug, side, state,"
             " entry_price, notional_usd, shares, edge, realized_pnl_usd,"
             " quote_source, strategy_style)"
-            " VALUES ('t','w','Up',?,?,?,1,?,?,?,?)",
-            (state, entry, notional, edge, pnl, quote, style),
+            " VALUES (?,'w','Up',?,?,?,1,?,?,?,?)",
+            (opened_at, state, entry, notional, edge, pnl, quote, style),
         )
         await conn.commit()
 
@@ -103,6 +103,50 @@ async def test_evaluate_trips_and_is_sticky(test_db, monkeypatch):
     # operator clears -> resumes
     await clear_auto_pause()
     assert (await is_paused())[0] is False
+
+
+@pytest.mark.asyncio
+async def test_clear_records_cleared_at(test_db):
+    await clear_auto_pause()
+    assert await _db.get_config("btc_bot.auto_pause_cleared_at") is not None
+
+
+@pytest.mark.asyncio
+async def test_clear_prevents_immediate_repause(test_db, monkeypatch):
+    # The operator's "resume" must actually stick: trades that predate the clear
+    # are excluded from the edge window, so it doesn't re-pause on the next tick.
+    monkeypatch.setattr(_config, "BTC_AUTO_PAUSE_ENABLED", True)
+    monkeypatch.setattr(_config, "BTC_AUTO_PAUSE_WINDOW", 20)
+    monkeypatch.setattr(_config, "BTC_AUTO_PAUSE_MIN_TRADES", 10)
+    monkeypatch.setattr(_config, "BTC_AUTO_PAUSE_MIN_ROI", -0.15)
+    monkeypatch.setattr(_config, "BTC_EXIT_STYLE", "settle")
+    await _db.set_config("btc_bot.session_start", "2020-01-01T00:00:00+00:00")
+    for _ in range(12):
+        await _add(test_db, pnl=-5.0, opened_at="2020-01-02T00:00:00+00:00")
+    assert (await evaluate_and_maybe_pause())[0] is True
+
+    await clear_auto_pause()  # records cleared_at = now (after the 2020 trades)
+    assert (await is_paused())[0] is False
+    paused2, reason2 = await evaluate_and_maybe_pause()
+    assert paused2 is False  # post-clear window is empty → warming up, not re-paused
+    assert "warming up" in reason2
+
+
+@pytest.mark.asyncio
+async def test_repauses_on_fresh_losses_after_clear(test_db, monkeypatch):
+    # The adaptive guard still re-protects: losses booked AFTER the clear count.
+    monkeypatch.setattr(_config, "BTC_AUTO_PAUSE_ENABLED", True)
+    monkeypatch.setattr(_config, "BTC_AUTO_PAUSE_WINDOW", 20)
+    monkeypatch.setattr(_config, "BTC_AUTO_PAUSE_MIN_TRADES", 10)
+    monkeypatch.setattr(_config, "BTC_AUTO_PAUSE_MIN_ROI", -0.15)
+    monkeypatch.setattr(_config, "BTC_EXIT_STYLE", "settle")
+    await _db.set_config("btc_bot.session_start", "2020-01-01T00:00:00+00:00")
+    await clear_auto_pause()  # cleared_at = now
+    # 12 fresh losses dated in the future, after the clear timestamp.
+    for _ in range(12):
+        await _add(test_db, pnl=-5.0, opened_at="2099-01-01T00:00:00+00:00")
+    paused, reason = await evaluate_and_maybe_pause()
+    assert paused is True and "below floor" in reason
 
 
 @pytest.mark.asyncio

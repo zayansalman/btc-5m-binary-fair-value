@@ -54,7 +54,7 @@ _Status: `WIRED` = has non-test importers; `DEAD?` = no importers found (investi
 | `btc_5m_fv/strategy/signal.py` | DEAD? | 0 | Signal composition — bridge raw edge into a fully typed :class:`Signal`. |
 | `btc_5m_fv/strategy/sizing.py` | WIRED | 1 | Position sizing derived from signal confidence and strategy parameters. |
 | `btc_bot/__init__.py` | pkg | 6 | BTC 5-minute paper-trading package. |
-| `btc_bot/adaptive.py` | WIRED | 2 | Adaptive risk controller (#36): edge-decay auto-pause + calibration. |
+| `btc_bot/adaptive.py` | WIRED | 3 | Adaptive risk controller (#36): edge-decay auto-pause + calibration. |
 | `btc_bot/backtest.py` | WIRED | 5 | Backtest and optimize the BTC 5-minute binary strategy on local history. |
 | `btc_bot/calibration.py` | WIRED | 3 | Probability calibration for the side-relative model output (#37). |
 | `btc_bot/calibration_fit.py` | cli | 0 | Fit the side-relative probability calibrator from the closed-trade journal. |
@@ -88,4 +88,5 @@ _Status: `WIRED` = has non-test importers; `DEAD?` = no importers found (investi
 | `tools/live_setup.py` | cli | 0 | One-time live-trading onboarding (issues #32, #33). |
 | `tools/offline_replay.py` | cli | 0 | Offline replay of the BTC 5-m fair-value strategy on HF Polymarket data. |
 | `tools/reconcile_live_ledger.py` | cli | 0 | Reconcile the live paper-ledger against the REAL Polymarket account (issue #102). |
-| `tools/shadow_performance.py` | cli | 0 | Per-model performance comparison for the shadow forward-tester. |
+| `tools/regime_attribution.py` | cli | 0 | Regime-attribution instrument for the shadow forward-tester (issue #120). |
+| `tools/shadow_performance.py` | cli | 1 | Per-model performance comparison for the shadow forward-tester. |

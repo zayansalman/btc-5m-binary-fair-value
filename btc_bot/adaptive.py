@@ -15,6 +15,7 @@ outcome as ``realized_pnl_usd > 0``, giving a Brier calibration score.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 import config as _config
@@ -26,6 +27,26 @@ log = get_logger("adaptive")
 _PAUSE_KEY = "btc_bot.auto_paused"
 _PAUSE_REASON_KEY = "btc_bot.auto_pause_reason"
 _SESSION_START_KEY = "btc_bot.session_start"
+# When the operator last cleared the pause (#36). The edge window is scoped to
+# trades AFTER this, so a manual clear actually resumes entries instead of
+# re-pausing on the same losing streak — while the guard still re-protects on
+# fresh post-clear trades.
+_CLEARED_AT_KEY = "btc_bot.auto_pause_cleared_at"
+
+
+async def _edge_window_since() -> str | None:
+    """The later of the session start and the last manual clear — the point from
+    which rolling edge is judged. A clear advances this so pre-clear losses no
+    longer hold the pause down."""
+    candidates = [
+        v
+        for v in (
+            await get_config(_SESSION_START_KEY, None),
+            await get_config(_CLEARED_AT_KEY, None),
+        )
+        if v
+    ]
+    return max(candidates) if candidates else None
 
 
 async def rolling_performance(
@@ -104,7 +125,7 @@ async def evaluate_and_maybe_pause() -> tuple[bool, str]:
     if not _config.BTC_AUTO_PAUSE_ENABLED:
         return False, "auto-pause disabled"
 
-    since = await get_config(_SESSION_START_KEY, None)
+    since = await _edge_window_since()
     perf = await rolling_performance(
         _config.BTC_AUTO_PAUSE_WINDOW, _config.BTC_EXIT_STYLE, since=since
     )
@@ -124,8 +145,15 @@ async def evaluate_and_maybe_pause() -> tuple[bool, str]:
 
 
 async def clear_auto_pause() -> None:
-    """Operator action: resume entries after reviewing the pause."""
+    """Operator action: resume entries after reviewing the pause.
+
+    Records the clear time so the edge window restarts here (#36): the losing
+    trades that tripped the pause are excluded going forward, so the bot doesn't
+    immediately re-pause on the same streak. The guard still re-protects once
+    enough fresh post-clear trades accumulate below the floor.
+    """
     await set_config(_PAUSE_KEY, "0")
     await set_config(_PAUSE_REASON_KEY, "")
+    await set_config(_CLEARED_AT_KEY, datetime.now(UTC).isoformat(timespec="seconds"))
     log.info("adaptive.auto_pause_cleared")
     await notify("btc_auto_pause_cleared", "Auto-pause cleared; entries resume.")

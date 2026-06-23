@@ -1,3 +1,143 @@
+# Regime-attribution instrument (#120) (2026-06-23)
+
+Operator pushed back on my stance re: regime ID + auto strategy selection. Decision,
+owned: **do NOT build a live auto-selector** (overfitting trap on a null surface); build
+the **measuring instrument** that decides the question rigorously when the sample is powered.
+
+## Plan
+- [x] Recon (4 parallel agents): shadow pipeline/schema, attribution record, power audit, stats primitives.
+- [x] `tools/regime_attribution.py` — read-only, never in live path. A-priori bands; attribute by side-BET; two-sided-edge gate; permutation test + Benjamini-Hochberg FDR; power gate.
+- [x] TDD: `tests/unit/test_regime_attribution.py` (29 tests, incl. positive controls proving it CAN find a constructed two-sided edge).
+- [x] Verify on real ledger (read-only, both axes).
+- [x] Adversarial stats review (3 lenses) — fixed all 3 confirmed: (1) omnibus→per-(model,regime) one-vs-rest, testable-only + FDR across model×regime; (2) side-residualize PnL (side-mix≠regime); (3) UTC banding. All false-positive-direction; null verdict unchanged.
+- [x] Commit + PR to develop → PR #121 (commit 51d24d8).
+- [ ] Follow-up issues to file: schema migration to log spot/reference/sigma/drift on shadow rows (unlocks vol/basis axes); dashboard panel.
+
+## REVIEW (2026-06-23)
+- **Recon ground truth:** shadow ledger `btc_model_shadow_positions` = clean fee-netted counterfactual (8 models, not 6); side-BET recoverable; only time-of-day + edge axes available without schema change; ~5.7 days, only `fair_value_v0` individually powered → instrument ships **dormant**, lights up as sample grows.
+- **Real-data verdict (both axes):** *"no regime clears the bar — no significant two-sided regime edge."* Every model permutation p∈[0.11,1.0], nothing survives FDR, zero regimes pass the two-sided gate. Confirms: eye-catching cells are one-sided tilt or high-win/negative-expectancy (late_convergence_v3 90%+ win, NEGATIVE exp — the "91%-win loses money" lesson, made visible).
+- **Verification:** 696 unit tests green; ruff clean; 29 new tests incl. positive controls.
+
+---
+
+# PnL accuracy + open-position widget + trailing loss-halt (2026-06-23)
+
+Two operator asks from this session, investigated via two parallel agent workflows.
+
+## REVIEW (2026-06-23) — SHIPPED on `feature/112-113-pnl-accuracy-trailing-halt`
+Operator said "go" with the recommended defaults (D1 manual + freshness badge, D2 mid mark, D3 "—" for non-current windows). Implemented TDD, DB-isolated.
+- **#112** trailing HWM loss halt — `gate.py` + `ems.py` + `guardrails.py` (commit af622e9).
+- **#115** reset clears peaks too — `gate.py` + `app.py` (commit 48710d6; a real gap: floor=peak−limit stays latched if only PnL is reset).
+- **#113** PnL accuracy + open-position widget — `reconcile_live_ledger.py` slug filter, `performance.py` relabel + freshness badge, `market.py`/`_shared.side_mid`/`blotter.py` live unrealized (commit 3df6b3d).
+- **#114 [P2]** filed (conditionId/token_id per-window deconfliction) — not built.
+- **Verification:** 686 tests green; ruff clean; zero new mypy on changed files; end-to-end render confirmed on the live DB; adversarial review run before PR.
+
+Original plan (kept for reference) below.
+
+---
+
+## ITEM A — Trailing high-water-mark loss halt (READY — no decisions)
+
+### Ask (verbatim)
+"every profit should reset the halt headroom… if i made $2 and then i lose $2 the halt
+headroom should go down this session $2, but if i make $2 again it should go back to $10.
+basically we have to prevent losing $10 each session — not, i made $30 and now the headroom
+is technically 30+10."
+
+### Semantics (confirmed against the operator's worked example)
+Convert the halt from a **fixed cumulative floor** (halt when session PnL ≤ −$10) to a
+**trailing drawdown from the session high-water mark**:
+```
+peak  = max(peak, session_pnl)          # ratchets up only; starts at 0 each UTC day
+floor = peak − LIMIT                     # LIMIT stays $10 (BTC_TRADE_DAILY_LOSS_HALT_USD)
+halted = session_pnl ≤ floor            # (unless operator bypass)
+headroom = session_pnl − floor          # = LIMIT − (peak − session_pnl)
+```
+Checkpoints (LIMIT=10): start→10; +2→10; then −2→8; then +2→10; at +30 peak, halt at +20.
+**Fail-safe property:** for a never-profitable session peak stays 0 ⇒ behaviour is IDENTICAL
+to today's −$10 floor. The change can only halt *earlier* (after locking gains), never later.
+
+### Current mechanism (verified)
+- Threshold: `BTC_TRADE_DAILY_LOSS_HALT_USD=10.0` — `config.py:172`.
+- Enforcement (TWO places): hard loop-stop `gate.loss_halt_breached()` in `btc_bot/paper.py:404`;
+  pre-entry block `block_reason()` in `gate.py:346`. Both call `loss_halt_breached()` → one fix point.
+- Decision: `loss_halt_breached()` `gate.py:227` → `halt_pnl <= -cfg.daily_loss_halt_usd`.
+- Leg: `halt_pnl` `gate.py:220` → live leg in live mode, paper leg in paper mode (#76). Realized-only.
+- Counters: `_live_pnl`/`_paper_pnl`, persisted `btc_risk.{live,paper}_realized_pnl`; reset at UTC
+  midnight `_roll_daily_window()` `gate.py:159`; fed by `record_realized_pnl()` `gate.py:274`.
+- Display: panel RE-COMPUTES halt independently — `guardrails.py:68-71`
+  (`halted = halt_pnl <= -loss_halt_usd`; `headroom = loss_halt_usd + min(0, halt_pnl)`).
+  Dashboard reads config keys directly via `ems.py:45-51,146` (no gate object) → peak must be a config key.
+
+### Implementation (TDD, DB-isolated per `tests-hit-live-db` memory)
+1. **`gate.py`** — add `_live_peak`/`_paper_peak` (start 0.0); persist `btc_risk.live_peak_pnl`/
+   `btc_risk.paper_peak_pnl`; reset peaks in `_roll_daily_window()`; in `record_realized_pnl()` set
+   `peak = max(peak, leg_pnl)` after the add; add `halt_peak` property (mirror `halt_pnl`);
+   change `loss_halt_breached()` → `halt_pnl <= halt_peak - cfg.daily_loss_halt_usd`. Backward-compat
+   load: when peak key absent, init `peak = max(0.0, leg_pnl)`. Update `block_reason()` message to cite floor.
+2. **`ems.py`** — read the two new peak config keys; pass `live_peak`/`paper_peak` to `guardrails.render`.
+3. **`guardrails.py`** — accept `live_peak`/`paper_peak`; compute `floor = peak - loss_halt_usd`,
+   `headroom = halt_pnl - floor`, `halted = halt_pnl <= floor`; show **Peak P&L**, **Floor**, **Headroom**.
+4. **Tests** — `tests/unit/test_risk_gate.py`: the operator's exact checkpoint sequence; never-positive
+   session ≡ old behaviour; peak persistence across `load()`; UTC rollover zeros peak; bypass still wins.
+5. Full suite green (DB-isolated); ruff/mypy clean on changed files; CHANGELOG; adversarial review of the
+   breach math + migration before commit. Push feature branch → PR to **develop** (never main).
+
+---
+
+## ITEM B — PnL/performance accuracy + open-position widget (3 DECISIONS PENDING)
+
+### Root cause (investigation result — operator's intuition was half-right)
+- **Panels are already BTC-only.** `btc_paper_positions` can only hold `btc-updown-5m-*` markets
+  (hardcoded discovery `connectors/polymarket.py:60`, `paper.py:1029`). Empirically 236 live + 1,349 paper
+  rows, all "Bitcoin Up or Down"; the 5 non-bot trades (Wembanyama/Wimbledon/Hormuz/etc.) never enter the DB.
+  → No contamination of the headline metrics.
+- **What the operator actually reacted to:** the "Reconciled vs Polymarket" footer `performance.py:42`
+  prints `account $X` (whole Polymarket account, incl. non-bot trades — `reconcile_live_ledger.py:136`)
+  next to `BTC bot $Y`, under-labeled. Reads like a bot number; isn't. → 1-line label fix.
+- **The real accuracy gap (drift, not contamination):** every headline PnL/ROI/win-rate is computed from
+  *assumed* fills (`realized_pnl_usd` as booked at entry, zero-fee) — `_data.py:178-184`, `performance.py:106`,
+  ribbon counters `ems.py:45-51`. Reconciliation to real Polymarket fills only runs when the operator
+  manually invokes `tools/reconcile_live_ledger.py --apply`; daily counters aren't recomputed after; and
+  the recon footer vanishes entirely when never run (`performance.py:25`) → no "stale vs reconciled" signal.
+- **BTC filter fragility (secondary):** `"Bitcoin Up or Down" in title` `reconcile_live_ledger.py:135` is
+  case/format-fragile and only governs the lifetime footer. Robust replacement: `slug.startswith("btc-updown-5m-")`.
+
+### Open-position widget (feasible)
+- Inputs at render: open rows (`entry_price`,`shares`,`side`,`window_slug`) `_data.py:96`; live mark
+  (`market_up_price`/`market_down_price`, side bid/ask) from `latest_tick()` `_data.py:14`. Both already
+  loaded in `ems.py:63,67`.
+- `unrealized = (mark_side − entry_price) × shares`. Mark = side mid `(bid+ask)/2` (conservative).
+- **Placement:** no literal empty column — LIVE MARKET is already grid-col 2 of `repeat(2,1fr)` (`style.css:113`).
+  Cleanest = append an "OPEN POSITION" block *inside* `market.py`'s existing card (after the decision div,
+  `market.py:37`); pass `open_pos`+`tick` (in scope). Also replace blotter's hardcoded `OPEN` (`blotter.py:47`)
+  with the same unrealized number for current-window rows.
+- Do **not** use `btc_recon.open_positions_value` for the live widget — it's the offline Data-API snapshot.
+
+### Plan (after decisions)
+1. `reconcile_live_ledger.py:135` → slug-prefix filter (verify activity field is `slug` vs `eventSlug` first).
+2. `performance.py:42` → relabel `account` as `account (incl. non-bot)`.
+3. Freshness badge on the performance card (`performance.py:102`)/ribbon: "reconciled as-of {asof}" vs
+   "assumed-fill (unreconciled)" driven by presence/staleness of `btc_recon.*`.
+4. Open-position widget in `market.py` (+ blotter unrealized).
+5. DB-isolated verification: hand-check one UP + one DOWN unrealized; badge toggles with/without recon keys;
+   render diff before/after on a snapshot DB.
+
+### DECISIONS NEEDED FROM OPERATOR
+- **D1 — Reconciliation cadence.** (a) Keep manual + add the freshness badge (least invasive; recommended),
+  or (b) automate `reconcile_live_ledger.py` on a schedule with auto-`--apply` so headline numbers are
+  continuously real-fill (mutates ledger; staleness guard is built for offline runs).
+- **D2 — Widget scope & mark.** Per-position rows, single aggregate, or both? Mark = mid (recommended) vs
+  side best-ask (exit-conservative)?
+- **D3 — Non-current-window open positions.** Show "—/different window" v1 (recommended), or add the extra
+  per-window tick query to mark them live?
+- **P2 backlog (file as issue per `feedback_backlog_as_issues`):** add `conditionId`/`token_id` columns to
+  `btc_paper_positions` so per-window reconciliation can deconflict the (rare) case where the operator
+  manually trades the *same* 5-min BTC window as the bot — the only genuine per-window contamination vector
+  (`reconcile_live_ledger.py:118-121`; no venue id on positions today, `db.py:68-89`).
+
+---
+
 # #91 — Heal phantom "max 1" singleton block (live) (2026-06-17)
 
 **Issue:** #91. **Branch:** `feature/91-heal-phantom-singleton-block` off `develop`.

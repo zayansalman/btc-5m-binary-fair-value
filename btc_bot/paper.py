@@ -312,10 +312,13 @@ def _loss_halt_stop_detail(gate: Any, mode: str) -> str | None:
     if gate is None or not gate.loss_halt_breached():
         return None
     leg = "live" if gate.is_live else "paper"
-    pnl = gate.live_pnl if gate.is_live else gate.paper_pnl
+    pnl = gate.halt_pnl
     limit = gate.cfg.daily_loss_halt_usd
+    # Trailing high-water-mark floor (#112): peak - limit. Cite it (not a fixed
+    # -limit), since the halt can fire at a POSITIVE pnl after a banked peak.
     return (
-        f"Daily loss halt: {leg} realized {pnl:+.2f} USD ≤ -{limit:.2f} USD. "
+        f"Daily loss halt: {leg} realized {pnl:+.2f} USD at/below trailing floor "
+        f"{gate.loss_halt_floor:+.2f} (peak {gate.halt_peak:+.2f} − {limit:.2f} limit). "
         "Bot stopped & flattened — Reset the halt, then Start to resume."
     )
 
@@ -438,6 +441,19 @@ async def run_paper_loop(stop_event: threading.Event) -> None:
         log.info("paper_loop.stopped", mode=mode)
 
 
+def _make_settlement_client() -> httpx.AsyncClient:
+    """HTTP client for the Polymarket reference/settlement reads.
+
+    HTTP/2 is REQUIRED (#120): the ``crypto-price`` endpoint is behind Cloudflare
+    bot management, which 403s ("Just a moment...") a Chrome-spoofed request sent
+    over HTTP/1.1 — real Chrome speaks HTTP/2, so the UA-vs-protocol mismatch
+    reads as a bot. Over HTTP/2 the same request passes (measured 0/5 → 5/5).
+    Without the reference price the bot SKIPs every window, so this is
+    load-bearing for trading at all.
+    """
+    return httpx.AsyncClient(timeout=10.0, follow_redirects=True, http2=True)
+
+
 async def paper_tick_once() -> PaperSnapshot:
     """One trading tick. Useful for tests and dashboard-driven smoke checks."""
     kill_active = False
@@ -452,7 +468,7 @@ async def paper_tick_once() -> PaperSnapshot:
     if _risk_gate is not None:
         await _risk_gate.refresh_overrides()
         await _risk_gate.refresh_runtime_limits()
-    async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+    async with _make_settlement_client() as client:
         snapshot = await _build_snapshot(client)
         await _log_tick(snapshot)
         await _close_due_positions(snapshot, client)
@@ -476,7 +492,7 @@ async def force_close_open_positions(exit_reason: str = "STOP_REQUEST") -> int:
             positions = [dict(r) for r in await cur.fetchall()]
     if not positions:
         return 0
-    async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+    async with _make_settlement_client() as client:
         snapshot = await _build_snapshot(client)
     closed = 0
     for pos in positions:
