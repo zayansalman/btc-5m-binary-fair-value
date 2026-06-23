@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.4.23 — Prod-readiness for the HTTP/2 fix + trailing-halt message (2026-06-23)
+
+Caught by the pre-main-merge safety gate before promotion.
+
+- **`requirements.txt`** (BLOCKER) — pin `httpx[http2]==0.27.2` (was `httpx==0.27.2`). The prod Dockerfile installs from `requirements.txt`, not pyproject, so v0.4.22's `http2=True` client would have `ImportError`'d (no `h2`) on every tick in a fresh prod container — a full trading outage. CI missed it because CI installs the pyproject `.[test]` extra. Same drift class as v0.4.17. Verified in a clean venv: the pin pulls `h2` and `AsyncClient(http2=True)` constructs.
+- **`btc_bot/paper.py`** — the loss-halt stop message (`_loss_halt_stop_detail`) now cites the **trailing floor** (`peak − limit`) instead of the fixed `-limit`; with the #112 trailing halt the stop can fire at a positive PnL, where the old wording was nonsensical. Enforcement was already correct — display only.
+
 ## v0.4.22 — Fix: bot never trades — crypto-price reference 403 over HTTP/1.1 (2026-06-23)
 
 The live bot SKIPped every window (`skip: settlement feed degraded`, `reference_price=0`, zero entries). Not the signal logic — the **reference data feed** was blocked.

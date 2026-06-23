@@ -312,10 +312,13 @@ def _loss_halt_stop_detail(gate: Any, mode: str) -> str | None:
     if gate is None or not gate.loss_halt_breached():
         return None
     leg = "live" if gate.is_live else "paper"
-    pnl = gate.live_pnl if gate.is_live else gate.paper_pnl
+    pnl = gate.halt_pnl
     limit = gate.cfg.daily_loss_halt_usd
+    # Trailing high-water-mark floor (#112): peak - limit. Cite it (not a fixed
+    # -limit), since the halt can fire at a POSITIVE pnl after a banked peak.
     return (
-        f"Daily loss halt: {leg} realized {pnl:+.2f} USD ≤ -{limit:.2f} USD. "
+        f"Daily loss halt: {leg} realized {pnl:+.2f} USD at/below trailing floor "
+        f"{gate.loss_halt_floor:+.2f} (peak {gate.halt_peak:+.2f} − {limit:.2f} limit). "
         "Bot stopped & flattened — Reset the halt, then Start to resume."
     )
 

@@ -1,6 +1,9 @@
 # Python 3.11 target.
 
-httpx==0.27.2
+# [http2] extra (h2) is REQUIRED for prod: the Polymarket crypto-price reference
+# endpoint is Cloudflare-protected and 403s HTTP/1.1; the settlement client uses
+# http2=True (#124/#126). The Dockerfile installs from this file, not pyproject.
+httpx[http2]==0.27.2
 aiosqlite==0.20.0
 python-dotenv==1.0.1
 structlog==24.4.0
