@@ -663,29 +663,42 @@ async def api_loss_halt_bypass(request: Request) -> dict[str, Any]:
 
 @app.post("/api/loss_halt/reset")
 async def api_loss_halt_reset() -> dict[str, Any]:
-    """Reset today's realized-loss tally to $0 so the halt clears (#76).
+    """Operator "let me trade again": clear the adaptive auto-pause and (when
+    stopped) reset the loss-halt tally + peaks so entries resume (#76, #36).
 
-    Stopped-only: the running loop holds the daily counters in memory and
-    re-persists them on every close, so a reset while running would be
-    clobbered. The halt auto-stops the bot, so the operator is already stopped
-    when they reach for this. Bankroll-cap notional is left untouched. Audited
-    to ``notification_feed``.
+    Two mechanisms with different ownership:
+      * The adaptive auto-pause is a config flag the running loop re-reads every
+        tick, so clearing it works in BOTH states and resumes entries live.
+      * The loss-halt daily counters are held in memory by the running loop and
+        re-persisted on every close, so they can only be reset when STOPPED — a
+        loss-halt breach auto-stops the bot, so the operator is already stopped
+        when one fires. Bankroll-cap notional is left untouched.
+    Audited to ``notification_feed``.
     """
     from db import get_config, notify  # type: ignore[import-untyped]
     from btc_5m_fv.execution.gate import reset_daily_loss_halt
+    from btc_bot.adaptive import clear_auto_pause
     state = (await get_config("btc_bot.state", "stopped")) or "stopped"
-    if state == "running":
-        return {
-            "status": "error",
-            "detail": "stop the bot before resetting the loss halt",
-        }
-    await reset_daily_loss_halt()
+    await clear_auto_pause()
+    halt_reset = state != "running"
+    if halt_reset:
+        await reset_daily_loss_halt()
     await notify(
         "btc_loss_halt_reset",
-        "Operator reset the daily loss-halt tally + peaks to $0.00 (live + paper)",
+        "Operator cleared the auto-pause"
+        + (
+            "; reset the loss-halt tally + peaks to $0.00 (live + paper)"
+            if halt_reset
+            else " (bot running — loss-halt tally left to the loop)"
+        ),
     )
-    log.info("btc.loss_halt_reset")
-    return {"status": "ok", "reset": True}
+    log.info("btc.loss_halt_reset", halt_reset=halt_reset, state=state)
+    return {
+        "status": "ok",
+        "reset": True,
+        "halt_reset": halt_reset,
+        "auto_pause_cleared": True,
+    }
 
 
 # Hard sanity bound on the operator runtime per-trade cap. Generous enough for

@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.4.21 — Reset halt also clears the adaptive auto-pause (2026-06-23)
+
+Operator ask (#117): "I should be able to clear auto-pause when I hit Reset halt." The Reset button is now the single "let me trade again" control.
+
+### What
+- **`btc_bot/adaptive.py`** — `clear_auto_pause()` records a `cleared_at` timestamp; `evaluate_and_maybe_pause()` scopes the rolling edge window to trades after `max(session_start, cleared_at)`. So a manual clear **actually resumes entries** instead of re-pausing on the same losing streak on the next tick — while the guard still re-protects once enough *fresh* post-clear trades fall below the floor.
+- **`/api/loss_halt/reset`** — always clears the auto-pause (a live config the running loop honours next tick, so it works while running); resets the loss-halt tally + peaks only when **stopped** (the loop owns those in memory). Returns `halt_reset` + `auto_pause_cleared`.
+- **`guardrails.py`** — the Reset halt button is enabled when running-but-auto-paused (not just when stopped), so the operator can resume without stopping the bot.
+
+### Verification
+- **699 tests green**, ruff clean, zero new mypy on changed files.
+
 ## v0.4.20 — Trailing loss halt + PnL panel accuracy + live open-position P&L (2026-06-23)
 
 Three operator asks from one session: protect banked profit with a trailing halt, make the PnL/performance panels honest about what they show, and surface live unrealized P&L on an open position.
