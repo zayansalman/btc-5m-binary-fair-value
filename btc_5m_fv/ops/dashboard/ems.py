@@ -185,7 +185,7 @@ async def ems_html() -> str:
         current_price=current_price,
         active_model=active_model,
     )
-    market_html = market.render(tick)
+    market_html = market.render(tick, open_pos)
     decision_html = decision_engine.render(
         tick, _GateParams(), recent_ticks, paused, pause_reason
     )
@@ -193,7 +193,7 @@ async def ems_html() -> str:
         style=style, perf=perf, perf_live=perf_live, perf_paper=perf_paper, recon=recon
     )
     tca_html = tca.render(perf=perf, spread=spread)
-    blotter_html = blotter.render(closed=closed, open_pos=open_pos)
+    blotter_html = blotter.render(closed=closed, open_pos=open_pos, tick=tick)
 
     return (
         "<div class='ems'>"
