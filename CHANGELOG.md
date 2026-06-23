@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.24 — Fix red CI: declare numpy for the regime-attribution tool (2026-06-23)
+
+`tools/regime_attribution.py` (#120) imports numpy, but numpy was declared nowhere — so a clean CI install (`pip install -e .[test]`) couldn't import it, failing **two hard gates**: the test job (`ModuleNotFoundError` collecting `test_regime_attribution.py` → whole suite aborts) and docs-drift (`gen_docs` can't introspect the tool → AGENTS.md/CODE_MAP.md drift). Local/dev venvs had numpy, masking it.
+
+- **`pyproject.toml` `[test]` extra** + **`requirements.txt`** — declare `numpy` (matching how `polars`/`huggingface-hub` are handled for the offline-replay tool; same drift class as #79/#126). Verified in a clean venv: 731 tests pass, `gen_docs --check` clean.
+
 ## v0.4.23 — Prod-readiness for the HTTP/2 fix + trailing-halt message (2026-06-23)
 
 Caught by the pre-main-merge safety gate before promotion.
