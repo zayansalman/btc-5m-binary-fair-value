@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.4.25 — Maker-mode backtest: negative result (#130) (2026-06-24)
+
+Tested whether running `fair_value_v0` as a passive maker (resting limits) beats taking the spread, on recorded data with a realistic forward-only fill model. **Verdict: no** — maker mode loses on every limit policy (join_bid/mid/fair), flipping a +$52 (inflated) taker baseline into −$36 to −$64.
+
+- **Why:** structural adverse selection — fills the eventual losers ~98% but the winners only ~75% (falling-knife fills; winners run away from the limit), missing ~52 winners worth +$112. NOT a fee problem: still negative with maker fee = 0.
+- **`tools/maker_backtest.py`** (offline, like `regime_attribution`) + `btc_bot/shadow/fees.py` `maker_fee_per_share`/`maker_net_pnl_per_share`. Fill model: forward-only mid-cross, settlement cutoff, queue/fill haircut; verdict = per-opportunity EV. DB-isolated tests.
+- Phase 2 (live maker shadow) was gated on a positive Phase 1 → **not built**. `fair_value_v0` stays a taker; the data keeps pointing at entry selectivity, not execution mode.
+- Findings: `docs/superpowers/specs/2026-06-24-maker-backtest-findings.md`.
+
 ## v0.4.24 — Fix red CI: declare numpy for the regime-attribution tool (2026-06-23)
 
 `tools/regime_attribution.py` (#120) imports numpy, but numpy was declared nowhere — so a clean CI install (`pip install -e .[test]`) couldn't import it, failing **two hard gates**: the test job (`ModuleNotFoundError` collecting `test_regime_attribution.py` → whole suite aborts) and docs-drift (`gen_docs` can't introspect the tool → AGENTS.md/CODE_MAP.md drift). Local/dev venvs had numpy, masking it.

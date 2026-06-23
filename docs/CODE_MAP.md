@@ -73,7 +73,7 @@ Env knobs: `BTC_TRADE_*` are canonical; `BTC_LIVE_*` are deprecated read-aliases
 <!-- BEGIN GENERATED:summary -->
 - **Trees:** `btc_bot/` = live loop + signal math; `btc_5m_fv/` = execution/connectors/dashboard/backtest; top-level `config.py`/`db.py`/`logging_setup.py` = foundation. Both ACTIVE, bidirectionally coupled.
 - **Entry:** `python main.py` → FastAPI `btc_5m_fv/ops/dashboard/app.py`; loop starts on operator ▶ Start → `btc_bot/controller.py:request_start`.
-- **Tests:** 731.
+- **Tests:** 748.
 - **Built-but-dead (do not edit expecting runtime effect):** `btc_5m_fv/backtest/conditional.py`, `btc_5m_fv/backtest/harness.py`, `btc_5m_fv/connectors/base.py`, `btc_5m_fv/connectors/binance.py`, `btc_5m_fv/connectors/chainlink.py`, `btc_5m_fv/connectors/polymarket.py`, `btc_5m_fv/ops/controller.py`, `btc_5m_fv/ops/dashboard/panels/_shared.py`, `btc_5m_fv/storage/replay.py`, `btc_5m_fv/strategy/signal.py`, `btc_bot/chronos_signal.py`.
 <!-- END GENERATED:summary -->
 
@@ -140,15 +140,15 @@ Env knobs: `BTC_TRADE_*` are canonical; `BTC_LIVE_*` are deprecated read-aliases
 | `btc_bot/params_apply.py` | cli | 0 | Layer 2 — operator-gated promotion of proposed -> active strategy params. |
 | `btc_bot/params_propose.py` | cli | 0 | Layer 2 — propose tuned strategy parameters from the existing backtest grid. |
 | `btc_bot/shadow/__init__.py` | pkg | 6 | Shadow forward-tester: candidate strategies logged and settled net of fees. |
-| `btc_bot/shadow/fees.py` | WIRED | 2 | Polymarket taker-fee math for the shadow forward-tester. |
+| `btc_bot/shadow/fees.py` | WIRED | 3 | Polymarket taker-fee math for the shadow forward-tester. |
 | `btc_bot/shadow/ledger.py` | WIRED | 2 | Persistence for the shadow forward-tester's would-be trades. |
 | `btc_bot/shadow/runner.py` | WIRED | 5 | Shadow forward-tester runner. |
 | `btc_bot/shadow/signals.py` | WIRED | 1 | Candidate strategies for the shadow forward-tester. |
 | `btc_bot/shadow/types.py` | WIRED | 3 | Shared data contracts for the shadow forward-tester. |
 | `btc_bot/strategy.py` | WIRED | 5 | Shared BTC 5-minute binary strategy math. |
-| `config.py` | WIRED | 23 | Configuration for the local BTC 5-minute binary fair-value strategy lab. |
+| `config.py` | WIRED | 24 | Configuration for the local BTC 5-minute binary fair-value strategy lab. |
 | `dashboard.py` | WIRED | 1 | Local Gradio dashboard for BTC 5-minute paper trading. |
-| `db.py` | WIRED | 13 | SQLite storage for the BTC 5-minute binary fair-value strategy lab. |
+| `db.py` | WIRED | 14 | SQLite storage for the BTC 5-minute binary fair-value strategy lab. |
 | `logging_setup.py` | WIRED | 9 | Structured JSON logging with structlog. Module + trade_id context. |
 | `main.py` | cli | 0 | Entrypoint for the BTC 5-minute paper trading system. |
 | `tools/backtest_btc_strategy.py` | cli | 0 | Run the BTC strategy backtest and parameter optimizer. |
@@ -160,6 +160,7 @@ Env knobs: `BTC_TRADE_*` are canonical; `BTC_LIVE_*` are deprecated read-aliases
 | `tools/live_detect_wallet.py` | cli | 0 | Detect the Polymarket funder wallet + signature type from a signer key (#34). |
 | `tools/live_preflight.py` | cli | 0 | Live-launch preflight: verify the .env wallet config end to end (issue #32). |
 | `tools/live_setup.py` | cli | 0 | One-time live-trading onboarding (issues #32, #33). |
+| `tools/maker_backtest.py` | cli | 0 | Maker-mode backtest: would resting limit orders beat taking the spread? (#130) |
 | `tools/offline_replay.py` | cli | 0 | Offline replay of the BTC 5-m fair-value strategy on HF Polymarket data. |
 | `tools/reconcile_live_ledger.py` | cli | 0 | Reconcile the live paper-ledger against the REAL Polymarket account (issue #102). |
 | `tools/regime_attribution.py` | cli | 0 | Regime-attribution instrument for the shadow forward-tester (issue #120). |
