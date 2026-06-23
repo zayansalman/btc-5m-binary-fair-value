@@ -313,6 +313,16 @@ class TestMarketOpenPosition:
         html = market.render(self._TICK)
         assert "LIVE MARKET" in html
 
+    def test_render_is_full_width_card(self) -> None:
+        # The LIVE MARKET card must span both grid columns. The ems-grid has an
+        # odd number of single-width cards, so a half-width LIVE MARKET orphans
+        # the neighbouring cell (empty band under STRATEGY). Both the populated
+        # and the no-tick states must carry `card wide`.
+        from btc_5m_fv.ops.dashboard.panels import market
+
+        assert "class='card wide'" in market.render(self._TICK)
+        assert "class='card wide'" in market.render(None)
+
 
 class TestGuardrailsTrailingHalt:
     """Issue #112: the LOSS HALT panel reflects a trailing high-water-mark stop —

@@ -1,4 +1,10 @@
-"""Live market panel: probability gauge, UP/DOWN book, basis."""
+"""Live market panel: probability gauge, UP/DOWN book, basis.
+
+Renders as a full-width (``card wide``) card on purpose. The EMS grid has an
+odd number of single-width cards; left half-width, this card orphaned the
+neighbouring grid cell (an empty band under STRATEGY, right of LIVE MARKET).
+Spanning both columns fixes the parity — do not revert to a bare ``card``.
+"""
 from __future__ import annotations
 
 from html import escape
@@ -61,7 +67,7 @@ def render(
 ) -> str:
     if not tick:
         return (
-            "<section class='card'><div class='card-h'>LIVE MARKET</div>"
+            "<section class='card wide'><div class='card-h'>LIVE MARKET</div>"
             "<div class='chart-empty'>no ticks yet</div></section>"
         )
     spot = tick.get("spot_price") or 0
@@ -70,7 +76,7 @@ def render(
     rem = tick.get("remaining_seconds") or 0
     edge = tick.get("edge")
     return (
-        "<section class='card'><div class='card-h'>LIVE MARKET"
+        "<section class='card wide'><div class='card-h'>LIVE MARKET"
         f"<span class='win'>{escape((tick.get('window_slug') or '').replace('btc-updown-5m-', '#'))} · {rem}s</span></div>"
         f"{s.gauge(tick.get('fair_up_prob'))}"
         "<div class='book'>"
