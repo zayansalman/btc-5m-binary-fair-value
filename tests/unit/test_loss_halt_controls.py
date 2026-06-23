@@ -70,6 +70,18 @@ class TestLossHaltStopDetail:
         assert "Reset" in detail
 
     @pytest.mark.asyncio
+    async def test_stop_detail_cites_trailing_floor(self, isolated_db) -> None:
+        # With a banked peak the halt fires at a POSITIVE pnl (#112); the operator
+        # message must cite the trailing floor, not the nonsensical fixed "-limit".
+        g = RiskGate(_cfg(), is_live=True)
+        await g.record_realized_pnl(30.0, is_live=True)   # peak 30
+        await g.record_realized_pnl(-12.0, is_live=True)  # +18 <= floor +20 → halt
+        detail = _loss_halt_stop_detail(g, "live")
+        assert detail is not None
+        assert "peak" in detail.lower()
+        assert "+20.00" in detail  # the trailing floor = peak 30 − limit 10
+
+    @pytest.mark.asyncio
     async def test_none_within_limit(self, isolated_db) -> None:
         g = RiskGate(_cfg(), is_live=True)
         await g.record_realized_pnl(-5.0, is_live=True)
