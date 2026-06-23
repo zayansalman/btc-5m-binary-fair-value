@@ -128,6 +128,31 @@ class TestLossHaltEndpoints:
         assert float(asyncio.run(_db.get_config("btc_risk.live_realized_pnl"))) == 0.0
         assert float(asyncio.run(_db.get_config("btc_risk.paper_realized_pnl"))) == 0.0
 
+    def test_reset_clears_trailing_halt_after_banked_peak(
+        self, client: TestClient
+    ) -> None:
+        """The #112 trailing halt fires at ``peak - limit``, so zeroing PnL alone
+        leaves a banked peak holding the floor above 0 and the operator stays
+        halted. Reset must also clear the peaks. Proven through a freshly loaded
+        gate (what the loop sees on the next Start), not just the raw keys."""
+        asyncio.run(_db.set_config("btc_bot.state", "stopped"))
+        asyncio.run(_db.set_config("btc_risk.date", RiskGate._today()))
+        # Banked +$30 peak, bled back to +$20 → floor +20, 20 <= 20 → HALTED.
+        asyncio.run(_db.set_config("btc_risk.live_realized_pnl", "20.0"))
+        asyncio.run(_db.set_config("btc_risk.live_peak_pnl", "30.0"))
+
+        before = RiskGate(_cfg(), is_live=True)
+        asyncio.run(before.load())
+        assert before.loss_halt_breached() is True  # precondition: halted
+
+        r = client.post("/api/loss_halt/reset")
+        assert r.json()["status"] == "ok"
+
+        after = RiskGate(_cfg(), is_live=True)
+        asyncio.run(after.load())
+        assert after.halt_peak == 0.0
+        assert after.loss_halt_breached() is False
+
 
 # ---------------------------------------------------------------------------
 # Migration

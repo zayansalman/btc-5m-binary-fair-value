@@ -473,6 +473,20 @@ async def get_loss_halt_bypass() -> bool:
     return (await get_config(_BYPASS_LOSS_HALT_KEY)) == "1"
 
 
+async def reset_daily_loss_halt() -> None:
+    """Operator action: zero today's realized-loss tally AND the session peaks so
+    the trailing halt clears (#112). Zeroing PnL alone is not enough — the floor
+    is ``peak - limit``, so a banked peak would hold the halt breached even at
+    PnL 0 (a +$30 day reset to PnL 0 still floors at +$20). Resetting the peaks
+    drops the floor back to ``-limit``. The date and the bankroll-cap notional
+    are intentionally left untouched. Caller enforces stopped-only — a running
+    loop holds these counters in memory and would re-persist over the reset."""
+    await set_config(_RISK_LIVE_PNL_KEY, "0.0")
+    await set_config(_RISK_PAPER_PNL_KEY, "0.0")
+    await set_config(_RISK_LIVE_PEAK_KEY, "0.0")
+    await set_config(_RISK_PAPER_PEAK_KEY, "0.0")
+
+
 async def migrate_clear_stale_bypass_v76() -> None:
     """One-shot (#76): the loss-halt bypass used to be paper-only and was
     structurally ignored in live. It now applies to live too, so a flag left ON
