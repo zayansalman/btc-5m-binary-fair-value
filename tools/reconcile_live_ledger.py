@@ -132,7 +132,16 @@ def lifetime_pnls(addr_activity: list[dict]) -> tuple[float, float]:
             if r.get("type") in ("TRADE", "REDEEM")
         )
 
-    btc = [r for r in addr_activity if "Bitcoin Up or Down" in (r.get("title") or "")]
+    # Isolate the bot's BTC trades by the structural slug prefix, not the title
+    # substring (#113). The bot only ever trades ``btc-updown-5m-{ts}`` markets
+    # (the hardcoded discovery contract), so the slug is the robust discriminator
+    # — immune to null/renamed titles and to non-bot markets that merely mention
+    # Bitcoin. Verified on real data: 648/648 BTC rows match, 0 false positives.
+    btc = [
+        r
+        for r in addr_activity
+        if (r.get("eventSlug") or r.get("slug") or "").startswith("btc-updown-5m-")
+    ]
     return round(flow(btc), 4), round(flow(addr_activity), 4)
 
 

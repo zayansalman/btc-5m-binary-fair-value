@@ -128,6 +128,31 @@ class TestLossHaltEndpoints:
         assert float(asyncio.run(_db.get_config("btc_risk.live_realized_pnl"))) == 0.0
         assert float(asyncio.run(_db.get_config("btc_risk.paper_realized_pnl"))) == 0.0
 
+    def test_reset_clears_trailing_halt_after_banked_peak(
+        self, client: TestClient
+    ) -> None:
+        """The #112 trailing halt fires at ``peak - limit``, so zeroing PnL alone
+        leaves a banked peak holding the floor above 0 and the operator stays
+        halted. Reset must also clear the peaks. Proven through a freshly loaded
+        gate (what the loop sees on the next Start), not just the raw keys."""
+        asyncio.run(_db.set_config("btc_bot.state", "stopped"))
+        asyncio.run(_db.set_config("btc_risk.date", RiskGate._today()))
+        # Banked +$30 peak, bled back to +$20 → floor +20, 20 <= 20 → HALTED.
+        asyncio.run(_db.set_config("btc_risk.live_realized_pnl", "20.0"))
+        asyncio.run(_db.set_config("btc_risk.live_peak_pnl", "30.0"))
+
+        before = RiskGate(_cfg(), is_live=True)
+        asyncio.run(before.load())
+        assert before.loss_halt_breached() is True  # precondition: halted
+
+        r = client.post("/api/loss_halt/reset")
+        assert r.json()["status"] == "ok"
+
+        after = RiskGate(_cfg(), is_live=True)
+        asyncio.run(after.load())
+        assert after.halt_peak == 0.0
+        assert after.loss_halt_breached() is False
+
 
 # ---------------------------------------------------------------------------
 # Migration
@@ -226,3 +251,30 @@ class TestGuardrailsPanel:
     def test_no_cannot_disable_text(self) -> None:
         html = _render(mode="live")
         assert "cannot disable" not in html
+
+
+class TestGatePanelParity:
+    """The LOSS HALT panel verdict MUST match RiskGate enforcement for the same
+    inputs (#112). A divergence — a different comparison or peak derivation —
+    would tell the operator they're OK while the loop has actually halted (or
+    vice versa) on real money. This guards the two formulas against drift."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "seq",
+        [
+            [],              # 0/0 → full headroom, not halted
+            [30.0, -10.0],   # pnl 20, peak 30, floor 20 → halted (boundary, <=)
+            [30.0, -9.0],    # pnl 21, peak 30, floor 20 → not halted
+            [30.0, -11.0],   # pnl 19, peak 30, floor 20 → halted
+            [-10.0],         # never profitable → halted (== old fixed floor)
+            [-9.99],         # never profitable → not halted
+            [2.0, -2.0],     # pnl 0, peak 2, floor -8 → not halted
+        ],
+    )
+    async def test_panel_matches_gate(self, isolated_db, seq) -> None:
+        gate = RiskGate(_cfg(), is_live=True)
+        for pnl in seq:
+            await gate.record_realized_pnl(pnl, is_live=True)
+        html = _render(mode="live", live_pnl=gate.halt_pnl, live_peak=gate.halt_peak)
+        assert (">HALTED<" in html) == gate.loss_halt_breached()

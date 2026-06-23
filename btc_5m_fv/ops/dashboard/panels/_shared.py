@@ -63,6 +63,26 @@ def bk(v: float | None) -> str:
     return f"{v:.2f}" if v is not None else "—"
 
 
+def side_mid(tick: dict[str, Any], side: str) -> float | None:
+    """Current mark for a position side = mid of its book, falling back to the
+    recorded market price. Mid (not the cross) is the conservative live mark
+    used for open-position unrealized P&L (#113). Returns None when the side has
+    no usable quote."""
+    if (side or "").upper() == "UP":
+        bid, ask, fallback = (
+            tick.get("up_best_bid"), tick.get("up_best_ask"), tick.get("market_up_price"),
+        )
+    else:
+        bid, ask, fallback = (
+            tick.get("down_best_bid"), tick.get("down_best_ask"), tick.get("market_down_price"),
+        )
+    if isinstance(bid, (int, float)) and isinstance(ask, (int, float)) and ask >= bid:
+        return (bid + ask) / 2.0
+    if isinstance(fallback, (int, float)) and fallback > 0:
+        return float(fallback)
+    return None
+
+
 def stat(label: str, value: str, cls_: str = "", sub: str = "") -> str:
     return (
         f"<div class='stat'><div class='stat-l'>{escape(label)}</div>"

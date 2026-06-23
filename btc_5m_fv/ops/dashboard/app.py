@@ -671,18 +671,18 @@ async def api_loss_halt_reset() -> dict[str, Any]:
     when they reach for this. Bankroll-cap notional is left untouched. Audited
     to ``notification_feed``.
     """
-    from db import get_config, notify, set_config  # type: ignore[import-untyped]
+    from db import get_config, notify  # type: ignore[import-untyped]
+    from btc_5m_fv.execution.gate import reset_daily_loss_halt
     state = (await get_config("btc_bot.state", "stopped")) or "stopped"
     if state == "running":
         return {
             "status": "error",
             "detail": "stop the bot before resetting the loss halt",
         }
-    await set_config("btc_risk.live_realized_pnl", "0.0")
-    await set_config("btc_risk.paper_realized_pnl", "0.0")
+    await reset_daily_loss_halt()
     await notify(
         "btc_loss_halt_reset",
-        "Operator reset the daily loss-halt tally to $0.00 (live + paper)",
+        "Operator reset the daily loss-halt tally + peaks to $0.00 (live + paper)",
     )
     log.info("btc.loss_halt_reset")
     return {"status": "ok", "reset": True}

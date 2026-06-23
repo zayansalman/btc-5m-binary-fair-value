@@ -7,7 +7,58 @@ from typing import Any
 from . import _shared as s
 
 
-def render(tick: dict[str, Any] | None) -> str:
+def _open_position_block(
+    tick: dict[str, Any], open_pos: list[dict[str, Any]] | None
+) -> str:
+    """Live unrealized P&L for the open position(s), marked at the current side
+    mid (#113). A position in a window other than the live tick's is shown
+    without a fabricated mark — there's no live book for a past window."""
+    if not open_pos:
+        return ""
+    cur = tick.get("window_slug")
+    rows = ""
+    agg = 0.0
+    have_agg = False
+    for p in open_pos:
+        side = (p.get("side") or "").upper()
+        entry = p.get("entry_price") or 0.0
+        shares = p.get("shares") or 0.0
+        mark = s.side_mid(tick, side) if p.get("window_slug") == cur else None
+        if mark is not None:
+            unreal = (mark - entry) * shares
+            agg += unreal
+            have_agg = True
+            mark_html = f"{mark:.3f}"
+            unreal_html = f"<b class='mono {s.cls(unreal)}'>{s.money(unreal, True)}</b>"
+        else:
+            mark_html = "—"
+            unreal_html = (
+                "<b class='mono dim' title='position is in a window other than the "
+                "live one — no live mark'>—</b>"
+            )
+        rows += (
+            "<div class='op-row'>"
+            f"<span class='tag {side.lower()}'>{escape(side)}</span>"
+            f"<span class='mono dim'>{shares:g}sh @ {entry:.3f}</span>"
+            f"<span class='mono'>mark {mark_html}</span>"
+            f"{unreal_html}"
+            "</div>"
+        )
+    agg_html = (
+        f"<div class='op-agg'><span>Unrealized</span>"
+        f"<b class='mono {s.cls(agg)}'>{s.money(agg, True)}</b></div>"
+        if have_agg
+        else ""
+    )
+    return (
+        "<div class='open-pos'><div class='op-h'>OPEN POSITION "
+        "<span class='win'>live mark · mid</span></div>" + rows + agg_html + "</div>"
+    )
+
+
+def render(
+    tick: dict[str, Any] | None, open_pos: list[dict[str, Any]] | None = None
+) -> str:
     if not tick:
         return (
             "<section class='card'><div class='card-h'>LIVE MARKET</div>"
@@ -35,5 +86,6 @@ def render(tick: dict[str, Any] | None) -> str:
         f"<div><span>Edge</span><b class='{s.cls(edge)}'>{('%+.3f' % edge) if edge is not None else '—'}</b></div>"
         "</div>"
         f"<div class='decision'>{escape((tick.get('reason') or 'idle'))}</div>"
+        f"{_open_position_block(tick, open_pos)}"
         "</section>"
     )

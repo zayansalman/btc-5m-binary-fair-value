@@ -39,10 +39,35 @@ def _recon_line(recon: dict[str, Any] | None) -> str:
         "<div class='perf-recon'>"
         "<span class='perf-recon-h'>Reconciled vs Polymarket</span>"
         f"<span>BTC bot <b class='{s.cls(btc)}'>{s.money(btc, True)}</b></span>"
-        f"<span>account <b class='{s.cls(acct)}'>{s.money(acct, True)}</b></span>"
+        f"<span title='Whole Polymarket account — INCLUDES your non-bot trades'>"
+        f"account (incl. non-bot) <b class='{s.cls(acct)}'>{s.money(acct, True)}</b></span>"
         f"<span>open value <b>{s.money(openv)}</b></span>"
         f"<span class='perf-recon-asof'>as-of {asof}Z · data-api</span>"
         "</div>"
+    )
+
+
+def _freshness_badge(recon: dict[str, Any] | None) -> str:
+    """Whether the HEADLINE metrics are reconciled to real fills (#113).
+
+    Net P&L / ROI / win-rate are booked at the bot's *assumed* fills (zero-fee,
+    at entry). ``tools/reconcile_live_ledger.py --apply`` corrects the ledger to
+    real Polymarket fills and writes the ``btc_recon.*`` snapshot read here, so
+    its presence is the signal that the headline numbers were last grounded to
+    reality — and its absence means they are pure assumed-fill.
+    """
+    if not recon:
+        return (
+            "<span class='pill warn perf-fresh' title='Headline P&amp;L uses "
+            "ASSUMED fills (zero-fee, booked at entry) — NOT reconciled to real "
+            "Polymarket fills. Run tools/reconcile_live_ledger.py to correct.'>"
+            "assumed-fill</span>"
+        )
+    asof = escape(str(recon.get("asof", "")))[:10]  # YYYY-MM-DD
+    return (
+        "<span class='pill perf-fresh' title='Ledger reconciled to real "
+        "Polymarket fills as-of this snapshot; trades since are assumed-fill.'>"
+        f"reconciled {asof}</span>"
     )
 
 
@@ -100,7 +125,8 @@ def render(
     paper_label = "<span class='pill paper'>PAPER</span>"
     return (
         "<section class='card'><div class='card-h'>PERFORMANCE / ALPHA"
-        f"<span class='win'>recent {perf['n']} · {style} · live+paper</span></div>"
+        f"<span class='win'>recent {perf['n']} · {style} · live+paper</span>"
+        f"{_freshness_badge(recon)}</div>"
         f"<div class='equity'>{s.svg_equity(perf['equity'])}</div>"
         "<div class='statrow'>"
         f"{s.stat('Net P&L', s.money(perf['pnl'], True), s.cls(perf['pnl']))}"
