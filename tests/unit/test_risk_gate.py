@@ -267,6 +267,115 @@ class TestLossHaltBreached:
         assert live.loss_halt_breached() is False
 
 
+class TestTrailingHighWaterMarkHalt:
+    """Issue #112: the loss halt is a TRAILING drawdown from the session
+    high-water mark, not a fixed cumulative floor.
+
+    floor = peak - LIMIT (peak ratchets up only, starts at 0 each UTC day).
+    A never-profitable session keeps peak=0 ⇒ behaves exactly like the old
+    fixed -LIMIT floor (fail-safe). After locking gains you can only give back
+    LIMIT from the peak.
+    """
+
+    @pytest.mark.asyncio
+    async def test_never_profitable_matches_fixed_floor(self) -> None:
+        # peak never leaves 0 ⇒ identical to the pre-#112 fixed -$10 floor.
+        gate = RiskGate(_cfg(daily_loss_halt_usd=10.0), is_live=True)
+        await gate.record_realized_pnl(-9.5, is_live=True)
+        assert gate.loss_halt_breached() is False
+        await gate.record_realized_pnl(-0.5, is_live=True)  # -10.0
+        assert gate.loss_halt_breached() is True
+
+    @pytest.mark.asyncio
+    async def test_operator_headroom_example(self) -> None:
+        # The operator's worked example (LIMIT=10): start 10; +2→10; -2→8; +2→10.
+        gate = RiskGate(_cfg(daily_loss_halt_usd=10.0), is_live=True)
+        assert gate.loss_halt_headroom == pytest.approx(10.0)
+        await gate.record_realized_pnl(2.0, is_live=True)
+        assert gate.loss_halt_headroom == pytest.approx(10.0)
+        assert gate.halt_peak == pytest.approx(2.0)
+        await gate.record_realized_pnl(-2.0, is_live=True)  # back to 0
+        assert gate.loss_halt_headroom == pytest.approx(8.0)
+        assert gate.loss_halt_breached() is False
+        await gate.record_realized_pnl(2.0, is_live=True)  # back to peak
+        assert gate.loss_halt_headroom == pytest.approx(10.0)
+
+    @pytest.mark.asyncio
+    async def test_trailing_stop_locks_gains(self) -> None:
+        # After a $30 run, can only give back $10 (halt at +20), not 30+10.
+        gate = RiskGate(_cfg(daily_loss_halt_usd=10.0), is_live=True)
+        await gate.record_realized_pnl(30.0, is_live=True)
+        assert gate.halt_peak == pytest.approx(30.0)
+        assert gate.loss_halt_breached() is False
+        await gate.record_realized_pnl(-9.0, is_live=True)  # +21, gave back 9
+        assert gate.loss_halt_breached() is False
+        await gate.record_realized_pnl(-1.5, is_live=True)  # +19.5, gave back 10.5
+        assert gate.loss_halt_breached() is True
+
+    @pytest.mark.asyncio
+    async def test_peak_persists_across_reload(self) -> None:
+        gate = RiskGate(_cfg(daily_loss_halt_usd=10.0), is_live=True)
+        await gate.record_realized_pnl(20.0, is_live=True)  # peak 20
+        await gate.record_realized_pnl(-5.0, is_live=True)  # +15
+        gate2 = RiskGate(_cfg(daily_loss_halt_usd=10.0), is_live=True)
+        await gate2.load()
+        assert gate2.halt_peak == pytest.approx(20.0)
+        assert gate2.loss_halt_breached() is False  # +15 > floor +10
+        await gate2.record_realized_pnl(-5.0, is_live=True)  # +10 == floor
+        assert gate2.loss_halt_breached() is True
+
+    @pytest.mark.asyncio
+    async def test_load_without_peak_key_derives_from_pnl(self) -> None:
+        # Pre-#112 session: pnl key set, peak key absent → peak = max(0, pnl).
+        from datetime import UTC, datetime
+
+        today = datetime.now(UTC).date().isoformat()
+        await _db.set_config("btc_risk.date", today)
+        await _db.set_config("btc_risk.live_realized_pnl", repr(8.0))
+        gate = RiskGate(_cfg(daily_loss_halt_usd=10.0), is_live=True)
+        await gate.load()
+        assert gate.halt_peak == pytest.approx(8.0)
+
+    @pytest.mark.asyncio
+    async def test_rollover_resets_peak(self) -> None:
+        gate = RiskGate(_cfg(daily_loss_halt_usd=10.0), is_live=True)
+        await gate.record_realized_pnl(30.0, is_live=True)
+        assert gate.halt_peak == pytest.approx(30.0)
+        gate._date = "2000-01-01"  # force a stale UTC day
+        gate._roll_daily_window()
+        assert gate.halt_peak == 0.0
+        assert gate.halt_pnl == 0.0
+
+    @pytest.mark.asyncio
+    async def test_bypass_overrides_trailing_halt(self) -> None:
+        from btc_5m_fv.execution.gate import set_loss_halt_bypass
+
+        await set_loss_halt_bypass(True)
+        gate = RiskGate(_cfg(daily_loss_halt_usd=10.0), is_live=True)
+        await gate.record_realized_pnl(30.0, is_live=True)
+        await gate.record_realized_pnl(-20.0, is_live=True)  # +10, well past floor +20
+        await gate.refresh_overrides()
+        assert gate.loss_halt_breached() is False
+
+    @pytest.mark.asyncio
+    async def test_peak_is_per_leg(self) -> None:
+        # The live peak ratchets only on live PnL; paper PnL never moves it.
+        live = RiskGate(_cfg(daily_loss_halt_usd=10.0), is_live=True)
+        await live.record_realized_pnl(25.0, is_live=False)  # paper only
+        assert live.halt_peak == 0.0  # live leg untouched
+        await live.record_realized_pnl(5.0, is_live=True)
+        assert live.halt_peak == pytest.approx(5.0)
+
+    @pytest.mark.asyncio
+    async def test_block_reason_cites_trailing_floor(self) -> None:
+        gate = RiskGate(_cfg(daily_loss_halt_usd=10.0), is_live=True)
+        await gate.record_realized_pnl(30.0, is_live=True)
+        await gate.record_realized_pnl(-12.0, is_live=True)  # +18 <= floor +20
+        msg = gate.block_reason(_req())
+        assert msg is not None and "daily loss halt" in msg
+        assert "peak" in msg  # the message explains the trailing nature
+
+
 class TestRuntimeMaxTradeOverride:
     """Operator runtime per-trade cap (#50): applies in BOTH modes, no restart."""
 

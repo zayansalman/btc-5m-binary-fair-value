@@ -27,6 +27,8 @@ def render(
     live_pnl: float,
     paper_pnl: float,
     loss_halt_usd: float,
+    live_peak: float = 0.0,
+    paper_peak: float = 0.0,
     state: str,
     bot_detail: str,
     session_start: str | None,
@@ -63,11 +65,17 @@ def render(
     # ── LOSS HALT ───────────────────────────────────────────────────────
     # Halt is decided on the running mode's OWN leg (#76): real money in live,
     # study PnL in paper. Paper losses no longer halt live.
+    # Trailing high-water-mark halt (#112): the floor trails the session PEAK
+    # realized PnL, so banked profit can't be bled back beyond the limit. With
+    # peak 0 (never profitable) this collapses to the old fixed -limit floor.
+    # MUST mirror RiskGate.loss_halt_breached — that is the enforcement truth.
     is_live_mode = mode == "live"
     leg_label = "live" if is_live_mode else "paper"
     halt_pnl = live_pnl if is_live_mode else paper_pnl
-    halted = halt_pnl <= -loss_halt_usd and not bypass_loss_halt
-    headroom = loss_halt_usd + min(0.0, halt_pnl)
+    peak = live_peak if is_live_mode else paper_peak
+    floor = peak - loss_halt_usd
+    halted = halt_pnl <= floor and not bypass_loss_halt
+    headroom = halt_pnl - floor
     headroom_cls = "down" if headroom < loss_halt_usd * 0.4 else ""
 
     # STATUS is a BUTTON (#76): one click toggles the loss-halt bypass in BOTH
@@ -137,7 +145,10 @@ def render(
         f"title='{escape(live_title)}'>{s.money(live_pnl, True)}</b></div>"
         f"<div><span>Paper P&amp;L</span><b class='mono {s.cls(paper_pnl)}' "
         f"title='{escape(paper_title)}'>{s.money(paper_pnl, True)}</b></div>"
-        f"<div><span>Halt threshold</span><b class='mono'>−${loss_halt_usd:,.2f}</b></div>"
+        f"<div><span>Peak ({leg_label})</span>"
+        f"<b class='mono {s.cls(peak)}' title='Session high-water mark — the halt "
+        f"floor trails ${loss_halt_usd:,.2f} below this'>{s.money(peak, True)}</b></div>"
+        f"<div><span>Halt floor</span><b class='mono'>{s.money(floor, True)}</b></div>"
         f"<div><span>Headroom ({leg_label})</span>"
         f"<b class='mono {headroom_cls}'>${headroom:,.2f}</b></div>"
         f"<div><span>Status</span>{status_btn}</div>"

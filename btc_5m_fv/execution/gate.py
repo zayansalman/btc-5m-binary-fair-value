@@ -39,6 +39,14 @@ _RISK_NOTIONAL_KEY = "btc_risk.daily_buy_notional"
 # sum as a reporting/back-compat surface only.
 _RISK_LIVE_PNL_KEY = "btc_risk.live_realized_pnl"
 _RISK_PAPER_PNL_KEY = "btc_risk.paper_realized_pnl"
+# Session high-water marks (issue #112). The loss halt trails the session PEAK
+# realized PnL — floor = peak - daily_loss_halt_usd — so banked profit can't be
+# bled back beyond the limit. Peaks ratchet up only and reset with the PnL
+# counters at the UTC day boundary. Absent (pre-#112 state) → derived on load as
+# max(0, leg_pnl), which keeps a never-profitable session identical to the old
+# fixed -limit floor.
+_RISK_LIVE_PEAK_KEY = "btc_risk.live_peak_pnl"
+_RISK_PAPER_PEAK_KEY = "btc_risk.paper_peak_pnl"
 # Pre-split combined key (issue #64). Read once on migration into the live
 # bucket — by far the most common pre-split scenario was a live-only counter.
 _RISK_COMBINED_PNL_KEY = "btc_risk.daily_realized_pnl"
@@ -131,6 +139,11 @@ class RiskGate:
         # apart from paper study runs.
         self._live_pnl: float = 0.0
         self._paper_pnl: float = 0.0
+        # Session high-water marks per leg (#112) — the trailing loss halt is
+        # measured as drawdown from these. Ratchet up only; reset with the PnL
+        # counters at the UTC day boundary.
+        self._live_peak: float = 0.0
+        self._paper_peak: float = 0.0
         self._daily_buy_notional: float = 0.0
         self._kill_handled = False
         self._loaded = False
@@ -162,6 +175,8 @@ class RiskGate:
             self._date = today
             self._live_pnl = 0.0
             self._paper_pnl = 0.0
+            self._live_peak = 0.0
+            self._paper_peak = 0.0
             self._daily_buy_notional = 0.0
 
     async def load(self) -> None:
@@ -179,6 +194,8 @@ class RiskGate:
         date = await get_config(_RISK_DATE_KEY)
         live_pnl_raw = await get_config(_RISK_LIVE_PNL_KEY)
         paper_pnl_raw = await get_config(_RISK_PAPER_PNL_KEY)
+        live_peak_raw = await get_config(_RISK_LIVE_PEAK_KEY)
+        paper_peak_raw = await get_config(_RISK_PAPER_PEAK_KEY)
         notional_raw = await get_config(_RISK_NOTIONAL_KEY)
         # Migration ladder: split keys → combined #64 key → legacy #20 keys.
         if live_pnl_raw is None and paper_pnl_raw is None:
@@ -198,6 +215,16 @@ class RiskGate:
                 self._live_pnl = 0.0
                 self._paper_pnl = 0.0
                 self._daily_buy_notional = 0.0
+            # Peaks (#112): use the stored mark, but never below the current leg
+            # PnL or 0. A pre-#112 session has no peak key → this derives
+            # max(0, leg_pnl), so a never-profitable session keeps peak 0 and the
+            # halt stays identical to the old fixed -limit floor.
+            try:
+                self._live_peak = max(0.0, self._live_pnl, float(live_peak_raw or 0))
+                self._paper_peak = max(0.0, self._paper_pnl, float(paper_peak_raw or 0))
+            except ValueError:
+                self._live_peak = max(0.0, self._live_pnl)
+                self._paper_peak = max(0.0, self._paper_pnl)
         self._date = self._today()
         self._loaded = True
         await self.persist()
@@ -206,6 +233,8 @@ class RiskGate:
         await set_config(_RISK_DATE_KEY, self._date)
         await set_config(_RISK_LIVE_PNL_KEY, repr(self._live_pnl))
         await set_config(_RISK_PAPER_PNL_KEY, repr(self._paper_pnl))
+        await set_config(_RISK_LIVE_PEAK_KEY, repr(self._live_peak))
+        await set_config(_RISK_PAPER_PEAK_KEY, repr(self._paper_peak))
         await set_config(_RISK_NOTIONAL_KEY, repr(self._daily_buy_notional))
 
     async def refresh_overrides(self) -> None:
@@ -224,12 +253,33 @@ class RiskGate:
         self._roll_daily_window()
         return self._live_pnl if self.is_live else self._paper_pnl
 
+    @property
+    def halt_peak(self) -> float:
+        """Session high-water mark of THIS gate's leg (#112). The trailing loss
+        halt is measured as drawdown from this peak."""
+        self._roll_daily_window()
+        return self._live_peak if self.is_live else self._paper_peak
+
+    @property
+    def loss_halt_floor(self) -> float:
+        """The PnL level at/below which the halt fires (#112): peak - limit.
+        With peak 0 (never profitable) this is the old fixed -limit floor."""
+        return self.halt_peak - self.cfg.daily_loss_halt_usd
+
+    @property
+    def loss_halt_headroom(self) -> float:
+        """USD this leg can still lose before the trailing halt fires (#112):
+        current PnL minus the floor. Equals the full limit at the peak; shrinks
+        as PnL falls below the peak; restored when a new peak is set."""
+        return self.halt_pnl - self.loss_halt_floor
+
     def loss_halt_breached(self) -> bool:
-        """True when this mode's own realized-loss leg is at/below the daily
-        halt and the bypass is off. The loop uses this to STOP the bot (#76)."""
+        """True when this mode's own realized PnL has drawn down to/through the
+        trailing floor (peak - limit) and the bypass is off (#76, #112). The
+        loop uses this to STOP the bot."""
         if self._bypass_loss_halt:
             return False
-        return self.halt_pnl <= -self.cfg.daily_loss_halt_usd
+        return self.halt_pnl <= self.loss_halt_floor
 
     async def refresh_runtime_limits(self) -> None:
         """Re-read operator runtime risk knobs from SQLite (BOTH paper and live).
@@ -282,8 +332,10 @@ class RiskGate:
         self._roll_daily_window()
         if is_live:
             self._live_pnl += pnl_usd
+            self._live_peak = max(self._live_peak, self._live_pnl)
         else:
             self._paper_pnl += pnl_usd
+            self._paper_peak = max(self._paper_peak, self._paper_pnl)
         await self.persist()
 
     async def record_buy_notional(self, notional_usd: float) -> None:
@@ -346,8 +398,9 @@ class RiskGate:
         if self.loss_halt_breached():
             leg = "live" if self.is_live else "paper"
             return (
-                f"daily loss halt: {leg} realized {self.halt_pnl:+.2f} USD "
-                f"breaches -{self.cfg.daily_loss_halt_usd:.2f} USD"
+                f"daily loss halt: {leg} realized {self.halt_pnl:+.2f} USD at/below "
+                f"trailing floor {self.loss_halt_floor:+.2f} "
+                f"(peak {self.halt_peak:+.2f} − {self.cfg.daily_loss_halt_usd:.2f} limit)"
             )
         if req.position_open or req.entry_order_resting:
             return "an open position/order already exists (max 1)"
