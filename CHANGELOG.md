@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.4.20 — Trailing loss halt + PnL panel accuracy + live open-position P&L (2026-06-23)
+
+Three operator asks from one session: protect banked profit with a trailing halt, make the PnL/performance panels honest about what they show, and surface live unrealized P&L on an open position.
+
+### Trailing high-water-mark loss halt (#112, #115)
+- **`gate.py`** — the daily loss halt now trails the session **peak** realized PnL: `floor = peak − BTC_TRADE_DAILY_LOSS_HALT_USD`, peak ratchets up only and resets at UTC midnight, tracked per leg (live/paper) and persisted as `btc_risk.{live,paper}_peak_pnl`. Banked profit can no longer be bled back beyond the limit — a +$30 run halts at +$20, not −$10. A **never-profitable session keeps peak 0**, so behaviour is identical to the old fixed −$10 floor; the change can only halt *earlier* (after locking gains), never later. Backward-compat load derives `peak = max(0, leg_pnl)` when the key is absent. New `halt_peak` / `loss_halt_floor` / `loss_halt_headroom` properties; `loss_halt_breached` and `block_reason` use the trailing floor.
+- **`#115`** — `reset_daily_loss_halt()` + `/api/loss_halt/reset` now zero the **peaks too**, not just the PnL tally: the floor is `peak − limit`, so resetting PnL alone would leave a banked peak holding the halt latched (a +$30 day reset to PnL 0 still floors at +$20).
+- **`ems.py` + `guardrails.py`** — the LOSS HALT panel shows **Peak**, **Halt floor**, and trailing **Headroom**; the panel formula mirrors `RiskGate.loss_halt_breached` (the enforcement truth).
+
+### PnL / performance panel accuracy + open-position widget (#113)
+- The panels are already structurally **BTC-only** (the bot only trades `btc-updown-5m-*` markets, so non-bot Polymarket trades never enter the ledger). This fixes the real gaps:
+  - **`tools/reconcile_live_ledger.py`** — isolate BTC by the slug prefix `btc-updown-5m-` instead of the fragile `"Bitcoin Up or Down" in title` substring (immune to null/renamed titles and non-bot markets that merely mention Bitcoin; verified on real data: 648/648 BTC, 0 false positives).
+  - **`performance.py`** — relabel the recon footer `account` → `account (incl. non-bot)` so the whole-account figure can't be misread as the bot's; add a **freshness badge** (`assumed-fill` vs `reconciled <date>`) so the operator knows whether the headline metrics are grounded to real fills.
+  - **`market.py` + `_shared.side_mid`** — an **OPEN POSITION** block in the LIVE MARKET card showing live unrealized P&L `(mark − entry) × shares`, marked at the current side **mid**; a position in a non-live window shows `—` (no fabricated mark).
+  - **`blotter.py`** — open rows show the same live unrealized instead of a static `OPEN` for the live window.
+
+### Verification
+- Full suite **686 green**, ruff clean, zero new mypy on changed files; end-to-end dashboard render confirmed against the live DB.
+
+### Backlog
+- **#114 [P2]** — persist `conditionId`/`token_id` on `btc_paper_positions` so per-window reconciliation can deconflict the rare case where the operator manually trades the same 5-min window as the bot.
+
 ## v0.4.19 — Restore full model roster to the strategy-model selector (2026-06-22)
 
 Reverses the #100 roster trim per operator request (#111): all six logged models are operator-selectable from the dashboard again.
