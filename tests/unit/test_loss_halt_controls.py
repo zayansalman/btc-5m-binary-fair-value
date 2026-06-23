@@ -251,3 +251,30 @@ class TestGuardrailsPanel:
     def test_no_cannot_disable_text(self) -> None:
         html = _render(mode="live")
         assert "cannot disable" not in html
+
+
+class TestGatePanelParity:
+    """The LOSS HALT panel verdict MUST match RiskGate enforcement for the same
+    inputs (#112). A divergence — a different comparison or peak derivation —
+    would tell the operator they're OK while the loop has actually halted (or
+    vice versa) on real money. This guards the two formulas against drift."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "seq",
+        [
+            [],              # 0/0 → full headroom, not halted
+            [30.0, -10.0],   # pnl 20, peak 30, floor 20 → halted (boundary, <=)
+            [30.0, -9.0],    # pnl 21, peak 30, floor 20 → not halted
+            [30.0, -11.0],   # pnl 19, peak 30, floor 20 → halted
+            [-10.0],         # never profitable → halted (== old fixed floor)
+            [-9.99],         # never profitable → not halted
+            [2.0, -2.0],     # pnl 0, peak 2, floor -8 → not halted
+        ],
+    )
+    async def test_panel_matches_gate(self, isolated_db, seq) -> None:
+        gate = RiskGate(_cfg(), is_live=True)
+        for pnl in seq:
+            await gate.record_realized_pnl(pnl, is_live=True)
+        html = _render(mode="live", live_pnl=gate.halt_pnl, live_peak=gate.halt_peak)
+        assert (">HALTED<" in html) == gate.loss_halt_breached()
