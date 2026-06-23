@@ -9,9 +9,9 @@ the **measuring instrument** that decides the question rigorously when the sampl
 - [x] `tools/regime_attribution.py` — read-only, never in live path. A-priori bands; attribute by side-BET; two-sided-edge gate; permutation test + Benjamini-Hochberg FDR; power gate.
 - [x] TDD: `tests/unit/test_regime_attribution.py` (29 tests, incl. positive controls proving it CAN find a constructed two-sided edge).
 - [x] Verify on real ledger (read-only, both axes).
-- [ ] Adversarial stats review (workflow running) — apply confirmed fixes.
-- [ ] Commit + PR to develop.
-- [ ] Follow-up issues: schema migration to log spot/reference/sigma/drift on shadow rows (unlocks vol/basis axes); dashboard panel.
+- [x] Adversarial stats review (3 lenses) — fixed all 3 confirmed: (1) omnibus→per-(model,regime) one-vs-rest, testable-only + FDR across model×regime; (2) side-residualize PnL (side-mix≠regime); (3) UTC banding. All false-positive-direction; null verdict unchanged.
+- [x] Commit + PR to develop → PR #121 (commit 51d24d8).
+- [ ] Follow-up issues to file: schema migration to log spot/reference/sigma/drift on shadow rows (unlocks vol/basis axes); dashboard panel.
 
 ## REVIEW (2026-06-23)
 - **Recon ground truth:** shadow ledger `btc_model_shadow_positions` = clean fee-netted counterfactual (8 models, not 6); side-BET recoverable; only time-of-day + edge axes available without schema change; ~5.7 days, only `fair_value_v0` individually powered → instrument ships **dormant**, lights up as sample grows.
