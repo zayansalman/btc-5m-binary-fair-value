@@ -1,3 +1,22 @@
+# Tick-replay backtest + v8 (#144) (2026-07-02)
+
+Full autonomy granted ("your call and game"). Chose the move that collapses the waiting time:
+the tick journal reaches back to Jun 11 — six days BEFORE the shadow race — so v7's gates
+(designed on race data) were testable out-of-sample immediately.
+
+- [x] `tools/replay_race.py`: replay 74,580 ticks / 1,626 windows, fee-true, first-signal-per-window
+- [x] Outcome labeler validated 564/564 (next-window reference print); harness reproduces recorded shadow v2 249/249
+- [x] v7 OOS CONFIRMED: +0.346/trade [+0.005, +0.687] pre-race vs +0.341 in-sample — stable across regimes
+- [x] Fragility grid → freshness gate is the engine; depth realism checked (99.4% ≥5 shares)
+- [x] Pre-registered `fair_value_fresh_v8` (freshness alone); roster = clean ablation v0/v2/v7/v8
+- [x] PR #145 → develop (728 tests green); engine restarted on the 4-model roster
+
+## Review
+The replay converts "wait 6 weeks" into "confirm in ~2–3": v7/v8 enter the live race with a
+quantified prior instead of a hunch. Deploy bar unchanged and non-negotiable: live capital
+only when the LIVE race CI clears zero net of fees. If the race contradicts the replay,
+the race wins — that disagreement itself would be the most important finding.
+
 # Roster surgery + race restart (#142) (2026-07-02)
 
 Operator escalated: "create new or better strategies, bin the ones that suck, become profitable."

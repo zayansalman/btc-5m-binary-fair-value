@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.4.27 — Tick-replay backtest + v8 pre-registered (2026-07-02)
+
+`tools/replay_race.py` (#144, PR #145) replays the full quote history (74,580 ticks, 1,626 labeled windows from Jun 11) through the current roster, fee-true. Validation first: outcome labels agree 564/564 with ground truth (next-window reference print); the harness reproduces the recorded shadow v2 ledger 249/249 windows exactly.
+
+- **cushion_fresh_v7's CI excludes zero** on the full period (+0.344/trade [+0.072, +0.617], n=272) AND on the pre-race half its gates never saw (+0.346 [+0.005, +0.687], n=164) — near-identical expectancy across a regime change.
+- Fragility grid: the **freshness gate carries most of the effect** (v0+fresh60: largest totals in both independent halves, BH-q<0.05 each; 99.4% of first-60s signal ticks had ≥5-share depth) → pre-registered **`fair_value_fresh_v8`** (v0 + first-60s only). Roster is now a clean ablation: v0 / v2 (cushion) / v7 (all gates) / v8 (fresh only).
+- Engine restarted on the 4-model roster (paper mode). Deploy bar unchanged: live only when the LIVE race CI clears zero net of fees — at current point estimates that is ~2–3 weeks of race data, not 5–6.
+
 ## v0.4.26 — Roster surgery + race restart (2026-07-02)
 
 Operator mandate: bin the losers, build better candidates (#142, PR #143).
