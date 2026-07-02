@@ -8,6 +8,7 @@ cancel-on-roll, and paper-mode defaults.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -999,6 +1000,100 @@ async def test_boot_closes_open_row_when_entry_never_filled(
     assert row["state"] == "closed"
     assert row["exit_reason"] == "RECONCILED_UNFILLED"
     assert executor.entry_block_reason(3.0) is None
+
+
+# ---------------------------------------------------------------------------
+# Boot reconciliation when the CLOB no longer knows the entry order (#132).
+# A window that has already RESOLVED holds no executable risk: boot must heal
+# (close the stale row; the reconcile tool trues-up its PnL), never refuse.
+# An UNRESOLVED window adopts from the journal's placement response when the
+# lookup fails; only an unknowable fill state on live risk may refuse boot.
+# ---------------------------------------------------------------------------
+
+_RESOLVED_SLUG = "btc-updown-5m-1700000000"  # window start long in the past
+
+
+def _unresolved_slug() -> str:
+    return f"btc-updown-5m-{int(time.time()) + 3600}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("lookup", ["returns_none", "raises"])
+async def test_boot_closes_stale_row_when_order_pruned_and_window_resolved(
+    journal_db, tmp_path: Path, lookup: str
+) -> None:
+    """The 2026-06-25 outage: get_order returned None for a resolved window's
+    order and boot hard-refused (then crashed on NoneType). Zero live risk
+    remained — boot must close the row for reconciliation and proceed."""
+    position_id = await _seed_open_position(journal_db, window_slug=_RESOLVED_SLUG)
+    await journal_db.journal_live_order(
+        intent="ENTRY", side="BUY", status="SUBMITTED", window_slug=_RESOLVED_SLUG,
+        token_id=UP_TOKEN, price=0.51, size=5.09, clob_order_id="0xPRUNED",
+        details={"response": {"status": "matched", "takingAmount": "5.09"}},
+    )
+    client = _mock_client()
+    if lookup == "returns_none":
+        client.get_order.return_value = None
+    else:
+        client.get_order.side_effect = RuntimeError("order not found")
+    executor = _executor(client, tmp_path)
+
+    await executor.start()  # must NOT raise LiveBootRefused
+
+    async with journal_db.connect() as conn:
+        async with conn.execute(
+            "SELECT state, exit_reason FROM btc_paper_positions WHERE position_id = ?",
+            (position_id,),
+        ) as cur:
+            row = dict(await cur.fetchone())
+    assert row["state"] == "closed"
+    assert row["exit_reason"] == "RECONCILED_STALE_RESOLVED"
+    assert executor.entry_block_reason(3.0) is None
+
+
+@pytest.mark.asyncio
+async def test_boot_adopts_unresolved_row_from_journal_when_lookup_fails(
+    journal_db, tmp_path: Path
+) -> None:
+    """Live risk in a still-open window with a pruned/unreachable order lookup:
+    the journal's own placement response recorded the match — adopt from it."""
+    slug = _unresolved_slug()
+    await _seed_open_position(journal_db, window_slug=slug)
+    await journal_db.journal_live_order(
+        intent="ENTRY", side="BUY", status="SUBMITTED", window_slug=slug,
+        token_id=UP_TOKEN, price=0.57, size=5.26, clob_order_id="0xPRUNED",
+        details={"response": {"status": "matched", "takingAmount": "5.26"}},
+    )
+    client = _mock_client()
+    client.get_order.return_value = None
+    executor = _executor(client, tmp_path)
+
+    await executor.start()
+
+    assert executor.entry_block_reason(3.0) == (
+        "an open position/order already exists (max 1)"
+    )
+
+
+@pytest.mark.asyncio
+async def test_boot_refuses_unresolved_row_when_fill_state_unknowable(
+    journal_db, tmp_path: Path
+) -> None:
+    """No venue answer AND no journal fill record on an unresolved window is
+    genuinely blind live risk — the refusal safety must be preserved, with a
+    truthful message (not the NoneType AttributeError artifact)."""
+    slug = _unresolved_slug()
+    await _seed_open_position(journal_db, window_slug=slug)
+    await journal_db.journal_live_order(
+        intent="ENTRY", side="BUY", status="SUBMITTED", window_slug=slug,
+        token_id=UP_TOKEN, price=0.57, size=5.26, clob_order_id="0xPRUNED",
+    )
+    client = _mock_client()
+    client.get_order.return_value = None
+    executor = _executor(client, tmp_path)
+
+    with pytest.raises(LiveBootRefused, match="not resolved"):
+        await executor.start()
 
 
 # ---------------------------------------------------------------------------
