@@ -36,6 +36,7 @@ The private key is never logged and never journaled.
 from __future__ import annotations
 
 import asyncio
+import json
 import math
 import sys
 import time
@@ -185,6 +186,40 @@ def _filled_shares(response: dict[str, Any]) -> float:
         return float(response.get("takingAmount") or 0.0)
     except (TypeError, ValueError):
         return 0.0
+
+
+_WINDOW_SECONDS = 300  # 5-minute up/down markets
+_WINDOW_RESOLVE_GRACE_SECONDS = 60
+
+
+def _window_resolved(window_slug: str, *, now: float | None = None) -> bool:
+    """True when the slug's window has certainly resolved.
+
+    Window slugs end in the window's unix start second (…-5m-1782332700); the
+    market resolves ``_WINDOW_SECONDS`` later. Unparseable slugs return False,
+    so an unknown window is treated as possibly-live risk, never discarded.
+    """
+    try:
+        start = int(str(window_slug).rsplit("-", 1)[-1])
+    except (TypeError, ValueError):
+        return False
+    now_s = time.time() if now is None else now
+    return now_s >= start + _WINDOW_SECONDS + _WINDOW_RESOLVE_GRACE_SECONDS
+
+
+def _journal_filled_shares(details_json: object) -> float:
+    """Shares the journalled placement response matched at submit (0 if unknown).
+
+    The ENTRY journal row stores the raw CLOB placement response under
+    ``details_json.response`` — venue truth captured at submit time, still
+    available after the CLOB has pruned the order itself.
+    """
+    try:
+        details = json.loads(details_json) if details_json else {}  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0.0
+    response = details.get("response") if isinstance(details, dict) else None
+    return _filled_shares(response) if isinstance(response, dict) else 0.0
 
 
 def _avg_fill_price(response: dict[str, Any], side: str, limit_price: float) -> float:
@@ -417,7 +452,8 @@ class LiveExecutor:
         row = open_rows[0]
         async with connect() as db:
             async with db.execute(
-                "SELECT token_id, clob_order_id, price, size FROM btc_live_orders "
+                "SELECT token_id, clob_order_id, price, size, details_json "
+                "FROM btc_live_orders "
                 "WHERE intent = 'ENTRY' AND status = 'SUBMITTED' AND window_slug = ? "
                 "ORDER BY id DESC LIMIT 1",
                 (row["window_slug"],),
@@ -435,19 +471,66 @@ class LiveExecutor:
             )
             return
 
+        matched: float | None
         try:
             raw_order = await asyncio.to_thread(
                 self._client.get_order, entry["clob_order_id"]
             )
-            matched = float(raw_order.get("size_matched") or 0.0)
+            # The CLOB returns None once it has pruned an order (e.g. its
+            # window resolved long ago) — no answer, not an error.
+            matched = (
+                float(raw_order.get("size_matched") or 0.0)
+                if raw_order is not None
+                else None
+            )
         except Exception as e:  # noqa: BLE001
-            raise LiveBootRefused(
-                f"Boot reconciliation failed: could not fetch entry order "
-                f"{entry['clob_order_id']} for open position "
-                f"{row['position_id']} ({type(e).__name__}: {e}). Flatten manually on "
-                "Polymarket and close the ledger row, or retry once the CLOB is "
-                "reachable."
-            ) from e
+            log.warning(
+                "live_executor.reconcile_order_lookup_failed",
+                order_id=entry["clob_order_id"],
+                error=f"{type(e).__name__}: {e}",
+            )
+            matched = None
+
+        if matched is None:
+            # No venue answer for the order. A resolved window holds no
+            # executable risk, so refusing boot protects nothing — close the
+            # stale row and let tools/reconcile_live_ledger.py true-up its
+            # realized PnL from the Data API. For a window still in flight,
+            # the journal's own placement response is venue truth from submit
+            # time: adopt any match it recorded; refuse only when live risk is
+            # genuinely unknowable.
+            journal_matched = _journal_filled_shares(entry["details_json"])
+            if _window_resolved(row["window_slug"]):
+                await self._close_ledger_row(row, "RECONCILED_STALE_RESOLVED")
+                await notify(
+                    "btc_live_reconciled",
+                    f"Closed stale live position {row['position_id']} "
+                    f"({row['window_slug']}): its window already resolved and "
+                    "the CLOB no longer returns the entry order. Run "
+                    "tools/reconcile_live_ledger.py to true-up realized PnL.",
+                    {
+                        "position_id": row["position_id"],
+                        "journal_matched": journal_matched,
+                    },
+                )
+                log.warning(
+                    "live_executor.reconcile_closed_stale_resolved",
+                    position_id=row["position_id"],
+                    window_slug=row["window_slug"],
+                    journal_matched=journal_matched,
+                )
+                return
+            if journal_matched > 0:
+                matched = journal_matched
+            else:
+                raise LiveBootRefused(
+                    f"Boot reconciliation failed: the CLOB could not return "
+                    f"entry order {entry['clob_order_id']} for open position "
+                    f"{row['position_id']} and window {row['window_slug']} has "
+                    "not resolved yet — refusing to trade blind on live risk. "
+                    "Retry once the CLOB is reachable, or flatten manually on "
+                    "Polymarket and close the ledger row."
+                )
 
         if matched <= 0:
             # Entry never filled and its remainder was just cancelled by
