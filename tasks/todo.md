@@ -1,3 +1,24 @@
+# Postmortem + EMS repair (#132–#138) (2026-07-02)
+
+Operator declared the project failed; full forensic pass over live/shadow/paper history.
+
+- [x] Forensics: venue-true PnL −$17.24 (gross +$6.27, fees −$23.51); books were fee-blind
+- [x] Shadow race final read: no model ≠ 0; IS→OOS rank inversion; night gate + selectivity dead
+- [x] #132 boot-reconcile heal (the 06-25 outage) — fixed, TDD, PR #139 → develop
+- [x] #133 fee-true booking (journal = ledger = halt) — fixed, TDD, PR #140 → develop
+- [x] #134 ledger reconciled: −$3.10 → −$17.77, 4 phantoms voided; 1768 heals on next boot
+- [x] #135 docs/POSTMORTEM_2026-07.md + pre-registered restart protocol
+- [x] Backlog as issues: #136 paper fee parity, #137 maker/taker telemetry, #138 stop watchdog
+
+## Review
+The failure was three-layered: (1) a fee-dominated market where the signal's gross edge
+(+0.7% of turnover) is under the taker fee (2.6%); (2) fee-blind books that hid the true
+bleed and let the loss-halt fire late; (3) an EMS that died on a heal-able boot state and
+stayed dead. Layers 2–3 are fixed on develop. Layer 1 has no validated fix: the only
+evidence-sane path is the shadow-only restart protocol in the postmortem (deploy bar:
+95% CI > 0 net of fees). OPERATOR ACTIONS: reset active model off `down_skeptic_drift_v6`;
+one Start to heal row 1768; decide shadow-restart vs retire.
+
 # Regime-attribution instrument (#120) (2026-06-23)
 
 Operator pushed back on my stance re: regime ID + auto strategy selection. Decision,
