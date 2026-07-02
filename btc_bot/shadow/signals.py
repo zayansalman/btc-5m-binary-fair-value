@@ -136,3 +136,48 @@ def cushion_fresh_v7(
         confidence=base.confidence,
         reason=f"fresh {window_age:.0f}s; {base.reason}",
     )
+
+
+def fair_value_fresh_v8(
+    view: SnapshotView,
+    params: strategy.StrategyParams,
+    max_age_seconds: int = 60,
+) -> ShadowSignal | None:
+    """The v0 signal restricted to the first 60s of the window — freshness alone.
+
+    The tick-replay backtest (#144, tools/replay_race.py) showed the
+    freshness gate carries most of the v7 effect on its own: v0+fresh60
+    posted the largest fee-true totals in BOTH independent halves of the
+    tick history (pre-race +$106.84 on n=307; race era +$85.25 on n=267;
+    BH-q<0.05 in each). v8 pre-registers the simplest member of the family,
+    completing the ablation the race can now decide: v0 (no gate) /
+    v2 (cushion) / v7 (fresh+cushion+cap) / v8 (fresh only).
+    """
+    window_age = _WINDOW_SECONDS - view.remaining_seconds
+    if window_age > max_age_seconds:
+        return None
+    edge_up = view.fair_up - view.up_ask if view.up_ask is not None else None
+    edge_down = (1.0 - view.fair_up) - view.down_ask if view.down_ask is not None else None
+    side, confidence, _notional, reason = strategy.signal_from_executable_edges(
+        edge_up,
+        edge_down,
+        view.remaining_seconds,
+        view.up_ask,
+        view.down_ask,
+        params,
+    )
+    if side is None:
+        return None
+    entry_price = view.up_ask if side == "Up" else view.down_ask
+    edge = edge_up if side == "Up" else edge_down
+    fair_prob = view.fair_up if side == "Up" else 1.0 - view.fair_up
+    if entry_price is None or edge is None:
+        return None
+    return ShadowSignal(
+        side=side,
+        entry_price=float(entry_price),
+        fair_prob=float(fair_prob),
+        edge=float(edge),
+        confidence=float(confidence),
+        reason=f"fresh {window_age:.0f}s; {reason}",
+    )

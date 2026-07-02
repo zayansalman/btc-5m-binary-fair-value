@@ -21,7 +21,11 @@ from __future__ import annotations
 import pytest
 
 from btc_bot import strategy
-from btc_bot.shadow.signals import cushion_favorite_v2, cushion_fresh_v7
+from btc_bot.shadow.signals import (
+    cushion_favorite_v2,
+    cushion_fresh_v7,
+    fair_value_fresh_v8,
+)
 from btc_bot.shadow.types import ShadowSignal, SnapshotView
 
 
@@ -156,6 +160,34 @@ class TestCushionFavoriteV2:
             up_ask=0.55, fair_up=0.61,
         )
         assert cushion_fresh_v7(view, params) is None
+
+    def test_v8_fires_fresh_without_cushion_or_cap(
+        self, params: strategy.StrategyParams
+    ) -> None:
+        """v8 = freshness ONLY: takes a fresh v0 signal v2 would reject for a
+        thin cushion, and does not cap the edge claim."""
+        view = _view(
+            remaining_seconds=250, spot=50000.0, reference=49999.0,  # 0.2bps cushion
+            up_ask=0.55, fair_up=0.70,  # edge 0.15 (> v7's cap)
+        )
+        assert cushion_favorite_v2(view, params) is None  # cushion too thin
+        sig = fair_value_fresh_v8(view, params)
+        assert isinstance(sig, ShadowSignal)
+        assert sig.side == "Up"
+        assert sig.edge == pytest.approx(0.15)
+        assert sig.reason.startswith("fresh 50s;")
+
+    def test_v8_none_when_window_stale(self, params: strategy.StrategyParams) -> None:
+        view = _view(
+            remaining_seconds=120, spot=50000.0, reference=49980.0,
+            up_ask=0.55, fair_up=0.70,
+        )
+        assert fair_value_fresh_v8(view, params) is None
+
+    def test_v8_none_when_v0_declines(self, params: strategy.StrategyParams) -> None:
+        """Thin edge -> v0 declines -> v8 declines (freshness adds no trades)."""
+        view = _view(remaining_seconds=250, up_ask=0.69, fair_up=0.70)
+        assert fair_value_fresh_v8(view, params) is None
 
     def test_signal_when_both_pass_down(self, params: strategy.StrategyParams) -> None:
         """v0 enters Down (spot below reference) and the cushion clears -> Down."""

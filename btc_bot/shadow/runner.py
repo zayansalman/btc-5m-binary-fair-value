@@ -14,6 +14,9 @@ Candidates (all are logged AND operator-selectable; see ``SELECTABLE_MODELS``):
   in the 06-18→06-24 race.
 - ``cushion_fresh_v7``    — v2 restricted to the first 60s of the window with
   edge claims capped at 0.065 (postmortem-motivated challenger, #142).
+- ``fair_value_fresh_v8`` — v0 in the first 60s only: the freshness gate
+  alone, pre-registered from the tick-replay evidence (#144). Together the
+  roster is a clean ablation: v0 / v2 (cushion) / v7 (all gates) / v8 (fresh).
 
 Retired 2026-07-02 (#142; history stays in the ledger): ``late_convergence_v3``
 (favorite-soak trap), ``down_skeptic_v4`` (IS→OOS rank flip), ``cushion_drift_v5``
@@ -113,6 +116,7 @@ _MODELS: dict[
     "fair_value_v0": _v0_control,
     "cushion_favorite_v2": signals.cushion_favorite_v2,
     "cushion_fresh_v7": signals.cushion_fresh_v7,
+    "fair_value_fresh_v8": signals.fair_value_fresh_v8,
 }
 
 
@@ -133,6 +137,7 @@ SELECTABLE_MODELS: list[str] = [
     "fair_value_v0",
     "cushion_favorite_v2",
     "cushion_fresh_v7",
+    "fair_value_fresh_v8",
 ]
 
 # Labels carry the model's version tag (vN) so the dashboard dropdown maps 1:1
@@ -144,11 +149,13 @@ MODEL_LABELS: dict[str, str] = {
     "fair_value_v0": "Fair-Value · Settle (v0)",
     "cushion_favorite_v2": "Cushion Favorite (v2)",
     "cushion_fresh_v7": "Cushion · Fresh+Capped (v7)",
+    "fair_value_fresh_v8": "Fair-Value · Fresh (v8)",
 }
 MODEL_DESCRIPTIONS: dict[str, str] = {
     "fair_value_v0": "v0 baseline · edge 0.045–0.07 · favorites ≥0.50 · hold→resolution",
     "cushion_favorite_v2": "v0 + cushion: spot clearly on the favoured side of the strike",
     "cushion_fresh_v7": "v2 + first-60s windows only + edge claims capped at 0.065 (adverse-selection guard)",
+    "fair_value_fresh_v8": "v0 in the first 60s of the window only — the freshness gate alone (#144 replay evidence)",
 }
 
 # Candidate signal fns for the LIVE dispatch. v0 is intentionally absent — it
@@ -158,6 +165,7 @@ CANDIDATE_SIGNALS: dict[
 ] = {
     "cushion_favorite_v2": signals.cushion_favorite_v2,
     "cushion_fresh_v7": signals.cushion_fresh_v7,
+    "fair_value_fresh_v8": signals.fair_value_fresh_v8,
 }
 
 
