@@ -338,3 +338,43 @@ def test_modest_edge_favorite_passes_filters():
         up_ask=0.62, down_ask=0.42, params=params,
     )
     assert side == "Up" and notional > 0 and "executable edge" in reason
+
+
+# ---------------------------------------------------------------------------
+# Retired active-model fallback (#142 roster surgery)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_retired_active_model_falls_back_to_default_loudly_once(test_db):
+    """A persisted selection pointing at a retired model (the operator's last
+    pick was down_skeptic_drift_v6, binned in #142) must trade the v0 native
+    path and notify exactly once per process — never crash, never silently
+    keep 'trading' a model that no longer exists."""
+    paper._unknown_model_notified.clear()
+    await _db.set_config("btc_model.active", "down_skeptic_drift_v6")
+
+    first = await paper._resolve_active_model()
+    second = await paper._resolve_active_model()
+
+    assert first == "fair_value_v0"
+    assert second == "fair_value_v0"
+    async with _db.connect() as conn:
+        async with conn.execute(
+            "SELECT COUNT(*) AS n FROM notification_feed"
+            " WHERE event_type = 'btc_model_fallback'"
+        ) as cur:
+            assert (await cur.fetchone())["n"] == 1
+
+
+@pytest.mark.asyncio
+async def test_current_roster_models_resolve_unchanged(test_db):
+    paper._unknown_model_notified.clear()
+    await _db.set_config("btc_model.active", "cushion_fresh_v7")
+    assert await paper._resolve_active_model() == "cushion_fresh_v7"
+    async with _db.connect() as conn:
+        async with conn.execute(
+            "SELECT COUNT(*) AS n FROM notification_feed"
+            " WHERE event_type = 'btc_model_fallback'"
+        ) as cur:
+            assert (await cur.fetchone())["n"] == 0

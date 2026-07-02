@@ -10,13 +10,14 @@ pure paper comparison harness.
 Candidates (all are logged AND operator-selectable; see ``SELECTABLE_MODELS``):
 - ``fair_value_v0``       — the live strategy, logged as the control baseline.
 - ``cushion_favorite_v2`` — v0 + a cushion gate (spot clearly on the favoured
-  side of the strike): the only entry-knowable taker lean that survived.
-- ``late_convergence_v3`` — enters the final 5–45s on near-certainties the book
-  under-prices (a regime v0's >=60s filter never trades).
-- ``down_skeptic_v4``     — v0 but a Down pick must clear a +0.02 edge premium.
-- ``cushion_drift_v5``    — v0 + a regime-adaptive, two-sided cushion bar.
-- ``down_skeptic_drift_v6``— v4's edge toll made regime-aware: a bear regime
-  tolls Up, a bull regime tolls Down (reduces to v4 at regime 0).
+  side of the strike): the only model sign-positive in-sample AND out-of-sample
+  in the 06-18→06-24 race.
+- ``cushion_fresh_v7``    — v2 restricted to the first 60s of the window with
+  edge claims capped at 0.065 (postmortem-motivated challenger, #142).
+
+Retired 2026-07-02 (#142; history stays in the ledger): ``late_convergence_v3``
+(favorite-soak trap), ``down_skeptic_v4`` (IS→OOS rank flip), ``cushion_drift_v5``
+(redundant with v2), ``down_skeptic_drift_v6`` (worst everywhere).
 """
 
 from __future__ import annotations
@@ -101,16 +102,17 @@ def _v0_control(
 
 
 # Ordered so the control is logged first. Each candidate is callable as
-# fn(view, params); cushion/late carry their own defaulted thresholds.
+# fn(view, params); cushion variants carry their own defaulted thresholds.
+# Roster surgery 2026-07-02 (#142, docs/POSTMORTEM_2026-07.md): v3/v4/v5/v6
+# retired on the frozen-race evidence (v3 favorite-soak trap, v4 IS→OOS rank
+# flip, v5 redundant with v2, v6 worst everywhere). Historical shadow rows for
+# retired models remain in the ledger; only new logging stops.
 _MODELS: dict[
     str, Callable[[SnapshotView, strategy.StrategyParams], ShadowSignal | None]
 ] = {
     "fair_value_v0": _v0_control,
     "cushion_favorite_v2": signals.cushion_favorite_v2,
-    "late_convergence_v3": signals.late_convergence_v3,
-    "down_skeptic_v4": signals.down_skeptic_v4,
-    "cushion_drift_v5": signals.cushion_drift_v5,
-    "down_skeptic_drift_v6": signals.down_skeptic_drift_v6,
+    "cushion_fresh_v7": signals.cushion_fresh_v7,
 }
 
 
@@ -130,10 +132,7 @@ MODEL_IDS: list[str] = list(_MODELS.keys())
 SELECTABLE_MODELS: list[str] = [
     "fair_value_v0",
     "cushion_favorite_v2",
-    "late_convergence_v3",
-    "down_skeptic_v4",
-    "cushion_drift_v5",
-    "down_skeptic_drift_v6",
+    "cushion_fresh_v7",
 ]
 
 # Labels carry the model's version tag (vN) so the dashboard dropdown maps 1:1
@@ -144,18 +143,12 @@ SELECTABLE_MODELS: list[str] = [
 MODEL_LABELS: dict[str, str] = {
     "fair_value_v0": "Fair-Value · Settle (v0)",
     "cushion_favorite_v2": "Cushion Favorite (v2)",
-    "late_convergence_v3": "Late Convergence (v3)",
-    "down_skeptic_v4": "Down-Skeptic (v4)",
-    "cushion_drift_v5": "Cushion · Regime Drift (v5)",
-    "down_skeptic_drift_v6": "Down-Skeptic · Regime Drift (v6)",
+    "cushion_fresh_v7": "Cushion · Fresh+Capped (v7)",
 }
 MODEL_DESCRIPTIONS: dict[str, str] = {
     "fair_value_v0": "v0 baseline · edge 0.045–0.07 · favorites ≥0.50 · hold→resolution",
     "cushion_favorite_v2": "v0 + cushion: spot clearly on the favoured side of the strike",
-    "late_convergence_v3": "final 5–45s · buy near-certainties (book ≥0.85)",
-    "down_skeptic_v4": "v0 but Down needs +0.02 extra edge (prices the ≥-tie Up bias)",
-    "cushion_drift_v5": "v0 + regime-adaptive cushion: drift/σ momentum shifts the Up/Down bar",
-    "down_skeptic_drift_v6": "v4 but the edge toll flexes with drift/σ: bear → Up tolled, bull → Down",
+    "cushion_fresh_v7": "v2 + first-60s windows only + edge claims capped at 0.065 (adverse-selection guard)",
 }
 
 # Candidate signal fns for the LIVE dispatch. v0 is intentionally absent — it
@@ -164,10 +157,7 @@ CANDIDATE_SIGNALS: dict[
     str, Callable[[SnapshotView, strategy.StrategyParams], ShadowSignal | None]
 ] = {
     "cushion_favorite_v2": signals.cushion_favorite_v2,
-    "late_convergence_v3": signals.late_convergence_v3,
-    "down_skeptic_v4": signals.down_skeptic_v4,
-    "cushion_drift_v5": signals.cushion_drift_v5,
-    "down_skeptic_drift_v6": signals.down_skeptic_drift_v6,
+    "cushion_fresh_v7": signals.cushion_fresh_v7,
 }
 
 
