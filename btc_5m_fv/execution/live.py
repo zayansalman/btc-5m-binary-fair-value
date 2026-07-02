@@ -57,6 +57,7 @@ from db import (  # type: ignore[import-untyped]
     notify,
 )
 from logging_setup import get_logger  # type: ignore[import-untyped]
+from btc_bot.shadow.fees import taker_fee_per_share  # canonical venue fee math
 from btc_5m_fv.execution.gate import EntryRequest, GateConfig, RiskGate
 
 log = get_logger("btc_live")
@@ -184,6 +185,24 @@ def _filled_shares(response: dict[str, Any]) -> float:
         return 0.0
     try:
         return float(response.get("takingAmount") or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _placement_crossed_shares(response: dict[str, Any], side: str) -> float:
+    """Outcome-token shares that CROSSED at placement — the taker portion.
+
+    The venue charges its taker fee only on this portion; anything that rests
+    and fills later is a maker fill and fee-free. For a BUY the tokens are the
+    ``takingAmount`` (received); for a SELL they are the ``makingAmount``
+    (sold). Unknown/unparseable responses count as zero crossed (maker), so a
+    fee is never invented.
+    """
+    if str(response.get("status") or "").lower() != "matched":
+        return 0.0
+    key = "takingAmount" if side == BUY else "makingAmount"
+    try:
+        return float(response.get(key) or 0.0)
     except (TypeError, ValueError):
         return 0.0
 
@@ -322,6 +341,9 @@ class LiveExecutor:
         self._entry_size: float = 0.0
         self._entry_matched_size: Optional[float] = None
         self._entry_sold_size: float = 0.0
+        # USDC taker fee charged at entry on the placement-crossed portion
+        # (0.07·p·(1−p) per share); 0 for maker fills. Booked at realization.
+        self._entry_taker_fee_usd: float = 0.0
         self._position_open = False
         # Exit order tracking — only set while an exit SELL might still rest.
         self._exit_order_id: Optional[str] = None
@@ -550,6 +572,11 @@ class LiveExecutor:
         self._entry_size = float(entry["size"] or row["shares"])
         self._entry_matched_size = matched
         self._entry_sold_size = 0.0
+        # Bot entries are marketable limits, so assume the adopted fill
+        # crossed (taker) — the reconcile tool is the exact true-up.
+        self._entry_taker_fee_usd = round(
+            taker_fee_per_share(self._entry_price) * matched, 6
+        )
         self._position_open = True
         await notify(
             "btc_live_reconciled",
@@ -659,7 +686,11 @@ class LiveExecutor:
         held = _round_size_down(max(0.0, matched - self._entry_sold_size))
         entry_price = self._entry_price or 0.0
         payout = 1.0 if won else 0.0
-        pnl = round(held * (payout - entry_price), 4)
+        # Realize net of the entry taker fee (#133): the venue charged it in
+        # USDC at entry, so a lost taker position costs exactly the cash paid
+        # and a won one redeems at $1/share minus that entry fee.
+        fee = self._entry_taker_fee_usd if held > 0 else 0.0
+        pnl = round(held * (payout - entry_price) - fee, 4)
         if held > 0:
             await self.record_realized_pnl(pnl)
         await journal_live_order(
@@ -672,6 +703,7 @@ class LiveExecutor:
             size=held,
             notional_usd=pnl,
             error=None if won else "resolved against position; tokens worthless",
+            details={"entry_taker_fee_usd": fee},
         )
         log.info(
             "live_executor.settled",
@@ -681,7 +713,9 @@ class LiveExecutor:
             pnl=pnl,
         )
         self._clear_position()
-        return LiveOrderResult(ok=True, status="SETTLED", price=payout, size=held)
+        return LiveOrderResult(
+            ok=True, status="SETTLED", price=payout, size=held, notional_usd=pnl
+        )
 
     @property
     def daily_realized_pnl(self) -> float:
@@ -853,6 +887,14 @@ class LiveExecutor:
             self._entry_price = _avg_fill_price(result.raw, BUY, price)
             self._entry_size = size
             self._entry_sold_size = 0.0
+            # The venue charges its taker fee, in USDC, on the shares that
+            # crossed at placement; a resting (maker) remainder is fee-free.
+            crossed = _round_size_down(_placement_crossed_shares(result.raw, BUY))
+            self._entry_taker_fee_usd = (
+                round(taker_fee_per_share(self._entry_price) * min(crossed, size), 6)
+                if crossed > 0
+                else 0.0
+            )
             self._position_open = True
             await self.gate.record_buy_notional(round(price * size, 4))
             filled = _round_size_down(_filled_shares(result.raw))
@@ -975,7 +1017,9 @@ class LiveExecutor:
             self._exit_order_id = None
             self._exit_price = None
             await self._register_exit_fill(
-                sellable, _avg_fill_price(result.raw, SELL, price)
+                sellable,
+                _avg_fill_price(result.raw, SELL, price),
+                taker_size=_placement_crossed_shares(result.raw, SELL),
             )
             if self._entry_sold_size >= matched:
                 self._clear_position()
@@ -993,7 +1037,11 @@ class LiveExecutor:
         final, _ = await self._order_fill_info(result.order_id, default_size=0.0)
         self._exit_order_id = None
         self._exit_price = None
-        await self._register_exit_fill(final, _avg_fill_price(result.raw, SELL, price))
+        await self._register_exit_fill(
+            final,
+            _avg_fill_price(result.raw, SELL, price),
+            taker_size=_placement_crossed_shares(result.raw, SELL),
+        )
         if matched > 0 and self._entry_sold_size >= matched:
             # The order actually filled completely during the cancel race.
             self._clear_position()
@@ -1075,6 +1123,7 @@ class LiveExecutor:
         self._entry_size = 0.0
         self._entry_matched_size = None
         self._entry_sold_size = 0.0
+        self._entry_taker_fee_usd = 0.0
         self._position_open = False
         self._exit_order_id = None
         self._exit_price = None
@@ -1113,14 +1162,34 @@ class LiveExecutor:
         self._clear_position()
         return True
 
-    async def _register_exit_fill(self, sold_size: float, exit_price: float | None) -> None:
-        """Account a confirmed exit fill: track sold shares, record realized PnL."""
+    async def _register_exit_fill(
+        self,
+        sold_size: float,
+        exit_price: float | None,
+        *,
+        taker_size: float = 0.0,
+    ) -> None:
+        """Account a confirmed exit fill: track sold shares, record realized PnL.
+
+        ``taker_size`` is the portion of the SELL that crossed at placement —
+        the venue charges its taker fee on that portion's proceeds (#133); a
+        fill of a resting SELL is a maker fill and fee-free, so callers that
+        register fills discovered by order lookup pass no taker size. The
+        ENTRY-side taker fee stays booked at settlement (settle style is the
+        deployed config); a position fully flattened by exits leaves its entry
+        fee to the reconcile tool.
+        """
         if sold_size <= 0:
             return
         self._entry_sold_size = round(self._entry_sold_size + sold_size, SIZE_DECIMALS)
         entry_px = self._entry_price or 0.0
         px = exit_price if exit_price is not None else entry_px
-        await self.record_realized_pnl(sold_size * (px - entry_px))
+        fee = (
+            round(taker_fee_per_share(px) * min(taker_size, sold_size), 6)
+            if taker_size > 0
+            else 0.0
+        )
+        await self.record_realized_pnl(sold_size * (px - entry_px) - fee)
 
     async def _try_cancel(self, order_id: str, reason: str) -> bool:
         """Cancel one order; True only when it is confirmed no longer live.

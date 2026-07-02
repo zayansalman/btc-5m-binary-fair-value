@@ -1454,6 +1454,7 @@ async def _close_rolled_position(
         )
         return False
     settled_held: float | None = None
+    settled_pnl: float | None = None
     if _live_executor is not None:
         # Settle-style live: no exit order — register the resolution with the
         # executor (PnL into the daily halt, slot freed; winning tokens await
@@ -1463,11 +1464,14 @@ async def _close_rolled_position(
         if not result.ok and result.status != "SKIPPED":
             return False
         # Real held size the venue actually settled (0 when the entry never
-        # filled) — the ledger books on THIS, not the recorded shares (#103).
+        # filled) — the ledger books on THIS, not the recorded shares (#103) —
+        # and the executor's fee-true realized PnL (#133), so the ledger row
+        # matches the journal and the daily halt to the cent.
         settled_held = result.size or 0.0
+        settled_pnl = result.notional_usd
     return await _close_position(
         pos, snapshot, 1.0 if won else 0.0, "WINDOW_ROLL",
-        settled=True, settled_held=settled_held,
+        settled=True, settled_held=settled_held, settled_pnl=settled_pnl,
     )
 
 
@@ -1565,6 +1569,7 @@ async def _close_position(
     reason: str,
     settled: bool = False,
     settled_held: float | None = None,
+    settled_pnl: float | None = None,
 ) -> bool:
     """Close one position; returns True when the ledger row was closed.
 
@@ -1633,7 +1638,14 @@ async def _close_position(
         # double-count this live PnL into the PAPER leg (the bug behind
         # paper_pnl mirroring live_pnl).
         held = settled_held if settled_held is not None else float(pos["shares"])
-        pnl = prior_pnl + held * (exit_price - entry_price)
+        # Prefer the executor's realized number — it is net of the entry taker
+        # fee (#133); the price×size fallback covers older callers only.
+        realized = (
+            settled_pnl
+            if settled_pnl is not None
+            else held * (exit_price - entry_price)
+        )
+        pnl = prior_pnl + realized
     else:
         pnl = float(pos["shares"]) * (exit_price - entry_price)
         # Paper closes feed the SAME daily-loss-halt counter live closes do
