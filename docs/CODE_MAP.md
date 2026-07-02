@@ -140,7 +140,7 @@ Env knobs: `BTC_TRADE_*` are canonical; `BTC_LIVE_*` are deprecated read-aliases
 | `btc_bot/params_apply.py` | cli | 0 | Layer 2 — operator-gated promotion of proposed -> active strategy params. |
 | `btc_bot/params_propose.py` | cli | 0 | Layer 2 — propose tuned strategy parameters from the existing backtest grid. |
 | `btc_bot/shadow/__init__.py` | pkg | 6 | Shadow forward-tester: candidate strategies logged and settled net of fees. |
-| `btc_bot/shadow/fees.py` | WIRED | 2 | Polymarket taker-fee math for the shadow forward-tester. |
+| `btc_bot/shadow/fees.py` | WIRED | 3 | Polymarket taker-fee math for the shadow forward-tester. |
 | `btc_bot/shadow/ledger.py` | WIRED | 2 | Persistence for the shadow forward-tester's would-be trades. |
 | `btc_bot/shadow/runner.py` | WIRED | 5 | Shadow forward-tester runner. |
 | `btc_bot/shadow/signals.py` | WIRED | 1 | Candidate strategies for the shadow forward-tester. |
