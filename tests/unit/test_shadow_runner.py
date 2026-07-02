@@ -94,9 +94,10 @@ async def test_favorite_window_logs_v0_and_cushion(test_db, params) -> None:
     # A clean cushioned favourite: v0 fires AND the cushion gate passes.
     assert "fair_value_v0" in rows
     assert "cushion_favorite_v2" in rows
-    # 180s into the window: v7's freshness gate (<=60s) skips it even though
-    # v2 trades — the whole point of the challenger (#142).
+    # 180s into the window: the freshness gates (<=60s) skip v7 AND v8 even
+    # though v2 trades — the whole point of the fresh family (#142, #144).
     assert "cushion_fresh_v7" not in rows
+    assert "fair_value_fresh_v8" not in rows
     assert rows["cushion_favorite_v2"]["side"] == "Up"
     assert rows["cushion_favorite_v2"]["entry_price"] == pytest.approx(0.56)
     assert rows["cushion_favorite_v2"]["shares"] == runner.SHADOW_SHARES
@@ -111,6 +112,9 @@ async def test_fresh_window_logs_v7_too(test_db, params) -> None:
     assert rows["cushion_fresh_v7"]["side"] == "Up"
     assert rows["cushion_fresh_v7"]["entry_price"] == pytest.approx(0.56)
     assert rows["cushion_fresh_v7"]["reason"].startswith("fresh 50s;")
+    # v8 (freshness alone) fires on the same fresh window.
+    assert "fair_value_fresh_v8" in rows
+    assert rows["fair_value_fresh_v8"]["reason"].startswith("fresh 50s;")
 
 
 @pytest.mark.asyncio
@@ -144,12 +148,18 @@ def test_model_registry_constants() -> None:
     assert runner.DEFAULT_MODEL == "fair_value_v0"
     # Post-surgery roster (#142): control, champion, challenger — retired
     # models (v3/v4/v5/v6) are neither logged nor selectable nor dispatchable.
-    expected = ["fair_value_v0", "cushion_favorite_v2", "cushion_fresh_v7"]
+    expected = [
+        "fair_value_v0",
+        "cushion_favorite_v2",
+        "cushion_fresh_v7",
+        "fair_value_fresh_v8",
+    ]
     assert list(runner.MODEL_IDS) == expected
     assert runner.SELECTABLE_MODELS == expected
     assert set(runner.CANDIDATE_SIGNALS) == {
         "cushion_favorite_v2",
         "cushion_fresh_v7",
+        "fair_value_fresh_v8",
     }
     for retired in (
         "late_convergence_v3",
