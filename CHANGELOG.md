@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.4.25 — Postmortem: boot heal, fee-true books, ledger reconciled (2026-07-02)
+
+Forensic postmortem of the 06-25 outage and the full trade history (docs/POSTMORTEM_2026-07.md, #132–#138). Venue truth: bot-era PnL **−$17.24** = +$6.27 gross signal − $23.51 taker fees; the books had shown −$8.01/−$3.10 (fee-blind).
+
+- **#132** — boot reconciliation no longer hard-refuses on CLOB-pruned entry orders (the outage): resolved-window rows close as `RECONCILED_STALE_RESOLVED`; unresolved rows adopt the journal's placement match; refusal reserved for genuinely unknowable live risk.
+- **#133** — fee-true booking: the venue's taker fee (`0.07·p·(1−p)`/share, USDC, on the placement-crossed portion) is captured at entry and booked at settlement/exit; ledger row = journal = daily-halt to the cent; fee math shared with the shadow ledger.
+- **#134** — ledger reconciled to venue records (324 corrections, 4 phantoms voided): live closed PnL −$3.10 → −$17.77; stranded position 1768 (won +$2.41, auto-redeemed 30 s after the crash) heals on next boot.
+- Postmortem doc adds the pre-registered restart protocol: shadow-only ≥6 weeks, deploy bar = 95% CI > 0 net of fees; night-gate and selectivity hypotheses formally dead (FDR/permutation/OOS).
+
 ## v0.4.24 — Fix red CI: declare numpy for the regime-attribution tool (2026-06-23)
 
 `tools/regime_attribution.py` (#120) imports numpy, but numpy was declared nowhere — so a clean CI install (`pip install -e .[test]`) couldn't import it, failing **two hard gates**: the test job (`ModuleNotFoundError` collecting `test_regime_attribution.py` → whole suite aborts) and docs-drift (`gen_docs` can't introspect the tool → AGENTS.md/CODE_MAP.md drift). Local/dev venvs had numpy, masking it.
