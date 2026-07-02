@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.4.26 — Roster surgery + race restart (2026-07-02)
+
+Operator mandate: bin the losers, build better candidates (#142, PR #143).
+
+- **Binned** `late_convergence_v3` (favorite-soak trap), `down_skeptic_v4` (IS→OOS rank flip), `cushion_drift_v5` (redundant with v2), `down_skeptic_drift_v6` (worst everywhere). History stays in the ledger; −695 lines of retired signal code.
+- **New challenger `cushion_fresh_v7`** = v2 + first-60s freshness gate (+$88.57 of family profit sat in 0–60s; every later bucket negative) + 0.065 claimed-edge cap (larger claims realized worst). Gates frozen a-priori; the resumed race is the out-of-sample test.
+- **Retired-model heal**: the persisted active model (`down_skeptic_drift_v6`) now falls back to the v0 native path with a loud one-time notification (`_resolve_active_model`).
+- Rejected in recon (not built): both-sides pair-arb (only 2–2.5% of sub-$1 ticks persist one tick — stale-book flickers) and a regression-calibrated EV gate (unidentifiable coefficients).
+- Race restarted 2026-07-02 in **paper mode** on the new roster (v0 control / v2 champion / v7 challenger); stale position 1768 settled organically (+$2.49 gross; next reconcile trues to +$2.41 net).
+
 ## v0.4.25 — Postmortem: boot heal, fee-true books, ledger reconciled (2026-07-02)
 
 Forensic postmortem of the 06-25 outage and the full trade history (docs/POSTMORTEM_2026-07.md, #132–#138). Venue truth: bot-era PnL **−$17.24** = +$6.27 gross signal − $23.51 taker fees; the books had shown −$8.01/−$3.10 (fee-blind).

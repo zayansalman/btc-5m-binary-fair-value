@@ -1,3 +1,20 @@
+# Roster surgery + race restart (#142) (2026-07-02)
+
+Operator escalated: "create new or better strategies, bin the ones that suck, become profitable."
+
+- [x] Design recon: pair-arb REJECTED (2% tick persistence = stale books); EV-regression gate REJECTED (unidentifiable); entry-timing structure FOUND (all family profit in first 60s); edge-cap supported (+4.8¢ vs −1.2¢/share around 0.065)
+- [x] Bin v3/v4/v5/v6 (evidence in #142); roster = v0 control / v2 champion / v7 challenger
+- [x] Build `cushion_fresh_v7` = v2 + ≤60s freshness + 0.065 edge-cap (TDD; gates frozen a-priori)
+- [x] Retired-active-model heal (`_resolve_active_model`, loud one-time notify) — v6 was still persisted
+- [x] PR #143 → develop (720 tests green, ruff clean)
+- [x] Race RESTARTED in paper mode 2026-07-02; 1768 settled organically +$2.49; fallback notification confirmed
+
+## Review
+The profitable path is procedural, not magical: fee-true books (#133), a 3-model race with
+one evidence-motivated challenger, and the pre-registered deploy bar (95% CI > 0 net of
+fees, sign-consistent OOS). v7's two gates are the only levers the frozen data supports;
+everything else tested null or artifactual. Live stays OFF until a model clears the bar.
+
 # Postmortem + EMS repair (#132–#138) (2026-07-02)
 
 Operator declared the project failed; full forensic pass over live/shadow/paper history.
