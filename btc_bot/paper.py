@@ -110,6 +110,45 @@ _reference_cache: dict[int, float] = {}
 _calibrator: _calibration.IsotonicCalibrator | _calibration.IdentityCalibrator | None = None
 
 
+# Retired active-model selections we have already notified about (#142) —
+# one loud notification per model per process, then silent v0 fallback.
+_unknown_model_notified: set[str] = set()
+
+
+async def _resolve_active_model() -> str:
+    """Operator-selected model, with retired selections healed to the default.
+
+    A persisted selection pointing at a model removed from the roster (#142
+    surgery — e.g. ``down_skeptic_drift_v6``) falls back to the v0 native
+    path, LOUDLY, once per model per process, so the operator knows their
+    pick is no longer being traded.
+    """
+    active_model = (
+        await get_config(shadow_runner.ACTIVE_MODEL_KEY, shadow_runner.DEFAULT_MODEL)
+        or shadow_runner.DEFAULT_MODEL
+    )
+    if (
+        active_model == shadow_runner.DEFAULT_MODEL
+        or active_model in shadow_runner.CANDIDATE_SIGNALS
+    ):
+        return active_model
+    if active_model not in _unknown_model_notified:
+        _unknown_model_notified.add(active_model)
+        await notify(
+            "btc_model_fallback",
+            f"Active model '{active_model}' is retired from the roster; "
+            f"trading the {shadow_runner.DEFAULT_MODEL} native path instead. "
+            "Pick a current model in the dashboard.",
+            {"retired_model": active_model},
+        )
+        log.warning(
+            "paper.active_model_retired_fallback",
+            retired_model=active_model,
+            fallback=shadow_runner.DEFAULT_MODEL,
+        )
+    return shadow_runner.DEFAULT_MODEL
+
+
 def _get_calibrator() -> _calibration.IsotonicCalibrator | _calibration.IdentityCalibrator:
     global _calibrator
     if _calibrator is None:
@@ -817,10 +856,7 @@ async def _build_snapshot(client: httpx.AsyncClient) -> PaperSnapshot:
     # signal path below; the other candidates dispatch through the shadow
     # registry. ONLY the side/confidence/reason signal changes — sizing and
     # every downstream risk gate (loss-halt, caps, slippage) are untouched.
-    active_model = (
-        await get_config(shadow_runner.ACTIVE_MODEL_KEY, shadow_runner.DEFAULT_MODEL)
-        or shadow_runner.DEFAULT_MODEL
-    )
+    active_model = await _resolve_active_model()
     edge_override: float | None = None
     if degraded_reason is not None:
         side, confidence, notional = None, 0.0, 0.0
