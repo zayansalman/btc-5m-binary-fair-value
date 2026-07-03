@@ -347,18 +347,55 @@ def _loss_halt_stop_detail(gate: Any, mode: str) -> str | None:
     the bot, flatten, and surface this as LAST DETAIL so the operator knows to
     Reset the tally before pressing Start. Returns None when the gate is absent,
     within the limit, or the operator has the bypass on.
+
+    LIVE mode only (#146): a breached PAPER line never hard-stops the loop —
+    its entries are already blocked per tick by the gate's ``block_reason``,
+    and stopping would also kill the shadow-race recorder and settlement on a
+    line that risks zero capital (which silently froze the race on 07-02).
+    ``_notify_paper_halt_pause`` surfaces the paused state instead.
     """
     if gate is None or not gate.loss_halt_breached():
         return None
-    leg = "live" if gate.is_live else "paper"
+    if mode != "live":
+        return None
     pnl = gate.halt_pnl
     limit = gate.cfg.daily_loss_halt_usd
     # Trailing high-water-mark floor (#112): peak - limit. Cite it (not a fixed
     # -limit), since the halt can fire at a POSITIVE pnl after a banked peak.
     return (
-        f"Daily loss halt: {leg} realized {pnl:+.2f} USD at/below trailing floor "
+        f"Daily loss halt: live realized {pnl:+.2f} USD at/below trailing floor "
         f"{gate.loss_halt_floor:+.2f} (peak {gate.halt_peak:+.2f} − {limit:.2f} limit). "
         "Bot stopped & flattened — Reset the halt, then Start to resume."
+    )
+
+
+# One notification per breach episode (#146); re-arms when the halt clears
+# (daily roll or operator reset) so the next episode notifies again.
+_paper_halt_pause_notified = False
+
+
+async def _notify_paper_halt_pause(gate: Any, mode: str) -> None:
+    """Surface a breached PAPER halt as a pause, not a stop (#146)."""
+    global _paper_halt_pause_notified
+    breached = mode != "live" and gate is not None and gate.loss_halt_breached()
+    if not breached:
+        _paper_halt_pause_notified = False
+        return
+    if _paper_halt_pause_notified:
+        return
+    _paper_halt_pause_notified = True
+    await notify(
+        "btc_paper_halt_pause",
+        f"Paper loss halt hit (realized {gate.halt_pnl:+.2f} at/below trailing "
+        f"floor {gate.loss_halt_floor:+.2f}): paper entries paused until the "
+        "daily window rolls or the halt is reset — the loop keeps running and "
+        "shadow logging continues (#146).",
+        {"halt_pnl": gate.halt_pnl, "floor": gate.loss_halt_floor},
+    )
+    log.warning(
+        "paper_loop.loss_halt_pause",
+        halt_pnl=gate.halt_pnl,
+        floor=gate.loss_halt_floor,
     )
 
 
@@ -448,6 +485,9 @@ async def run_paper_loop(stop_event: threading.Event) -> None:
                 log.warning("paper_loop.loss_halt_stop", detail=stop_detail)
                 await notify("btc_loss_halt_stop", stop_detail)
                 break
+            # Paper breach (#146): entries pause, the loop and the shadow
+            # race keep running — notify once per episode.
+            await _notify_paper_halt_pause(_risk_gate, mode)
             await _sleep_interruptible(stop_event, float(BTC_PAPER_TICK_SECONDS))
     finally:
         if _live_executor is not None:
