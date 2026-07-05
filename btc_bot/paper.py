@@ -114,6 +114,31 @@ _calibrator: _calibration.IsotonicCalibrator | _calibration.IdentityCalibrator |
 # one loud notification per model per process, then silent v0 fallback.
 _unknown_model_notified: set[str] = set()
 
+# --- Loop heartbeat + generation (#147 watchdog) --------------------------
+# The heartbeat is stamped at loop entry and after EVERY iteration (including
+# failed ticks); a stalled age while the bot should be running means the loop
+# is wedged on an unbounded await. The generation counter lets an abandoned
+# (wedged, later un-wedged) loop detect it was superseded so it never clears
+# the new loop's globals or writes state=stopped over a running successor.
+_heartbeat_monotonic: float | None = None
+_loop_generation: int = 0
+
+
+def _beat() -> None:
+    global _heartbeat_monotonic
+    _heartbeat_monotonic = time.monotonic()
+
+
+def heartbeat_age_seconds() -> float:
+    """Seconds since the loop last completed an iteration (inf if never)."""
+    if _heartbeat_monotonic is None:
+        return float("inf")
+    return time.monotonic() - _heartbeat_monotonic
+
+
+def _is_current_generation(my_generation: int) -> bool:
+    return _loop_generation == my_generation
+
 
 async def _resolve_active_model() -> str:
     """Operator-selected model, with retired selections healed to the default.
@@ -407,7 +432,12 @@ async def run_paper_loop(stop_event: threading.Event) -> None:
     LiveExecutor. Live boot refusal stops the loop — it never silently falls
     back to paper.
     """
-    global _live_executor, _chainlink_feed, _risk_gate
+    global _live_executor, _chainlink_feed, _risk_gate, _loop_generation
+    # Watchdog bookkeeping (#147): claim a fresh generation and stamp the
+    # heartbeat before any await, so a stall during startup is also visible.
+    _loop_generation += 1
+    my_generation = _loop_generation
+    _beat()
     # Runtime mode selector (dashboard) overrides the env default; live still
     # passes the same boot gate. Falls back to BTC_BOT_MODE when unset.
     mode = await get_config("btc_bot.requested_mode", _config.BTC_BOT_MODE) or "paper"
@@ -488,8 +518,20 @@ async def run_paper_loop(stop_event: threading.Event) -> None:
             # Paper breach (#146): entries pause, the loop and the shadow
             # race keep running — notify once per episode.
             await _notify_paper_halt_pause(_risk_gate, mode)
+            _beat()  # #147: iteration completed (even a failed tick beats)
             await _sleep_interruptible(stop_event, float(BTC_PAPER_TICK_SECONDS))
     finally:
+        if not _is_current_generation(my_generation):
+            # A watchdog respawn superseded this loop while it was wedged
+            # (#147). Its stop_event is set, so it exits here — but it must
+            # NOT clear the successor's globals or write state=stopped over
+            # a running loop. Only its own local feed gets torn down.
+            log.warning(
+                "paper_loop.superseded_exit", generation=my_generation
+            )
+            feed.stop()
+            feed_task.cancel()
+            return
         if _live_executor is not None:
             # Flatten BEFORE dropping the executor: this thread owns it, so
             # Stop can never paper-close a live position (which would strand
