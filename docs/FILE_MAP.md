@@ -53,7 +53,7 @@ _Status: `WIRED` = has non-test importers; `DEAD?` = no importers found (investi
 | `btc_5m_fv/strategy/fair_value.py` | WIRED | 2 | Fair-value probability and volatility estimation. |
 | `btc_5m_fv/strategy/signal.py` | DEAD? | 0 | Signal composition — bridge raw edge into a fully typed :class:`Signal`. |
 | `btc_5m_fv/strategy/sizing.py` | WIRED | 1 | Position sizing derived from signal confidence and strategy parameters. |
-| `btc_bot/__init__.py` | pkg | 7 | BTC 5-minute paper-trading package. |
+| `btc_bot/__init__.py` | pkg | 8 | BTC 5-minute paper-trading package. |
 | `btc_bot/adaptive.py` | WIRED | 3 | Adaptive risk controller (#36): edge-decay auto-pause + calibration. |
 | `btc_bot/backtest.py` | WIRED | 5 | Backtest and optimize the BTC 5-minute binary strategy on local history. |
 | `btc_bot/calibration.py` | WIRED | 3 | Probability calibration for the side-relative model output (#37). |
