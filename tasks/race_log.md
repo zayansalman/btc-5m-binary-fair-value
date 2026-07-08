@@ -2,6 +2,19 @@
 
 Charter: `tasks/race_loop.md`. Newest entries at top after iteration 0.
 
+## 2026-07-08 22:52 UTC (iteration 1)
+
+- Race: **v7 +$9.71/n53 (Δ+$0.00/Δ0 — ZERO new data since it0)** · v8 +$4.04/n125 · v2 +$6.39/n150 · v0 −$10.94/n242. v7 two-sided: Down +$4.46 n=23 WR=0.609, Up +$5.25 n=30 WR=0.600 ✔
+- Deploy bar: v7 mean $0.183/trade (sd $2.47) → needs **~696 trades ≈ 78 days** at 9/day; already have 53 → still need ~643.
+- Live book: **unchanged at −$19.35/351** (no new real-money trades since trailing halt 07-07 06:40). Bot state: mode=PAPER, state=**STOPPED** as of 07-08 16:51 UTC. Last tick: 07-07 06:40. **⚠️ RACE HAS NOT ACCRUED A SINGLE WINDOW IN 36h — OPERATOR MUST RESTART PAPER BOT FROM DASHBOARD.**
+- Health: no new data, no new notifications, bot stopped gracefully; feed/quote sources unchanged.
+- **Advanced: #149 (pre-registered v7 variant replay — H1 & H2 both confirmed)**
+  - H1 `cushion_fresh_v7_f45` (≤45s): OOS CI **[+0.275, +0.887]**, mean +$0.58 vs current v7 +$0.35 → 66% lift; deploy bar collapses to ~56 trades ≈ 6 days. OOS CI lower bound 3.4× tighter.
+  - H2 `cushion_fresh_v7_f45_spread` (f45 + spread≤1c): OOS CI [+0.233, +0.857]; marginal vs f45 alone; deferred until f45 has ≥50 race trades.
+  - Shipped: `cushion_fresh_v7_f45` + `cushion_fresh_v7_f45_spread` in `signals.py`; `up_bid`/`down_bid` optional fields in `SnapshotView` (None in all production paths); replay grid extended; 12 new tests (753 total green). PR #152 merged to develop (`5c604c5`).
+  - **Operator action needed**: add `cushion_fresh_v7_f45` to the shadow roster (edit `btc_bot/shadow/runner.py`) so it starts accumulating race-era data alongside the existing v7. This does NOT modify the racing v7 spec and does NOT reset the existing race clock. The deploy bar for f45 starts fresh from 0.
+- Next: iteration 2 → assess (including f45 delta once bot restarts) → #150 (race_status.py CLI tool).
+
 ## 2026-07-07 06:55 UTC (iteration 0 — baseline, manual session)
 
 - Race (common start 07-02 14:50, fee-true, settled): **v7 +$9.71/n53** (mean +$0.18, t≈0.54,
