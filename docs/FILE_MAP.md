@@ -72,7 +72,7 @@ _Status: `WIRED` = has non-test importers; `DEAD?` = no importers found (investi
 | `btc_bot/shadow/signals.py` | WIRED | 2 | Candidate strategies for the shadow forward-tester. |
 | `btc_bot/shadow/types.py` | WIRED | 4 | Shared data contracts for the shadow forward-tester. |
 | `btc_bot/strategy.py` | WIRED | 6 | Shared BTC 5-minute binary strategy math. |
-| `config.py` | WIRED | 24 | Configuration for the local BTC 5-minute binary fair-value strategy lab. |
+| `config.py` | WIRED | 25 | Configuration for the local BTC 5-minute binary fair-value strategy lab. |
 | `dashboard.py` | WIRED | 1 | Local Gradio dashboard for BTC 5-minute paper trading. |
 | `db.py` | WIRED | 13 | SQLite storage for the BTC 5-minute binary fair-value strategy lab. |
 | `logging_setup.py` | WIRED | 9 | Structured JSON logging with structlog. Module + trade_id context. |
@@ -87,6 +87,7 @@ _Status: `WIRED` = has non-test importers; `DEAD?` = no importers found (investi
 | `tools/live_preflight.py` | cli | 0 | Live-launch preflight: verify the .env wallet config end to end (issue #32). |
 | `tools/live_setup.py` | cli | 0 | One-time live-trading onboarding (issues #32, #33). |
 | `tools/offline_replay.py` | cli | 0 | Offline replay of the BTC 5-m fair-value strategy on HF Polymarket data. |
+| `tools/race_status.py` | cli | 0 | One-shot fee-true race standings + deploy-bar tracker (issue #150). |
 | `tools/reconcile_live_ledger.py` | cli | 0 | Reconcile the live paper-ledger against the REAL Polymarket account (issue #102). |
 | `tools/regime_attribution.py` | cli | 0 | Regime-attribution instrument for the shadow forward-tester (issue #120). |
 | `tools/replay_race.py` | cli | 0 | Tick-replay backtest for the shadow roster over the FULL quote history (#144). |
