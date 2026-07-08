@@ -161,6 +161,10 @@ def _view_from_tick(t: sqlite3.Row) -> SnapshotView:
         feed_source="replay",
         quote_source="replay",
         drift_per_second=None,
+        # Bid quotes populated here for spread-guard evaluation (#149).
+        # None in all live/paper/shadow paths — zero production impact.
+        up_bid=float(t["up_best_bid"]) if t["up_best_bid"] is not None else None,
+        down_bid=float(t["down_best_bid"]) if t["down_best_bid"] is not None else None,
     )
 
 
@@ -285,6 +289,10 @@ def main() -> None:
 
     if args.grid:
         print("\n=== v7 FRAGILITY GRID (params must sit on a plateau, not a spike) ===")
+        from btc_bot.shadow.signals import (  # noqa: E402
+            cushion_fresh_v7_f45,
+            cushion_fresh_v7_f45_spread,
+        )
         grid_models: dict[str, Callable] = {}
         for fresh in (45, 60, 90):
             for cap in (0.06, 0.065, 0.07):
@@ -302,6 +310,11 @@ def main() -> None:
         grid_models["v2+fresh60(no cap)"] = lambda v, p: cushion_fresh_v7(
             v, p, max_age_seconds=60, edge_cap=1.0
         )
+        # Pre-registered hypotheses from issue #149 (day-5 race observation):
+        # H1: tighten freshness to ≤45s (46–60s bucket negative in both fresh models)
+        # H2: add spread guard ≤1 tick (all ≥2-tick spread entries negative in every model)
+        grid_models["v7_f45[#149-H1]"] = cushion_fresh_v7_f45
+        grid_models["v7_f45_spread1c[#149-H2]"] = cushion_fresh_v7_f45_spread
         gtrades = replay(ticks, outcomes, grid_models, params)
         summarize([t for t in gtrades if t.created_at < args.split], "grid · PRE-RACE (OOS)")
         summarize([t for t in gtrades if t.created_at >= args.split], "grid · RACE ERA (IS)")

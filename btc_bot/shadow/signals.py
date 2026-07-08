@@ -17,6 +17,13 @@ verbatim rather than reimplemented:
   a hair-thin lead near a pinned price does not count as a real cushion.
 * :func:`cushion_fresh_v7` — v2 restricted to the first 60s of the window
   with claimed edges capped at 0.065 (postmortem-motivated challenger, #142).
+* :func:`cushion_fresh_v7_f45` — v7 with the freshness gate tightened to 45s
+  (pre-registered in #149 from day-5 race observation that 46–60s bucket is
+  negative in both fresh models; evaluated by the tick-replay harness only).
+* :func:`cushion_fresh_v7_f45_spread` — v7[f45] with an additional bid-ask
+  spread guard: entry only when the chosen side's spread ≤ 1 tick (≤ $0.01).
+  Requires ``view.up_bid`` / ``view.down_bid`` populated (replay-harness only;
+  returns None when bid is absent, so safe in all other paths).
 
 Retired 2026-07-02 (#142; see docs/POSTMORTEM_2026-07.md): late_convergence_v3,
 down_skeptic_v4, cushion_drift_v5, down_skeptic_drift_v6.
@@ -135,6 +142,86 @@ def cushion_fresh_v7(
         edge=base.edge,
         confidence=base.confidence,
         reason=f"fresh {window_age:.0f}s; {base.reason}",
+    )
+
+
+def cushion_fresh_v7_f45(
+    view: SnapshotView,
+    params: strategy.StrategyParams,
+    cushion_min_bps: float = 1.5,
+    edge_cap: float = 0.065,
+) -> ShadowSignal | None:
+    """``cushion_fresh_v7`` with the freshness gate tightened to ≤ 45 seconds.
+
+    Pre-registered for replay evaluation in issue #149: the day-5 race
+    observation is that both fresh models (v7 and v8) lose money in their
+    46–60s freshness bucket (v7: −$4.42 on n=21; v8: −$4.80 on n=34) while
+    the 16–45s bucket carries the positive PnL. This variant tests whether
+    removing the 46–60s tail improves fee-true mean/trade on the FULL tick
+    history and the pre-race OOS segment.
+
+    This is a replay-only evaluation gate. Do NOT add it to the live shadow
+    runner until it clears the pre-registered decision rule in #149.
+    """
+    return cushion_fresh_v7(
+        view, params, cushion_min_bps=cushion_min_bps,
+        max_age_seconds=45, edge_cap=edge_cap,
+    )
+
+
+def cushion_fresh_v7_f45_spread(
+    view: SnapshotView,
+    params: strategy.StrategyParams,
+    cushion_min_bps: float = 1.5,
+    edge_cap: float = 0.065,
+    max_spread: float = 0.01,
+) -> ShadowSignal | None:
+    """``cushion_fresh_v7_f45`` with an additional spread guard (≤ 1 tick).
+
+    Pre-registered for replay evaluation in issue #149: every ≥ 2-tick
+    (≥ $0.02) spread entry is negative across all four race models (pooled
+    ≈ −$22 on 21 entries). This variant tests whether gateing on a tight
+    spread (``up_ask − up_bid ≤ max_spread`` for Up, same for Down) removes
+    that negative-EV tail without reducing fee-true mean/trade.
+
+    Requires ``view.up_bid`` / ``view.down_bid`` to be non-None. When bid
+    quotes are absent (all live, paper, and shadow paths where only the ask
+    is carried), the function returns ``None`` — this is intentional: the
+    gate only makes sense when the full book is available.
+
+    This is a replay-only evaluation gate. Do NOT add it to the live shadow
+    runner until it clears the pre-registered decision rule in #149.
+    """
+    base = cushion_fresh_v7_f45(
+        view, params, cushion_min_bps=cushion_min_bps, edge_cap=edge_cap,
+    )
+    if base is None:
+        return None
+
+    if base.side == "Up":
+        bid = view.up_bid
+        ask = view.up_ask
+    else:
+        bid = view.down_bid
+        ask = view.down_ask
+
+    if bid is None or ask is None:
+        return None
+
+    # Round to 6dp to absorb floating-point error in ask−bid differences
+    # (Polymarket book prices are at most 3dp, so round-trip through floats
+    # can inflate a nominal 0.01 spread to 0.010000000000000009).
+    spread = round(ask - bid, 6)
+    if spread > max_spread:
+        return None
+
+    return ShadowSignal(
+        side=base.side,
+        entry_price=base.entry_price,
+        fair_prob=base.fair_prob,
+        edge=base.edge,
+        confidence=base.confidence,
+        reason=f"spread {spread:.2f}; {base.reason}",
     )
 
 
