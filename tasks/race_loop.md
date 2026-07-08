@@ -31,14 +31,16 @@ interference** with the running bot or the race's integrity.
 
 ## 2. Iteration procedure
 
-A. **Assess** (always): snapshot ledger → standings per model (n, total, mean/trade, 95% CI,
-   WR vs fee breakeven `p + 0.07·p·(1−p)`, maxDD), delta since last log entry, live book
-   (should be static — any change means the operator traded), bot state/mode/heartbeat
-   (`config` + `notification_feed` tables), feed_source mix, deploy-bar tracker: required n and
-   ETA for CI>0 at current point estimate. Once #150 ships, this is `tools/race_status.py`.
-B. **Develop** (one item per iteration, in order): #149 (pre-registered v7 variants replay) →
-   #150 (race_status tool) → #151 (feed label) → then whatever the backlog holds; file new
-   issues before working, speculative ideas as `[P2]`.
+A. **Assess** (always): run `.venv/bin/python tools/race_status.py` (SHIPPED #150, f0333f0) —
+   it immutable-snapshots the ledger and prints per-model standings (n, total, mean/trade,
+   z-CI + bootstrap CI, WR vs fee breakeven `p + 0.07·p·(1−p)`, maxDD, today delta), the live
+   book, bot state/mode/heartbeat, and the deploy-bar tracker (required n + ETA to CI>0). Add
+   `--json` for machine parsing. Then eyeball `notification_feed` for any operator activity and
+   note the delta vs the last log entry. (Only drop to ad-hoc SQL for a cut the tool doesn't
+   surface, e.g. per-side attribution or freshness slices.)
+B. **Develop** (one item per iteration, in order): ~~#149~~ ✔ → ~~#150~~ ✔ → **#151 (feed
+   label)** → then whatever the backlog holds; file new issues before working, speculative
+   ideas as `[P2]`.
 C. **Log**: append a dated entry to `tasks/race_log.md` (format below), commit both docs to
    `develop`, push.
 

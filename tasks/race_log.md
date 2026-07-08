@@ -2,6 +2,16 @@
 
 Charter: `tasks/race_loop.md`. Newest entries at top after iteration 0.
 
+## 2026-07-09 (iteration 2)
+
+- Race: **v7 +$9.71/n53 (Δ+$0.00/Δ0 — STILL ZERO new data)** · v2 +$6.39/n150 · v8 +$4.04/n125 · v0 −$10.94/n242. Standings byte-identical to it1.
+- Deploy bar (v7): mean $0.1833/trade (sd $2.47), z-CI [−0.480, +0.847], boot95 [−0.478, +0.839]; needs ~696 trades → **~71 days more** at 9/day. Unchanged.
+- Live book: **−$19.35/351 (Δ$0)**. Bot: mode=PAPER, **state=STOPPED** since 07-08 16:51 UTC; last tick 07-07 06:40. **⚠️ RACE FROZEN ~2.6 DAYS — no notifications since it1, bot never restarted, f45 never added to roster. The loop is producing nothing. OPERATOR MUST PRESS START (paper) on the dashboard.**
+- Health: no data movement to flag; ledger integrity OK; no operator activity in the feed.
+- **Advanced: #150 SHIPPED — `tools/race_status.py`** (PR #153, `f0333f0`). One-shot read-only assessment CLI: immutable-snapshot → per-model standings (z-CI + bootstrap), live book, bot state/heartbeat, deploy-bar tracker; `--json` mode. Reproduces the hand-derived it1 standings exactly. 15 new tests, **768 total green** (DB-isolated). Charter §2A now runs this tool; §2B next = #151 (feed label).
+- Verdict check (§4): none met — v7 positive at n=53 (<150 kill floor); #149 replay OOS-confirmed CI>0; 8-wk sunset ~08-27. Cron created 07-07, expires ~07-14 — not within 36h, no re-arm.
+- Next: iteration 3 → assess via race_status.py → **#151 (fix stale "Binance public fallback" feed label)**. NB two operator actions still outstanding: (1) restart paper bot, (2) decide whether to add `cushion_fresh_v7_f45` to the shadow roster.
+
 ## 2026-07-08 22:52 UTC (iteration 1)
 
 - Race: **v7 +$9.71/n53 (Δ+$0.00/Δ0 — ZERO new data since it0)** · v8 +$4.04/n125 · v2 +$6.39/n150 · v0 −$10.94/n242. v7 two-sided: Down +$4.46 n=23 WR=0.609, Up +$5.25 n=30 WR=0.600 ✔
