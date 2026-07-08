@@ -55,6 +55,11 @@ class SnapshotView:
     feed_source: str
     quote_source: str
     drift_per_second: float | None = None
+    # Optional bid quotes — populated by the tick-replay harness (tools/replay_race.py)
+    # for spread-guard signal evaluation; None in all live/paper/shadow paths, which
+    # avoids any production-behaviour change while enabling replay-only gate testing.
+    up_bid: float | None = None
+    down_bid: float | None = None
 
 
 @dataclass(frozen=True)

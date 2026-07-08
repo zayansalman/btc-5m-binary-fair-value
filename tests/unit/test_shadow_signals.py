@@ -24,6 +24,8 @@ from btc_bot import strategy
 from btc_bot.shadow.signals import (
     cushion_favorite_v2,
     cushion_fresh_v7,
+    cushion_fresh_v7_f45,
+    cushion_fresh_v7_f45_spread,
     fair_value_fresh_v8,
 )
 from btc_bot.shadow.types import ShadowSignal, SnapshotView
@@ -258,3 +260,129 @@ class TestDriftPerSecond:
         closes = [100.0, 102.0, 101.0]
         expected = (math.log(102.0 / 100.0) + math.log(101.0 / 102.0)) / 2
         assert strategy.drift_per_second(closes) == pytest.approx(expected)
+
+
+# ---------------------------------------------------------------------------
+# cushion_fresh_v7_f45  (#149 — replay-only, freshness ≤ 45s)
+# ---------------------------------------------------------------------------
+
+
+def _view_with_bids(**overrides: object) -> SnapshotView:
+    """Base view with bid quotes populated (replay context).
+
+    Default bids produce a half-tick spread (ask − bid = 0.005) to avoid
+    floating-point boundary issues in the ≤ 0.01 spread guard. Tests that
+    want a wider spread pass a lower bid explicitly.
+    """
+    base: dict[str, object] = dict(
+        window_slug="btc-5m-2026-07-08T10:00",
+        remaining_seconds=260,   # 40s into window → fresh for ≤45s gate
+        spot=50000.0,
+        reference=49980.0,       # 4 bps cushion → Up signal
+        up_ask=0.55,
+        down_ask=0.46,
+        market_up_price=0.55,
+        fair_up=0.61,            # edge 0.06, inside edge_cap 0.065
+        sigma_per_second=0.0003,
+        feed_source="replay",
+        quote_source="replay",
+        up_bid=0.545,            # 0.005 spread on Up — clearly ≤ 1 tick (0.01)
+        down_bid=0.455,          # 0.005 spread on Down
+    )
+    base.update(overrides)
+    return SnapshotView(**base)  # type: ignore[arg-type]
+
+
+class TestCushionFreshV7F45:
+    """Pre-registered freshness=45s variant (#149 — H1)."""
+
+    def test_fires_when_40s_into_window(self, params: strategy.StrategyParams) -> None:
+        """40s elapsed (≤ 45s gate) → v7_f45 fires."""
+        view = _view_with_bids(remaining_seconds=260)
+        sig = cushion_fresh_v7_f45(view, params)
+        assert isinstance(sig, ShadowSignal)
+        assert sig.side == "Up"
+        assert "fresh 40s" in sig.reason
+
+    def test_none_when_46s_into_window(self, params: strategy.StrategyParams) -> None:
+        """46s elapsed (> 45s gate, still ≤ 60s v7 spec) → None."""
+        view = _view_with_bids(remaining_seconds=254)  # 300-254=46
+        assert cushion_fresh_v7(view, params) is not None   # original v7 still fires
+        assert cushion_fresh_v7_f45(view, params) is None   # tighter gate blocks it
+
+    def test_none_when_180s_into_window(self, params: strategy.StrategyParams) -> None:
+        """Well beyond the gate → None."""
+        view = _view_with_bids(remaining_seconds=120)
+        assert cushion_fresh_v7_f45(view, params) is None
+
+    def test_none_when_cushion_too_thin(self, params: strategy.StrategyParams) -> None:
+        """Inherits v2's cushion guard — thin gap is rejected."""
+        view = _view_with_bids(remaining_seconds=260, reference=49999.0)
+        assert cushion_fresh_v7_f45(view, params) is None
+
+    def test_none_when_edge_above_cap(self, params: strategy.StrategyParams) -> None:
+        """Edge 0.07 > 0.065 cap → rejected, same as v7."""
+        view = _view_with_bids(remaining_seconds=260, fair_up=0.62)
+        assert cushion_fresh_v7_f45(view, params) is None
+
+
+# ---------------------------------------------------------------------------
+# cushion_fresh_v7_f45_spread  (#149 — replay-only, f45 + spread ≤ 1 tick)
+# ---------------------------------------------------------------------------
+
+
+class TestCushionFreshV7F45Spread:
+    """Pre-registered spread-guard variant (#149 — H2)."""
+
+    def test_fires_when_spread_tight(
+        self, params: strategy.StrategyParams
+    ) -> None:
+        """Spread 0.005 (half-tick) ≤ max_spread 0.01 → fires."""
+        view = _view_with_bids()   # default: up_bid=0.545, spread=0.005
+        sig = cushion_fresh_v7_f45_spread(view, params)
+        assert isinstance(sig, ShadowSignal)
+        assert sig.side == "Up"
+        assert "spread" in sig.reason
+
+    def test_fires_when_spread_exactly_one_tick(
+        self, params: strategy.StrategyParams
+    ) -> None:
+        """Spread exactly at the 0.01 boundary → fires (≤ not <)."""
+        # Use bid = ask − 0.01 via carefully chosen values to avoid fp error.
+        # up_ask=0.55, up_bid=0.54 → 0.55−0.54 = 0.010000...009 in raw float,
+        # but the signal rounds to 6dp so it sees 0.01 ≤ 0.01 → passes.
+        view = _view_with_bids(up_bid=0.54)
+        sig = cushion_fresh_v7_f45_spread(view, params)
+        assert isinstance(sig, ShadowSignal)
+
+    def test_none_when_spread_is_two_ticks(
+        self, params: strategy.StrategyParams
+    ) -> None:
+        """2-tick spread (0.02) > max_spread=0.01 → None."""
+        view = _view_with_bids(up_bid=0.53)   # spread = 0.55 - 0.53 = 0.02
+        assert cushion_fresh_v7_f45(view, params) is not None   # f45 still fires
+        assert cushion_fresh_v7_f45_spread(view, params) is None
+
+    def test_none_when_bid_absent(self, params: strategy.StrategyParams) -> None:
+        """No bid quote (live/paper/shadow path) → None (safe fallback)."""
+        view = _view_with_bids(up_bid=None)
+        assert cushion_fresh_v7_f45_spread(view, params) is None
+
+    def test_none_when_stale_window(self, params: strategy.StrategyParams) -> None:
+        """Spread guard doesn't rescue a stale window (f45 blocks first)."""
+        view = _view_with_bids(remaining_seconds=254, up_bid=0.54)  # 46s elapsed
+        assert cushion_fresh_v7_f45_spread(view, params) is None
+
+    def test_none_when_cushion_too_thin(self, params: strategy.StrategyParams) -> None:
+        """Inherits v2 cushion guard — thin gap still blocked."""
+        view = _view_with_bids(reference=49999.0, up_bid=0.54)
+        assert cushion_fresh_v7_f45_spread(view, params) is None
+
+    def test_reason_chain_present(self, params: strategy.StrategyParams) -> None:
+        """Reason string chains: spread → fresh → cushion → v0 entry."""
+        view = _view_with_bids()
+        sig = cushion_fresh_v7_f45_spread(view, params)
+        assert sig is not None
+        # All three guard layers must be mentioned in order.
+        assert sig.reason.index("spread") < sig.reason.index("fresh")
+        assert sig.reason.index("fresh") < sig.reason.index("cushion")
