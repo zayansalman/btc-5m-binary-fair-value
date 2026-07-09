@@ -38,9 +38,11 @@ A. **Assess** (always): run `.venv/bin/python tools/race_status.py` (SHIPPED #15
    `--json` for machine parsing. Then eyeball `notification_feed` for any operator activity and
    note the delta vs the last log entry. (Only drop to ad-hoc SQL for a cut the tool doesn't
    surface, e.g. per-side attribution or freshness slices.)
-B. **Develop** (one item per iteration, in order): ~~#149~~ ✔ → ~~#150~~ ✔ → **#151 (feed
-   label)** → then whatever the backlog holds; file new issues before working, speculative
-   ideas as `[P2]`.
+B. **Develop** (one item per iteration, in order): ~~#149~~ ✔ → ~~#150~~ ✔ → ~~#151~~ ✔ →
+   next candidates: **#155 (add f45 to shadow roster — OPERATOR-GATED, agent preps only)**,
+   #138 (notify on silent bot stop — addresses the uptime risk), #122 (log spot/ref/sigma/drift
+   on shadow rows → unlock regime axes). File new issues before working, speculative ideas as
+   `[P2]`. Anything that changes the running roster or lifecycle is recommend-only.
 C. **Log**: append a dated entry to `tasks/race_log.md` (format below), commit both docs to
    `develop`, push.
 

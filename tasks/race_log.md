@@ -2,6 +2,18 @@
 
 Charter: `tasks/race_loop.md`. Newest entries at top after iteration 0.
 
+## 2026-07-09 00:53 UTC (iteration 3)
+
+- **RACE ACCRUING AGAIN** — operator restarted paper bot 07-08 22:04:53 UTC; ~2.8h of fresh data. Bot healthy, ticking every 5s, last tick 00:53:29.
+- Race (settled, fee-true): **v7 +$8.99/n55 (Δ −$0.72/+2)** · v8 +$19.15/n134 (Δ +$15.11/+9) · v2 +$3.75/n158 (Δ −$2.64/+8) · v0 +$4.96/n258 (Δ +$15.90/+16). v7 still two-sided +ve (Down +0.272/n24, Up +0.079/n31).
+- New-data decomposition (charter §7 — small sample, treat as noise): 07-08 22:04→24:00 mixed (v8 +8.68/6 hot, v2 −6.4/4 cold); 07-09 00:00–00:53 everyone green but only 7 windows. **9 v8 trades and 16 v0 trades is noise — do NOT re-rank off a ~3h run.** v8's climb to #2-by-mean is worth watching, not concluding.
+- Deploy bar (v7): mean $0.1635 (sd $2.47), z-CI [−0.488, +0.815], boot95 [−0.473, +0.795]; needs ~875 trades → **~91 days** at 9/day (receded slightly as mean dipped). Nothing clears — all four CIs straddle 0.
+- Live book: **−$19.35/351 (Δ$0)** — live still OFF, correct. Bot: mode=paper, state=running, accruing=YES.
+- Health flags: (1) stale OPEN rows for retired models `fair_value_v1` (n10), `fair_value_v1.1` (n2) + v0 (n11) predate the restart — excluded from settled standings, pre-existing cruft, candidate cleanup (not filed, low value). (2) Feed on new ticks: 1067 fully chainlink_ws, 479 chainlink_rest_poll (WS flaps to REST poll) + binance vol-shape — settlement-aligned throughout.
+- **Advanced: #151 SHIPPED** (PR #154, `1b1fd1f`) — status panel now renders real per-component feed sources with a settlement qualifier instead of the false "Binance public fallback" string; 8 tests, 776 total green. **Filed #155** (add f45 to shadow roster — operator-gated, agent preps only). Charter §2B: all 3 original items done; next = #155/#138/#122.
+- Verdict check (§4): none met — v7 +ve at n=55 (<150 kill floor); #149 OOS-confirmed; sunset ~08-27. Cron created 07-07, expires ~07-14 — >36h out, no re-arm.
+- Next: iteration 4 → assess → #138 (notify on silent bot stop; addresses the 40h-dark uptime risk) unless operator approves #155 first.
+
 ## 2026-07-09 (iteration 2)
 
 - Race: **v7 +$9.71/n53 (Δ+$0.00/Δ0 — STILL ZERO new data)** · v2 +$6.39/n150 · v8 +$4.04/n125 · v0 −$10.94/n242. Standings byte-identical to it1.
