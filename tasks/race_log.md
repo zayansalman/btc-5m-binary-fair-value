@@ -2,6 +2,17 @@
 
 Charter: `tasks/race_loop.md`. Newest entries at top after iteration 0.
 
+## 2026-07-09 13:07 UTC (iteration 4)
+
+- Race (settled, fee-true; Δ since it3 00:53): **v8 +$20.93/n155 (Δ +$1.78/+21)** now leader · v7 +$1.20/n63 (Δ **−$7.79**/+8 — collapsed) · v0 +$2.25/n295 (Δ −$2.71/+37) · v2 −$3.60/n180 (Δ −$7.35/+22, now NEGATIVE).
+- **The story: everything is regressing toward zero.** v7 fell from leader (+$0.164 it3) to +$0.019 as n grew — textbook regression of a lucky small sample; its **Up leg has gone negative (−$0.114/n35)**, so it's no longer two-sided +ve. v8 is now the only cleanly two-sided model (Down +$0.087/n79, Up +$0.185/n76) but at +$0.135 its CI [−0.253, +0.523] still straddles 0. Do NOT crown v8 — n=155, unproven.
+- Deploy bar (leader v8): mean $0.135 (sd $2.47), z-CI [−0.253, +0.523], boot95 [−0.261, +0.518]; needs ~1283 trades → **~125 days**. Nothing clears; all four CIs straddle 0.
+- Live book: **−$19.35/351 (Δ$0)** — live OFF, correct. Bot: mode=paper, state=running, accruing=YES; loop healthy (10 ticks/20min). Primary paper strat quiet since 05:20 (9 trades today, −$4.95) — NOT auto-paused (auto_paused=0), just correctly skipping edges outside its [0.045,0.07] band (current tick edge +0.142 → SKIP). Benign.
+- Health flags: (1) running bot still shows old "Binance fallback" feed string — it predates the #151 merge; fix goes live on next restart (deployment lag, not a bug). (2) **#155 NOT approved** — f45 still absent from roster (0 rows). (3) stale open rows (v1/v1.1) persist — pre-existing cruft.
+- **Advanced: #138 SHIPPED** (PR #156, `ac542a3`) — get_status() now emits one `btc_silent_stop` notification per silent death (with last-heartbeat time) instead of silently healing the stale 'running' row; complements #147. Pure `is_silent_stop()` helper; 9 tests, **785 total green**. Directly attacks the 40h-dark uptime risk.
+- Verdict check (§4): none met — v7 +$0.019 at n=63 (not <0, not n≥150); v8 unproven; #149 OOS-confirmed; sunset ~08-27. **v7 KILL-WATCH: if it crosses negative AND reaches n≥150, §4 triggers a kill rec.** Cron created 07-07, expires ~07-14 — >36h out, no re-arm.
+- Next: iteration 5 → assess → #122 (log spot/ref/sigma/drift on shadow rows → regime axes) unless operator approves #155. Two operator actions still pending: approve f45 (#155), restart to pick up #151/#138 fixes.
+
 ## 2026-07-09 00:53 UTC (iteration 3)
 
 - **RACE ACCRUING AGAIN** — operator restarted paper bot 07-08 22:04:53 UTC; ~2.8h of fresh data. Bot healthy, ticking every 5s, last tick 00:53:29.
