@@ -117,6 +117,12 @@ _MODELS: dict[
     "cushion_favorite_v2": signals.cushion_favorite_v2,
     "cushion_fresh_v7": signals.cushion_fresh_v7,
     "fair_value_fresh_v8": signals.fair_value_fresh_v8,
+    # Added #155 on the #149 replay evidence (OOS CI [+0.275, +0.887] vs v7's
+    # [+0.080, +0.624]): v7 with the freshness gate tightened 60s→45s, the
+    # 46–60s bucket having been fee-true negative for both fresh models.
+    # Shadow-only, additive — the racing specs v0/v2/v7/v8 are untouched, so the
+    # ablation stays intact; f45's own clock starts from the next loop restart.
+    "cushion_fresh_v7_f45": signals.cushion_fresh_v7_f45,
 }
 
 
@@ -138,6 +144,7 @@ SELECTABLE_MODELS: list[str] = [
     "cushion_favorite_v2",
     "cushion_fresh_v7",
     "fair_value_fresh_v8",
+    "cushion_fresh_v7_f45",
 ]
 
 # Labels carry the model's version tag (vN) so the dashboard dropdown maps 1:1
@@ -150,12 +157,14 @@ MODEL_LABELS: dict[str, str] = {
     "cushion_favorite_v2": "Cushion Favorite (v2)",
     "cushion_fresh_v7": "Cushion · Fresh+Capped (v7)",
     "fair_value_fresh_v8": "Fair-Value · Fresh (v8)",
+    "cushion_fresh_v7_f45": "Cushion · Fresh≤45s+Capped (v7·f45)",
 }
 MODEL_DESCRIPTIONS: dict[str, str] = {
     "fair_value_v0": "v0 baseline · edge 0.045–0.07 · favorites ≥0.50 · hold→resolution",
     "cushion_favorite_v2": "v0 + cushion: spot clearly on the favoured side of the strike",
     "cushion_fresh_v7": "v2 + first-60s windows only + edge claims capped at 0.065 (adverse-selection guard)",
     "fair_value_fresh_v8": "v0 in the first 60s of the window only — the freshness gate alone (#144 replay evidence)",
+    "cushion_fresh_v7_f45": "v7 with the freshness gate tightened to ≤45s (#149 replay: 46–60s bucket was fee-negative)",
 }
 
 # Candidate signal fns for the LIVE dispatch. v0 is intentionally absent — it
@@ -166,6 +175,7 @@ CANDIDATE_SIGNALS: dict[
     "cushion_favorite_v2": signals.cushion_favorite_v2,
     "cushion_fresh_v7": signals.cushion_fresh_v7,
     "fair_value_fresh_v8": signals.fair_value_fresh_v8,
+    "cushion_fresh_v7_f45": signals.cushion_fresh_v7_f45,
 }
 
 
