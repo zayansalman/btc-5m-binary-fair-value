@@ -47,6 +47,17 @@ _desired_running = False
 _mode_cache = "paper"
 _live_stall_notified = False
 
+# --- Silent-stop detector (#138) -------------------------------------------
+# Complements the #147 watchdog. The watchdog catches a WEDGED loop (thread
+# alive, heartbeat stale) and respawns/notifies. It cannot catch a loop or
+# whole process that DIES: a dead in-process watchdog notifies no one, and the
+# persisted state is left reading "running" with no stop event ever written
+# (the exact 06-24 incident in this issue). get_status() already self-heals
+# that stale "running" row to "stopped" — but did so SILENTLY. This flag makes
+# it emit exactly one notification per silent death so the operator learns the
+# bot went down instead of staring at a frozen dashboard.
+_silent_stop_notified = False
+
 
 def watchdog_verdict(
     desired_running: bool,
@@ -58,6 +69,18 @@ def watchdog_verdict(
     if not desired_running or heartbeat_age <= threshold:
         return "ok"
     return "notify" if mode == "live" else "restart"
+
+
+def is_silent_stop(prior_state: str, runner_alive: bool) -> bool:
+    """The silent-death signature (#138): the persisted state says the loop is
+    running, yet no runner thread is alive in THIS process.
+
+    True means the loop (or a prior process hosting it) died without an
+    operator stop, so no 'stopped' event was ever journaled. Distinct from the
+    #147 watchdog's wedge case, where the thread is still alive but not
+    heartbeating.
+    """
+    return prior_state == "running" and not runner_alive
 
 
 @dataclass
@@ -92,6 +115,7 @@ def _is_runner_alive() -> bool:
 
 async def get_status() -> BtcBotStatus:
     """Return current BTC controller status."""
+    global _silent_stop_notified
     state = await get_config("btc_bot.state", "stopped")
     mode = await get_config("btc_bot.mode", BTC_BOT_MODE)
     updated_at = await get_config("btc_bot.updated_at")
@@ -100,14 +124,31 @@ async def get_status() -> BtcBotStatus:
     # State derives from the actual runner thread, not the stored row alone
     # (issue #23): a display that can read STOPPED while the loop places
     # orders makes the operator's kill decision unreliable — and vice versa.
-    if state == "running" and not _is_runner_alive():
+    runner_alive = _is_runner_alive()
+    if is_silent_stop(state, runner_alive):
+        # #138: self-heal the stale row AND alert once — a silent death must
+        # not look identical to an idle dashboard.
+        if not _silent_stop_notified:
+            _silent_stop_notified = True
+            log.error("btc.silent_stop_detected", last_heartbeat=updated_at)
+            await notify(
+                "btc_silent_stop",
+                "Detected silent bot stop: the loop is not running but the "
+                f"saved state was 'running' (last heartbeat {updated_at or 'unknown'}). "
+                "No operator stop was recorded — the loop or process died "
+                "unexpectedly. Press Start to resume (#138).",
+                {"last_heartbeat": updated_at, "mode": mode},
+            )
         state = "stopped"
         detail = "BTC bot loop is not running in this process. Press Start to restart."
         await set_config("btc_bot.state", state)
         await set_config("btc_bot.detail", detail)
-    elif state != "running" and _is_runner_alive():
+    elif state != "running" and runner_alive:
         state = "running"
         await set_config("btc_bot.state", state)
+    if runner_alive:
+        # A confirmed-healthy loop re-arms the detector for the next death.
+        _silent_stop_notified = False
 
     return BtcBotStatus(
         state=state or "stopped",
@@ -166,9 +207,10 @@ async def request_start() -> BtcBotStatus:
             await set_config("btc_bot.detail", detail)
             log.error("btc.live_start_refused", error=detail)
             return await get_status()
-    global _desired_running, _mode_cache
+    global _desired_running, _mode_cache, _silent_stop_notified
     _desired_running = True
     _mode_cache = mode
+    _silent_stop_notified = False  # #138: re-arm on every legitimate start
     _paper._beat()  # startup grace: the watchdog measures from Start
     _ensure_runner_started()
     _ensure_watchdog_started()
