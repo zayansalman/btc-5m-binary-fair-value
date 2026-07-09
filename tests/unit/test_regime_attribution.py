@@ -16,6 +16,7 @@ from tools.regime_attribution import (
     Cell,
     analyze,
     attribute,
+    basis_band,
     benjamini_hochberg,
     edge_band,
     format_report,
@@ -23,6 +24,7 @@ from tools.regime_attribution import (
     one_vs_rest_p,
     time_of_day_band,
     two_sided_edge,
+    vol_band,
 )
 
 
@@ -123,6 +125,47 @@ class TestEdgeBand:
     def test_hi_at_or_above_0_09(self) -> None:
         assert edge_band(0.09) == "hi"
         assert edge_band(0.15) == "hi"
+
+
+class TestVolBand:
+    """A-priori 1s-vol bands (#122): lo <3e-5, mid 3e-5-6e-5, hi >=6e-5.
+    Round cutoffs bracketing the observed ~4e-5/s median, fixed in advance."""
+
+    def test_lo_below_3e5(self) -> None:
+        assert vol_band(2.9e-5) == "lo"
+        assert vol_band(0.0) == "lo"
+
+    def test_mid_3e5_to_6e5(self) -> None:
+        assert vol_band(3e-5) == "mid"
+        assert vol_band(5.9e-5) == "mid"
+
+    def test_hi_at_or_above_6e5(self) -> None:
+        assert vol_band(6e-5) == "hi"
+        assert vol_band(8e-4) == "hi"
+
+
+class TestBasisBand:
+    """A-priori spot-vs-reference dislocation bands (#122): near <5bps,
+    mid 5-15bps, far >=15bps. Magnitude only; the signed cushion is separate."""
+
+    def test_near_below_5bps(self) -> None:
+        # 62800 vs 62790 → ~1.6bps → near.
+        assert basis_band(62_800.0, 62_790.0) == "near"
+
+    def test_mid_5_to_15bps(self) -> None:
+        # 62800 vs 62750 → ~8bps → mid.
+        assert basis_band(62_800.0, 62_750.0) == "mid"
+
+    def test_far_at_or_above_15bps(self) -> None:
+        # 62800 vs 62650 → ~24bps → far.
+        assert basis_band(62_800.0, 62_650.0) == "far"
+
+    def test_sign_agnostic(self) -> None:
+        """Only the magnitude of dislocation matters — sign does not."""
+        assert basis_band(62_750.0, 62_800.0) == basis_band(62_800.0, 62_750.0)
+
+    def test_degenerate_zero_spot_is_na(self) -> None:
+        assert basis_band(0.0, 0.0) == "na"
 
 
 class TestAttribute:

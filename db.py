@@ -146,6 +146,17 @@ BTC_LIVE_ORDERS_COLUMN_MIGRATIONS = {
     "mode": "TEXT",
 }
 
+# Issue #122: capture the market state at decision time on each shadow row so
+# the regime-attribution instrument (tools/regime_attribution.py) can stratify
+# by volatility and basis, not just time-of-day and edge. Additive + nullable —
+# rows recorded before this migration stay NULL and are skipped for those axes.
+BTC_SHADOW_COLUMN_MIGRATIONS = {
+    "spot_at_decision": "REAL",
+    "reference_at_decision": "REAL",
+    "sigma_per_second": "REAL",
+    "drift_per_second": "REAL",
+}
+
 BTC_POSITION_COLUMN_MIGRATIONS = {
     "market_question": "TEXT",
     "exit_price": "REAL",
@@ -208,6 +219,9 @@ async def init_db() -> None:
         await _migrate_columns(db, "btc_paper_positions", BTC_POSITION_COLUMN_MIGRATIONS)
         await _migrate_columns(db, "btc_paper_ticks", BTC_TICK_COLUMN_MIGRATIONS)
         await _migrate_columns(db, "btc_live_orders", BTC_LIVE_ORDERS_COLUMN_MIGRATIONS)
+        await _migrate_columns(
+            db, "btc_model_shadow_positions", BTC_SHADOW_COLUMN_MIGRATIONS
+        )
         await _backfill_position_mode(db)
         await _backfill_live_order_mode(db)
         await db.commit()
