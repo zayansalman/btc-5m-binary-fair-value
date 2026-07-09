@@ -39,11 +39,11 @@ A. **Assess** (always): run `.venv/bin/python tools/race_status.py` (SHIPPED #15
    note the delta vs the last log entry. (Only drop to ad-hoc SQL for a cut the tool doesn't
    surface, e.g. per-side attribution or freshness slices.)
 B. **Develop** (one item per iteration, in order): ~~#149~~ ✔ → ~~#150~~ ✔ → ~~#151~~ ✔ →
-   ~~#138~~ ✔ → ~~#122~~ ✔ → next candidates: **#155 (add f45 to shadow roster —
-   OPERATOR-GATED, agent preps only)**, #157 (tick-cadence observability — the watchdog is
-   blind to journaling gaps during feed flapping), #137 (maker/taker fill telemetry). File new
-   issues before working, speculative ideas as `[P2]`. Roster/lifecycle changes are
-   recommend-only.
+   ~~#138~~ ✔ → ~~#122~~ ✔ → ~~#155~~ ✔ (applied 07-09 under an explicit operator "do as you
+   wish" grant — f45 now the 5th shadow arm; accrues on next restart) → next candidates:
+   **#157 (tick-cadence observability)**, #137 (maker/taker fill telemetry). File new issues
+   before working, speculative ideas as `[P2]`. Roster/lifecycle changes remain recommend-only
+   ABSENT an explicit operator grant like the one that unblocked #155.
 C. **Log**: append a dated entry to `tasks/race_log.md` (format below), commit both docs to
    `develop`, push.
 

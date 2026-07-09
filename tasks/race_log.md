@@ -2,6 +2,13 @@
 
 Charter: `tasks/race_loop.md`. Newest entries at top after iteration 0.
 
+## 2026-07-09 ~19:30 UTC (out-of-band — operator "do as you wish")
+
+- **Applied #155: `cushion_fresh_v7_f45` added to the shadow roster** (PR #159, `5c3ac71`). Previously agent-gated; applied under an explicit operator grant. Additive/shadow-only — racing specs v0/v2/v7/v8 byte-identical, ablation intact, existing v7 clock untouched. Wired across _MODELS/SELECTABLE/LABELS/DESCRIPTIONS/CANDIDATE_SIGNALS; 3 tests (fires ≤45s, not at 50s, logs #122 state); **796 total green**.
+- **⚠️ Does NOT accrue until the operator restarts the paper loop** — the running process predates this merge (as it does #151/#138/#122). One restart activates all four + gives Chainlink WS a fresh connection (helps the #157 feed-flapping throttle).
+- If f45's replay edge is real, its deploy bar is ~56 trades (~6d of accrual) vs the current leader v8's ~125d — this is the single biggest lever on the verdict timeline, now unblocked pending that restart.
+- No new race data assessed here (out-of-band action, not a scheduled iteration). Verdict framework unchanged; cron not re-armed (>36h to 07-14 expiry).
+
 ## 2026-07-09 18:58 UTC (iteration 5)
 
 - Race (settled, fee-true; Δ since it4 13:07): **v8 +$20.93/n155 (Δ $0/0)** · v0 +$6.58/n297 (Δ +$4.33/+2) · v7 +$1.20/n63 (Δ $0/0) · v2 −$3.60/n180 (Δ $0/0). Only v0 moved (+2). Standings essentially frozen.
