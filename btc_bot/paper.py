@@ -1869,8 +1869,65 @@ def _detail_from_snapshot(snapshot: PaperSnapshot) -> str:
         f"edge: {snapshot.edge:+.3f}\n"
         f"Signal: {side}; confidence {snapshot.confidence:.2f}; notional ${snapshot.notional_usd:.0f}\n"
         f"Gate: {_gate_preview_line(snapshot)}\n"
-        f"Feed: Binance public fallback while Chainlink Streams access is pending."
+        f"{_feed_label(snapshot.feed_source)}"
     )
+
+
+# Human labels for the per-component feed_source tokens (issue #151). The old
+# hardcoded "Binance public fallback" line misstated the settlement story: spot
+# and reference resolve on Chainlink — Polymarket's own settlement feed (#21) —
+# and only the volatility SHAPE ever falls back to Binance.
+_FEED_SOURCE_LABELS = {
+    "chainlink_ws": "Chainlink WS",
+    "chainlink_rest_poll": "Chainlink REST-poll",
+    "chainlink_rest": "Chainlink REST",
+    "binance_shape_fallback": "Binance (vol shape)",
+    "binance_public": "Binance public",
+    "binance": "Binance",
+    "clob": "CLOB",
+    "unavailable": "unavailable",
+}
+
+
+def _feed_label(feed_source: str) -> str:
+    """Human-readable feed line derived from the actual per-component sources.
+
+    ``feed_source`` is ``spot=…;ref=…;vol=…;quotes=…`` (see
+    :func:`_parse_feed_source`). Rendering the real sources — rather than a
+    fixed string — lets the status panel tell the truth about the
+    settlement-critical spot/reference feeds (Chainlink) versus the
+    volatility-shape input that may fall back to Binance (issue #151).
+
+    A trailing qualifier states settlement alignment plainly: Polymarket
+    resolves each window on its Chainlink BTC/USD print, so what matters is
+    that spot and reference are Chainlink; a Binance vol-shape fallback is
+    cosmetic to settlement, whereas spot leaving Chainlink is a real warning.
+    """
+    parts = _parse_feed_source(feed_source)
+    if not parts:
+        return "Feed: source unavailable"
+
+    def lbl(token: str | None) -> str:
+        if not token:
+            return "—"
+        return _FEED_SOURCE_LABELS.get(token, token)
+
+    segments = [
+        f"spot {lbl(parts.get('spot'))}",
+        f"ref {lbl(parts.get('ref'))}",
+        f"vol {lbl(parts.get('vol'))}",
+    ]
+    if parts.get("quotes"):
+        segments.append(f"quotes {lbl(parts.get('quotes'))}")
+    line = "Feed: " + " · ".join(segments)
+
+    spot_src = parts.get("spot", "") or ""
+    ref_src = parts.get("ref", "") or ""
+    if spot_src.startswith("chainlink") and ref_src.startswith("chainlink"):
+        line += " (settlement-aligned)"
+    elif not spot_src.startswith("chainlink"):
+        line += " (⚠ spot off Chainlink — settlement risk)"
+    return line
 
 
 def _gate_preview_line(snapshot: PaperSnapshot) -> str:
