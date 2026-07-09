@@ -212,4 +212,9 @@ async def record_shadow(
             shares=SHADOW_SHARES,
             quote_source=view.quote_source,
             feed_source=view.feed_source,
+            # Market state at decision time → vol/basis regime axes (#122).
+            spot_at_decision=view.spot,
+            reference_at_decision=view.reference,
+            sigma_per_second=view.sigma_per_second,
+            drift_per_second=view.drift_per_second,
         )

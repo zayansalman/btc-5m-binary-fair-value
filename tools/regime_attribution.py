@@ -97,6 +97,41 @@ def edge_band(edge: float) -> str:
     return "hi"
 
 
+def vol_band(sigma_per_second: float) -> str:
+    """Map decision-time 1-second volatility to an a-priori band (issue #122).
+
+    ``lo`` < 3e-5, ``mid`` 3e-5-6e-5, ``hi`` >= 6e-5 — round cutoffs bracketing
+    the observed BTC-5m median (~4e-5/s), FROZEN up front rather than fitted to
+    any outcome. Units-calibration only: the cutoffs set the scale, they were
+    not tuned against PnL.
+    """
+    if sigma_per_second < 3e-5:
+        return "lo"
+    if sigma_per_second < 6e-5:
+        return "mid"
+    return "hi"
+
+
+def basis_band(spot: float, reference: float) -> str:
+    """Map decision-time spot-vs-reference dislocation to an a-priori band (#122).
+
+    Banded on ``|spot - reference|`` in basis points of spot: ``near`` < 5bps,
+    ``mid`` 5-15bps, ``far`` >= 15bps — round cutoffs bracketing the observed
+    ~13bps average, fixed in advance. The MAGNITUDE of how far the window has
+    moved from its open is the regime; the *signed* cushion is a separate,
+    per-side entry gate, not this axis.
+    """
+    denom = abs(spot) if spot else 0.0
+    if denom == 0.0:
+        return "na"
+    bps = abs(spot - reference) / denom * 1e4
+    if bps < 5.0:
+        return "near"
+    if bps < 15.0:
+        return "mid"
+    return "far"
+
+
 # ---------------------------------------------------------------------------
 # Per-cell attribution (model x regime x side BET)
 # ---------------------------------------------------------------------------
@@ -290,7 +325,7 @@ def one_vs_rest_p(
 # Axis selection + orchestration
 # ---------------------------------------------------------------------------
 
-_AXES = ("time", "edge")
+_AXES = ("time", "edge", "vol", "basis")
 
 
 def _regime_fn(axis: str) -> Callable[[Row], str]:
@@ -299,11 +334,28 @@ def _regime_fn(axis: str) -> Callable[[Row], str]:
         return lambda r: time_of_day_band(str(r["created_at"]))
     if axis == "edge":
         return lambda r: edge_band(float(r["edge"]))  # type: ignore[arg-type]
+    if axis == "vol":
+        return lambda r: vol_band(float(r["sigma_per_second"]))  # type: ignore[arg-type]
+    if axis == "basis":
+        return lambda r: basis_band(
+            float(r["spot_at_decision"]), float(r["reference_at_decision"])
+        )  # type: ignore[arg-type]
     raise ValueError(f"unknown axis {axis!r}; expected one of {_AXES}")
 
 
 def _axis_value_present(row: Row, axis: str) -> bool:
-    return (row["edge"] if axis == "edge" else row["created_at"]) is not None
+    """Is the column(s) this axis needs non-NULL? Rows recorded before the #122
+    migration have NULL vol/basis and are skipped for those axes."""
+    if axis == "edge":
+        return row["edge"] is not None
+    if axis == "vol":
+        return row["sigma_per_second"] is not None
+    if axis == "basis":
+        return (
+            row["spot_at_decision"] is not None
+            and row["reference_at_decision"] is not None
+        )
+    return row["created_at"] is not None
 
 
 @dataclass(frozen=True)
@@ -429,10 +481,28 @@ def load_settled_rows(db_path: Path) -> list[sqlite3.Row]:
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     try:
+        # The #122 regime columns are migration-added, so a ledger that predates
+        # the migration lacks them. Select ``NULL AS col`` for any that are
+        # absent so this read-only tool never errors on an old DB — those rows
+        # simply fail _axis_value_present for the vol/basis axes.
+        present = {
+            r["name"]
+            for r in conn.execute("PRAGMA table_info(btc_model_shadow_positions)")
+        }
+        optional = (
+            "sigma_per_second",
+            "drift_per_second",
+            "spot_at_decision",
+            "reference_at_decision",
+        )
+        opt_select = ", ".join(
+            col if col in present else f"NULL AS {col}" for col in optional
+        )
         return conn.execute(
-            """
+            f"""
             SELECT model_id, side, entry_price, shares, outcome,
-                   realized_pnl_usd, created_at, edge
+                   realized_pnl_usd, created_at, edge,
+                   {opt_select}
               FROM btc_model_shadow_positions
              WHERE state = 'settled'
             """
