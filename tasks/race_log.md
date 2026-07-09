@@ -2,6 +2,17 @@
 
 Charter: `tasks/race_loop.md`. Newest entries at top after iteration 0.
 
+## 2026-07-09 18:58 UTC (iteration 5)
+
+- Race (settled, fee-true; Δ since it4 13:07): **v8 +$20.93/n155 (Δ $0/0)** · v0 +$6.58/n297 (Δ +$4.33/+2) · v7 +$1.20/n63 (Δ $0/0) · v2 −$3.60/n180 (Δ $0/0). Only v0 moved (+2). Standings essentially frozen.
+- **WHY frozen: Chainlink settlement feed is flapping and throttling accrual.** Only 2 shadow entries in ~6h. Tick cadence collapsed to 11–24/hour (vs ~247 earlier) with a clean **40-min tick gap (18:18→18:58)**; last-3h feed_source = 46 chainlink_ws / 11 chainlink_rest_poll / 2 `ref=unavailable`; resuming tick read "skip: settlement feed degraded". Models correctly skip on a degraded ref (#21 design) — this is throttled accrual, NOT bad trades. Loop is alive (tick 4s old), #147 watchdog quiet (heartbeat stays fresh through the gaps → it's blind to journaling stalls).
+- Deploy bar (leader v8): mean $0.135, z-CI [−0.253, +0.523]; needs ~1283 → ~125d. Nothing clears; all CIs straddle 0. Field still converging on coin-flip-after-fees.
+- Live book: **−$19.35/351 (Δ$0)** — live OFF. Bot: mode=paper, state=running, accruing=YES-but-throttled.
+- Health flags: (1) **feed instability → filed #157** (watchdog blind to tick-cadence gaps; observability fix proposed). (2) **#155 still NOT approved** — f45 absent (0 rows). (3) running bot predates #151/#138/#122 merges — all take effect on next restart.
+- **Advanced: #122 SHIPPED** (PR #158, `7d4f029`) — shadow rows now log spot/ref/sigma/drift at decision time; regime_attribution gains a-priori **vol** (3e-5/6e-5) + **basis** (5/15bps) axes, resilient to pre-migration DBs. Cutoffs frozen from observed scale (units-calibration, not fitted). 10 tests, **795 total green**. Also filed #157.
+- Verdict check (§4): none met — v7 +$0.019 at n=63 (kill needs <0 AND n≥150); v8 unproven; sunset ~08-27. Cron created 07-07, expires ~07-14 — >36h out, no re-arm.
+- Next: iteration 6 → assess → #157 (tick-cadence observability, mission-relevant given today's feed flapping) unless operator approves #155. Pending operator: approve f45 (#155); restart to activate #151/#138/#122 (+ hope feed stabilizes).
+
 ## 2026-07-09 13:07 UTC (iteration 4)
 
 - Race (settled, fee-true; Δ since it3 00:53): **v8 +$20.93/n155 (Δ +$1.78/+21)** now leader · v7 +$1.20/n63 (Δ **−$7.79**/+8 — collapsed) · v0 +$2.25/n295 (Δ −$2.71/+37) · v2 −$3.60/n180 (Δ −$7.35/+22, now NEGATIVE).
