@@ -115,6 +115,27 @@ async def test_fresh_window_logs_v7_too(test_db, params) -> None:
     # v8 (freshness alone) fires on the same fresh window.
     assert "fair_value_fresh_v8" in rows
     assert rows["fair_value_fresh_v8"]["reason"].startswith("fresh 50s;")
+    # ...but f45 (≤45s gate, #155) does NOT fire at 50s elapsed — that is the
+    # whole point of the tighter freshness window.
+    assert "cushion_fresh_v7_f45" not in rows
+
+
+@pytest.mark.asyncio
+async def test_very_fresh_window_logs_f45_alongside_v7(test_db, params) -> None:
+    """≤45s into the window: f45 (#155) logs alongside v7, and records the
+    decision-time market state for the #122 regime axes."""
+    await runner.record_shadow(_snapshot(remaining_seconds=270), params)  # 30s elapsed
+    rows = await _models_for(test_db, "btc-updown-5m-1700000000")
+    assert "cushion_fresh_v7_f45" in rows
+    f45 = rows["cushion_fresh_v7_f45"]
+    assert f45["side"] == "Up"
+    assert f45["reason"].startswith("fresh 30s;")
+    # v7 (≤60s) fires on the same window — additive, not a replacement.
+    assert "cushion_fresh_v7" in rows
+    # #122: the runner populated the regime columns from the snapshot.
+    assert f45["spot_at_decision"] == pytest.approx(64020.0)
+    assert f45["reference_at_decision"] == pytest.approx(63990.0)
+    assert f45["sigma_per_second"] == pytest.approx(2.5e-5)
 
 
 @pytest.mark.asyncio
@@ -148,11 +169,14 @@ def test_model_registry_constants() -> None:
     assert runner.DEFAULT_MODEL == "fair_value_v0"
     # Post-surgery roster (#142): control, champion, challenger — retired
     # models (v3/v4/v5/v6) are neither logged nor selectable nor dispatchable.
+    # #155 added cushion_fresh_v7_f45 (the #149 replay winner) as a 5th arm;
+    # additive only — the racing specs v0/v2/v7/v8 are unchanged.
     expected = [
         "fair_value_v0",
         "cushion_favorite_v2",
         "cushion_fresh_v7",
         "fair_value_fresh_v8",
+        "cushion_fresh_v7_f45",
     ]
     assert list(runner.MODEL_IDS) == expected
     assert runner.SELECTABLE_MODELS == expected
@@ -160,6 +184,7 @@ def test_model_registry_constants() -> None:
         "cushion_favorite_v2",
         "cushion_fresh_v7",
         "fair_value_fresh_v8",
+        "cushion_fresh_v7_f45",
     }
     for retired in (
         "late_convergence_v3",
