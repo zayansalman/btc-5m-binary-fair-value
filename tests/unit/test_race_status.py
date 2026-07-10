@@ -383,6 +383,39 @@ def LiveBook_stub():  # noqa: N802 — tiny local stub, not a fixture
     return LiveBook(n=0, total=0.0, by_day=[])
 
 
+class TestDeployBarMinN:
+    """A degenerate small sample must never print CLEARS NOW (f45 n=1 bug)."""
+
+    def _model(self, n: int, t_lo: float) -> ModelStats:
+        return ModelStats(
+            model_id="m", n=n, total=2.2 * n, mean=2.2, sd=0.0,
+            t_lo=t_lo, t_hi=2.2, boot_lo=t_lo, boot_hi=2.2,
+            win_rate=1.0, breakeven_wr=0.56, max_dd=0.0,
+            today_n=0, today_total=0.0, req_n=None,
+        )
+
+    def test_n1_positive_ci_does_not_clear(self, tmp_path: Path) -> None:
+        db = _cadence_db(tmp_path, state="stopped", n_recent_ticks=0)
+        conn = _conn(db)
+        bot = gather_bot_state(conn)
+        conn.close()
+        out = render_text(
+            [self._model(n=1, t_lo=2.2)], LiveBook_stub(), bot, SINCE, 9.0
+        )
+        assert "CLEARS NOW" not in out
+        assert "sample too small" in out
+
+    def test_large_n_positive_ci_clears(self, tmp_path: Path) -> None:
+        db = _cadence_db(tmp_path, state="stopped", n_recent_ticks=0)
+        conn = _conn(db)
+        bot = gather_bot_state(conn)
+        conn.close()
+        out = render_text(
+            [self._model(n=100, t_lo=0.05)], LiveBook_stub(), bot, SINCE, 9.0
+        )
+        assert "CLEARS NOW" in out
+
+
 class TestRenderText:
     def test_report_flags_stalled_race(self, seeded_db: Path) -> None:
         conn = _conn(seeded_db)
