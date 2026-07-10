@@ -144,6 +144,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_btc_model_shadow_positions_window_model
 
 BTC_LIVE_ORDERS_COLUMN_MIGRATIONS = {
     "mode": "TEXT",
+    # Issue #137: the CLOB placement response's status, promoted from
+    # details_json so maker/taker attribution is queryable without JSON
+    # parsing. 'matched' = crossed at placement (taker, fee paid on the
+    # crossed portion); 'live' = rested on the book (maker if later filled,
+    # no fee); 'delayed' = venue-throttled. Backfilled from details_json.
+    "placement_status": "TEXT",
 }
 
 # Issue #122: capture the market state at decision time on each shadow row so
@@ -224,6 +230,7 @@ async def init_db() -> None:
         )
         await _backfill_position_mode(db)
         await _backfill_live_order_mode(db)
+        await _backfill_placement_status(db)
         await db.commit()
 
 
@@ -254,6 +261,24 @@ async def _backfill_live_order_mode(db: aiosqlite.Connection) -> None:
     """Every pre-migration row in btc_live_orders is real CLOB activity → 'live'."""
     await db.execute(
         "UPDATE btc_live_orders SET mode = 'live' WHERE mode IS NULL"
+    )
+
+
+async def _backfill_placement_status(db: aiosqlite.Connection) -> None:
+    """Promote details_json→response.status into placement_status (#137).
+
+    The CLOB placement response was journaled verbatim from day one, so the
+    maker/taker signal already exists for every historical order — this lifts
+    it into the queryable column for rows that predate the migration.
+    """
+    await db.execute(
+        """
+        UPDATE btc_live_orders
+           SET placement_status = json_extract(details_json, '$.response.status')
+         WHERE placement_status IS NULL
+           AND details_json IS NOT NULL
+           AND json_valid(details_json)
+        """
     )
 
 
@@ -314,8 +339,20 @@ async def journal_live_order(
 
     ``mode`` is 'live' for real CLOB activity and 'paper' for paper-side
     BLOCKED rows surfaced by the shared RiskGate (issue #64).
+
+    ``placement_status`` (#137) is derived here from the CLOB placement
+    response carried in ``details`` ('matched' = crossed at placement/taker,
+    'live' = rested/maker-eligible) so maker/taker attribution is queryable
+    without JSON parsing; NULL when the details carry no response status.
     """
     error = redact_secrets(error)
+    placement_status: str | None = None
+    if isinstance(details, dict):
+        response = details.get("response")
+        if isinstance(response, dict):
+            raw = response.get("status")
+            if isinstance(raw, str) and raw:
+                placement_status = raw
     payload = redact_secrets(json.dumps(details or {}, sort_keys=True, default=str))
     async with connect() as db:
         await db.execute(
@@ -323,8 +360,8 @@ async def journal_live_order(
             INSERT INTO btc_live_orders(
               created_at, window_slug, token_id, intent, side, price, size,
               notional_usd, order_type, status, clob_order_id, error,
-              details_json, mode
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              details_json, mode, placement_status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 utc_now_iso(),
@@ -341,6 +378,7 @@ async def journal_live_order(
                 error,
                 payload,
                 mode,
+                placement_status,
             ),
         )
         await db.commit()

@@ -245,6 +245,34 @@ class LiveBook:
     n: int
     total: float
     by_day: list[tuple[str, int, float]]
+    # Maker/taker attribution of ENTRY placements (#137): 'matched' = crossed
+    # at placement (taker fee paid), 'live' = rested on the book (maker if
+    # later filled — no fee on that portion). Zeroes when btc_live_orders is
+    # absent (minimal DBs) or carries no placement responses.
+    entries_matched: int = 0
+    entries_rested: int = 0
+
+
+def _placement_split(conn: sqlite3.Connection) -> tuple[int, int]:
+    """(matched, rested) counts among live SUBMITTED ENTRY orders.
+
+    Derived via json_extract from the journaled placement response so it works
+    on any snapshot age — including ledgers that predate the #137
+    placement_status column migration. Resilient to a missing table.
+    """
+    has_table = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='btc_live_orders'"
+    ).fetchone()
+    if not has_table:
+        return (0, 0)
+    rows = conn.execute(
+        "SELECT json_extract(details_json, '$.response.status') ps, COUNT(*) n "
+        "FROM btc_live_orders "
+        "WHERE mode='live' AND intent='ENTRY' AND status='SUBMITTED' "
+        "GROUP BY ps",
+    ).fetchall()
+    counts = {str(r["ps"]): int(r["n"]) for r in rows if r["ps"] is not None}
+    return (counts.get("matched", 0), counts.get("live", 0))
 
 
 def gather_live_book(conn: sqlite3.Connection) -> LiveBook:
@@ -259,10 +287,13 @@ def gather_live_book(conn: sqlite3.Connection) -> LiveBook:
         "SELECT COUNT(*) n, ROUND(SUM(realized_pnl_usd),2) pnl "
         "FROM btc_paper_positions WHERE mode='live'",
     ).fetchone()
+    matched, rested = _placement_split(conn)
     return LiveBook(
         n=int(total_row["n"] or 0),
         total=float(total_row["pnl"] or 0.0),
         by_day=by_day,
+        entries_matched=matched,
+        entries_rested=rested,
     )
 
 
@@ -384,6 +415,14 @@ def render_text(
         recent = live.by_day[-3:]
         tail = "  ".join(f"{d} {n}×${p:+.2f}" for d, n, p in recent)
         lines.append(f"  recent days: {tail}")
+    placements = live.entries_matched + live.entries_rested
+    if placements:
+        maker_pct = live.entries_rested / placements * 100
+        lines.append(
+            f"  entry placements: {live.entries_matched} crossed (taker) / "
+            f"{live.entries_rested} rested (maker-eligible, fee-free) — "
+            f"{maker_pct:.0f}% maker share (#137)"
+        )
 
     lines.append("")
     lines.append("BOT STATE")
