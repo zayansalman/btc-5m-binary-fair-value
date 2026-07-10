@@ -2,6 +2,16 @@
 
 Charter: `tasks/race_loop.md`. Newest entries at top after iteration 0.
 
+## 2026-07-10 ~10:45 UTC (out-of-band — v8 halt post-mortem + regime-switching verdict)
+
+- **Operator switched the engine's active model to v8 at 03:29 — directly after v8's best day (+$20.56 on 07-09). It lost −$6.30/8 trades and tripped the paper trailing halt at 04:45.** Operator cleared the halt + auto-pause and Stop/Started at 10:38.
+- **⚠️ Dashboard Stop/Start is a THREAD restart, not a code reload.** The process is still PID 65492 booted 07-06 01:17 — f45 (#155) and the #151/#138/#122/#137 merges are ALL still inactive. Activating them requires relaunching `main.py` itself (kill 65492 → `nohup .venv/bin/python main.py`). f45: still 0 rows, day 7 of dormancy.
+- **Milestone: v7 crossed NEGATIVE** (−$1.36/n85 at 10:15 snapshot). Kill rule's sign condition met; n=85 < 150 floor → no formal §4 kill yet, but the race's namesake is underwater.
+- **Regime-switching question tested on our own race data** (operator asked whether to switch strategies by regime). Simulated on all settled shadow rows since common start: hold-v8 +$16.60 · switch-to-cumulative-leader-daily **+$3.36** · switch-to-yesterday's-winner-daily **+$6.10**. Both switchers underperform holding; the trace shows they systematically buy the day AFTER the big day and eat the give-back (−15.99 after +19.44; −16.67 after +20.56). Matches the three live operator switches this month (v6 06-24, v7-live 07-06 −$4.07+halt, v8 07-10 −$6.30+halt) and the formal null (PR #121: 0/12 cells after FDR, perm p=0.21–0.65).
+- **Verdict on the question**: regime AWARENESS stays (the gates ARE static regime conditioners; #122 now logs vol/basis for two new attribution axes post-relaunch; pipeline = axis clears two-sided FDR → pre-register variant in replay → OOS → shadow). Regime AUTO-SWITCHING remains a dead idea (charter §8) — switching selects among strategies but cannot create expectancy, and the control sits at ~zero over 400 trades.
+- Standings at 10:15: v8 +$22.23/n216 (mean +$0.103, deflating; bar ~223d) · v0 +$4.78/n400 · v2 +$4.17/n237 · v7 −$1.36/n85. Live book unchanged −$19.35/351. Bot running, cadence ✓.
+- Recommendation to operator (standing): (1) relaunch the PROCESS to activate f45 + fixes + regime logging; (2) park the engine's active model — the engine paper book generates halts, not evidence; the shadow race does the comparing.
+
 ## 2026-07-10 06:53 UTC (iteration 7)
 
 - Race (settled, fee-true; Δ since it6 00:53): **v8 +$22.91/n203 (Δ −$14.02/+25 — REGRESSING)** · v2 +$5.27/n226 (Δ +$15.48/+28) · v7 +$0.14/n81 (Δ −$3.02/+10, ≈zero) · **v0 +$0.12/n380 — EXACTLY zero over 380 trades.** Today: v8 −$10.4/29, v0 −$11.1/54, v2 +$10.1/35.
