@@ -39,7 +39,7 @@ import sqlite3
 import sys
 import tempfile
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -60,6 +60,15 @@ Z_95 = 1.959963984540054
 # Bootstrap resamples for the mean-PnL CI. Fixed seed → reproducible report.
 BOOTSTRAP_N = 10_000
 BOOTSTRAP_SEED = 42
+
+# Tick-cadence health (#157). The paper loop journals a tick every ~5s, so a
+# healthy 10-minute window holds ~120 ticks. The #147 watchdog only checks the
+# heartbeat, which stays fresh even when a flapping settlement feed collapses
+# journaling to a trickle (2026-07-09: ~2-4 ticks/10min for ~6h, race silently
+# under-accruing while state read "running"). Flag a running loop that has
+# journaled fewer than this in the last 10 minutes so the gap is visible.
+CADENCE_WINDOW_SECONDS = 600
+MIN_TICKS_PER_WINDOW = 30  # ~25% of the ~120 expected; well clear of a brief blip
 
 
 def taker_fee_per_share(price: float, fee_rate: float = 0.07) -> float:
@@ -265,6 +274,8 @@ class BotState:
     last_tick: str
     last_shadow: str
     accruing: bool
+    ticks_last_10min: int
+    cadence_ok: bool
 
 
 def gather_bot_state(conn: sqlite3.Connection) -> BotState:
@@ -281,19 +292,26 @@ def gather_bot_state(conn: sqlite3.Connection) -> BotState:
     last_shadow = conn.execute(
         "SELECT MAX(created_at) m FROM btc_model_shadow_positions",
     ).fetchone()["m"]
+    now = datetime.now(timezone.utc)
+    cutoff = (now - timedelta(seconds=CADENCE_WINDOW_SECONDS)).isoformat()
+    ticks_last_10min = conn.execute(
+        "SELECT COUNT(*) c FROM btc_paper_ticks WHERE created_at >= ?",
+        (cutoff,),
+    ).fetchone()["c"]
     state = cfg.get("btc_bot.state", ("?", ""))[0]
     # "Accruing" means the loop is both marked running AND has produced a tick
     # within the last two window-lengths (10 min) of the snapshot.
     accruing = False
     if state == "running" and last_tick:
         try:
-            age = (
-                datetime.now(timezone.utc)
-                - datetime.fromisoformat(str(last_tick))
-            ).total_seconds()
-            accruing = age < 600
+            age = (now - datetime.fromisoformat(str(last_tick))).total_seconds()
+            accruing = age < CADENCE_WINDOW_SECONDS
         except ValueError:
             accruing = False
+    # Cadence health (#157): a running loop should journal ~120 ticks / 10min.
+    # Below the floor while "running" means a journaling stall the heartbeat
+    # watchdog cannot see. Not applicable to a stopped bot.
+    cadence_ok = state != "running" or ticks_last_10min >= MIN_TICKS_PER_WINDOW
     return BotState(
         mode=cfg.get("btc_bot.mode", ("?", ""))[0],
         state=state,
@@ -301,6 +319,8 @@ def gather_bot_state(conn: sqlite3.Connection) -> BotState:
         last_tick=str(last_tick or "—"),
         last_shadow=str(last_shadow or "—"),
         accruing=accruing,
+        ticks_last_10min=int(ticks_last_10min),
+        cadence_ok=cadence_ok,
     )
 
 
@@ -373,10 +393,23 @@ def render_text(
     )
     lines.append(f"  last tick={bot.last_tick} · last shadow row={bot.last_shadow}")
     lines.append(f"  race accruing: {accr}")
+    cadence_mark = "✓" if bot.cadence_ok else "⚠️  DEGRADED"
+    lines.append(
+        f"  tick cadence: {bot.ticks_last_10min} in last 10min "
+        f"(~120 healthy) {cadence_mark}"
+    )
     if not bot.accruing:
         lines.append(
             "  ⚠️  NO NEW RACE DATA — the shadow race only advances while the "
             "PAPER loop runs. Restart it from the dashboard."
+        )
+    elif not bot.cadence_ok:
+        # Alive (recent tick) but journaling has stalled — the #147 heartbeat
+        # watchdog cannot see this; the race is under-accruing (#157).
+        lines.append(
+            "  ⚠️  JOURNALING STALL — loop is alive but tick cadence has "
+            "collapsed (feed flapping?). The race is under-accruing even though "
+            "it reads 'accruing: YES'."
         )
     return "\n".join(lines)
 

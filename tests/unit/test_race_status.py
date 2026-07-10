@@ -14,11 +14,13 @@ Two layers, mirroring the test_shadow_performance.py approach:
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
 from tools.race_status import (
+    MIN_TICKS_PER_WINDOW,
     ModelStats,
     bootstrap_ci,
     breakeven_winrate,
@@ -236,6 +238,77 @@ class TestGatherBotState:
         assert bot.state == "stopped"
         assert bot.accruing is False  # stopped → never accruing
         assert bot.last_tick == "2026-07-07T06:40:00+00:00"
+        # A stopped bot's cadence is N/A — never flagged degraded (#157).
+        assert bot.cadence_ok is True
+        assert bot.ticks_last_10min == 0
+
+
+def _cadence_db(tmp_path: Path, *, state: str, n_recent_ticks: int) -> Path:
+    """Minimal DB with a config state and ``n_recent_ticks`` ticks in the last
+    ~9 minutes (inside the 10-min cadence window)."""
+    db = tmp_path / "cadence.db"
+    conn = sqlite3.connect(db)
+    conn.executescript(_TICKS_TABLE + _CONFIG_TABLE + _SHADOW_TABLE)
+    now = datetime.now(timezone.utc)
+    for i in range(n_recent_ticks):
+        ts = (now - timedelta(seconds=5 * (i + 1))).isoformat()
+        conn.execute("INSERT INTO btc_paper_ticks (created_at) VALUES (?)", (ts,))
+    for k, v in [("btc_bot.mode", "paper"), ("btc_bot.state", state)]:
+        conn.execute(
+            "INSERT INTO config (key, value, updated_at) VALUES (?,?,?)",
+            (k, v, now.isoformat()),
+        )
+    conn.commit()
+    conn.close()
+    return db
+
+
+class TestTickCadence:
+    """#157: surface a journaling stall the heartbeat watchdog cannot see."""
+
+    def test_healthy_cadence_ok(self, tmp_path: Path) -> None:
+        db = _cadence_db(tmp_path, state="running", n_recent_ticks=100)
+        conn = _conn(db)
+        bot = gather_bot_state(conn)
+        conn.close()
+        assert bot.ticks_last_10min == 100
+        assert bot.cadence_ok is True
+        assert bot.accruing is True
+
+    def test_running_but_stalled_cadence_flagged(self, tmp_path: Path) -> None:
+        """The 07-09 flap signature: alive (a recent tick) but journaling
+        collapsed → accruing reads YES yet cadence is DEGRADED."""
+        db = _cadence_db(
+            tmp_path, state="running", n_recent_ticks=MIN_TICKS_PER_WINDOW - 1
+        )
+        conn = _conn(db)
+        bot = gather_bot_state(conn)
+        conn.close()
+        assert bot.accruing is True  # a tick within 10min → still "alive"
+        assert bot.cadence_ok is False  # but the trickle is flagged
+
+    def test_stopped_bot_cadence_not_flagged(self, tmp_path: Path) -> None:
+        """Zero recent ticks while stopped is expected, not a stall."""
+        db = _cadence_db(tmp_path, state="stopped", n_recent_ticks=0)
+        conn = _conn(db)
+        bot = gather_bot_state(conn)
+        conn.close()
+        assert bot.cadence_ok is True
+
+    def test_render_warns_on_journaling_stall(self, tmp_path: Path) -> None:
+        db = _cadence_db(tmp_path, state="running", n_recent_ticks=3)
+        conn = _conn(db)
+        bot = gather_bot_state(conn)
+        conn.close()
+        out = render_text([], LiveBook_stub(), bot, SINCE, trades_per_day=9.0)
+        assert "tick cadence: 3" in out
+        assert "JOURNALING STALL" in out
+
+
+def LiveBook_stub():  # noqa: N802 — tiny local stub, not a fixture
+    from tools.race_status import LiveBook
+
+    return LiveBook(n=0, total=0.0, by_day=[])
 
 
 class TestRenderText:
