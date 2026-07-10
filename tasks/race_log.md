@@ -2,6 +2,19 @@
 
 Charter: `tasks/race_loop.md`. Newest entries at top after iteration 0.
 
+## 2026-07-10 11:11 UTC (out-of-band — PROCESS RELAUNCHED under explicit operator grant "ok relaunch")
+
+- **Old process (PID 65492, code of 07-06) terminated and relaunched as PID 37735 on current develop.** Sequence: operator had already stopped the loop at 10:50 (clean state, no live exposure — the 10 open live rows are June cruft #63-era); SIGTERM → uvicorn drained (held by a dashboard SSE stream) → SIGKILL after port release + loop-stop confirmed; relaunch via `nohup .venv/bin/python main.py > data/uvicorn_20260710.log` from repo root; flock picked up by the new PID; paper loop started via `POST /api/start` (requested_mode=paper governs).
+- **Everything shipped this week is now ACTIVE and verified in the running process:**
+  - **f45 in the live roster** (#155) — selector renders `cushion_fresh_v7_f45`; its accrual clock finally starts (day 0). Replay prior: OOS CI [+0.275, +0.887], bar ~56 trades.
+  - **#151 feed label live** — detail now renders "Feed: spot Chainlink WS · ref Chainlink REST · vol Binance (vol shape) · quotes CLOB (settlement-aligned)".
+  - **#122 regime columns** present on the shadow table — vol/basis logging begins with the first new row.
+  - **#137 placement_status backfilled** (272 matched / 79 live) + captured forward.
+  - **#138 silent-stop detector armed** in the new process.
+- Guardrail note: charter §1 (never touch lifecycle) was overridden by a one-shot explicit operator grant, same precedent as #155. §1 remains binding for scheduled iterations.
+- Engine active model untouched: `fair_value_fresh_v8` (operator's 03:29 selection persists).
+- Next scheduled iteration: assess f45's first rows + regime-column population; dev item #114.
+
 ## 2026-07-10 ~10:45 UTC (out-of-band — v8 halt post-mortem + regime-switching verdict)
 
 - **Operator switched the engine's active model to v8 at 03:29 — directly after v8's best day (+$20.56 on 07-09). It lost −$6.30/8 trades and tripped the paper trailing halt at 04:45.** Operator cleared the halt + auto-pause and Stop/Started at 10:38.
