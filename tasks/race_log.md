@@ -2,6 +2,16 @@
 
 Charter: `tasks/race_loop.md`. Newest entries at top after iteration 0.
 
+## 2026-07-10 12:53 UTC (iteration 8)
+
+- **f45's first settled trade: a WIN, +$2.21** (fresh 28s-class entry, settled clean). n=1 — means nothing; clock genuinely running is the news. Bar: ~56 trades at replay mean.
+- Race (Δ since it7 06:53): f45 +$2.21/n1 (NEW) · v8 +$20.08/n224 (mean $0.090, still deflating; bar ~301d) · v7 +$2.15/n89 (back barely +ve) · v2 −$1.48/n244 · **v0 −$17.88/n417 (today −$29.10 — control's worst day)**. Null field + noise, unchanged.
+- Live book: **−$19.35/351 (Δ$0)**. Bot: paper/running, cadence 102/10min ✓, accruing YES. No operator activity since 12:00.
+- **Hotfix shipped mid-assessment (PR #163, `8509f6c`)**: the deploy-bar tracker printed **CLEARS NOW on f45's n=1** (single win → sd=0 → degenerate CI above zero) — a false §4 verdict signal in the verdict-critical report. Now gated behind n≥30 (matches attribution min_n); small samples read "sample too small to mean anything". 2 tests.
+- **Advanced: #162 part 1 SHIPPED (PR #164, `33855a4`)** — `tools/forecast_journal.py`: the pre-registered slow-market skill pilot's journal + scoring. Own DB file (never the bot ledger); forecast-before-price protocol; crypto category refused; Brier vs market-implied + fee-true simulated PnL (≥5c divergence, NO = complement of YES bid) + 95% CI; verdict line enforces the ≥30-resolution bar (PASS only on skill>0 AND CI>0). 18 tests; **828 total green**. **The pilot can start collecting forecasts now.**
+- Verdict check (§4): none met — f45 n=1; v8 CI straddles; v7 +ve at n=89; sunset ~08-27. Cron: created 07-07, expires ~07-14 07:00 UTC; now ~3.7d out (>36h) — no re-arm this iteration; **next iteration (~18:23 UTC 07-10) still >36h; the one after (~00:23 07-11) also; re-arm expected ~07-12/13 iteration.**
+- Next: iteration 9 → assess (f45 accrual rate) → #162 part 2 (market screener) or #114.
+
 ## 2026-07-10 12:00 UTC (out-of-band — post-relaunch verification + pivot memo, operator "do whatever you think is right")
 
 - **Relaunch verified healthy at +47min**: PID 37735 up, cadence 101/10min ✓, race accruing. **#122 confirmed working in production** — 10/10 new shadow rows carry sigma/spot at decision time. **f45 wiring confirmed correct**: the only v7 fire since relaunch was at "fresh 48s", which f45 correctly skipped (the 46–60s bucket it exists to exclude); no f45 row yet in 9 windows ≈ expected at ~3% selectivity, not a flag.

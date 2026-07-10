@@ -41,9 +41,10 @@ A. **Assess** (always): run `.venv/bin/python tools/race_status.py` (SHIPPED #15
 B. **Develop** (one item per iteration, in order): ~~#149~~ ✔ → ~~#150~~ ✔ → ~~#151~~ ✔ →
    ~~#138~~ ✔ → ~~#122~~ ✔ → ~~#155~~ ✔ (applied 07-09 under an explicit operator "do as you
    wish" grant — f45 now the 5th shadow arm; accrues on next restart) → ~~#157~~ ✔ →
-   ~~#137~~ ✔ → next candidates: **#114 (persist conditionId/token_id on positions)**,
-   #110 (premature loss-booking timing), #123 (dashboard regime-verdict panel). File new
-   issues before working, speculative ideas as `[P2]`. Roster/lifecycle changes remain
+   ~~#137~~ ✔ → ~~#162 part 1~~ ✔ (forecast journal; PR #164) + hotfix PR #163 (CLEARS NOW
+   min-n floor) → next candidates: **#162 part 2 (market screener via Gamma)**, #114
+   (persist conditionId/token_id), #110 (premature loss-booking timing). File new issues
+   before working, speculative ideas as `[P2]`. Roster/lifecycle changes remain
    recommend-only ABSENT an explicit operator grant like the one that unblocked #155.
 C. **Log**: append a dated entry to `tasks/race_log.md` (format below), commit both docs to
    `develop`, push.
