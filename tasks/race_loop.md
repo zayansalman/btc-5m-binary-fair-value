@@ -40,10 +40,11 @@ A. **Assess** (always): run `.venv/bin/python tools/race_status.py` (SHIPPED #15
    surface, e.g. per-side attribution or freshness slices.)
 B. **Develop** (one item per iteration, in order): ~~#149~~ ✔ → ~~#150~~ ✔ → ~~#151~~ ✔ →
    ~~#138~~ ✔ → ~~#122~~ ✔ → ~~#155~~ ✔ (applied 07-09 under an explicit operator "do as you
-   wish" grant — f45 now the 5th shadow arm; accrues on next restart) → next candidates:
-   **#157 (tick-cadence observability)**, #137 (maker/taker fill telemetry). File new issues
-   before working, speculative ideas as `[P2]`. Roster/lifecycle changes remain recommend-only
-   ABSENT an explicit operator grant like the one that unblocked #155.
+   wish" grant — f45 now the 5th shadow arm; accrues on next restart) → ~~#157~~ ✔ → next
+   candidates: **#137 (maker/taker fill telemetry)**, #114 (persist conditionId/token_id on
+   positions), #110 (premature loss-booking timing). File new issues before working,
+   speculative ideas as `[P2]`. Roster/lifecycle changes remain recommend-only ABSENT an
+   explicit operator grant like the one that unblocked #155.
 C. **Log**: append a dated entry to `tasks/race_log.md` (format below), commit both docs to
    `develop`, push.
 

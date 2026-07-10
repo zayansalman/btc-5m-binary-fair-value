@@ -2,6 +2,17 @@
 
 Charter: `tasks/race_loop.md`. Newest entries at top after iteration 0.
 
+## 2026-07-10 00:53 UTC (iteration 6)
+
+- Race (settled, fee-true; Δ since it5 18:58): **v8 +$36.93/n178 (Δ +$16.00/+23)** pulling ahead · v0 +$11.20/n333 (Δ +$4.62/+36) · v7 +$3.16/n71 (Δ +$1.96/+8) · v2 −$10.21/n198 (Δ −$6.61/+18, sinking). ~85 new trades in 6h — healthy accrual resumed.
+- **Feed flap self-resolved ~20:00 UTC WITHOUT a restart.** Tick cadence recovered 24→537→615→639→644→536/hour (19h→00h); feed_source last 2h = 1211 chainlink_ws / 44 rest_poll (~96% healthy WS). The #157 concern stands: it under-accrued ~6h invisibly.
+- Deploy bar (leader v8): mean **$0.2075** (sd $2.46), z-CI [−0.153, +0.568], boot95 [−0.159, +0.560]; needs ~539 → **~40d** (down from ~125d — bar receding as v8 strengthens). Still straddles 0; NOT a verdict. v8 has led it4/5/6 with growing n — the model to watch, not yet crown.
+- Live book: **−$19.35/351 (Δ$0)** — live OFF. Bot: mode=paper, state=running, **accruing=YES, cadence healthy (94/10min ✓ via new #157 signal)**.
+- Health flags: (1) **bot NOT restarted** — f45 still 0 rows, and #151/#138/#122/#155 all still inactive on the running (pre-merge) process. No start/stop notifications since 07-08 22:04. (2) v7 on kill-watch (mean +$0.044, n=71 — needs <0 AND n≥150). (3) mission framing note: charter names v7 as the verdict target, but v7 collapsed and **v8 is the de-facto leader** — verdict framework (§4 deploy bar) applies to all models regardless.
+- **Advanced: #157 SHIPPED** (PR #160, `8400354`) — race_status.py now reports `ticks_last_10min` + flags a running loop below ~30/10min as a JOURNALING STALL, visible even when accruing=YES (the 07-09 flap signature). Read-only. 4 tests, **800 total green**.
+- Verdict check (§4): none met — v8 CI straddles 0; v7 +ve at n=71; sunset ~08-27. Cron created 07-07, expires ~07-14 — ~3.5d out, >36h, no re-arm.
+- Next: iteration 7 → assess → #137 (maker/taker fill telemetry). Pending operator (unchanged): restart the paper loop to activate f45 + the 4 merged fixes.
+
 ## 2026-07-09 ~19:30 UTC (out-of-band — operator "do as you wish")
 
 - **Applied #155: `cushion_fresh_v7_f45` added to the shadow roster** (PR #159, `5c3ac71`). Previously agent-gated; applied under an explicit operator grant. Additive/shadow-only — racing specs v0/v2/v7/v8 byte-identical, ablation intact, existing v7 clock untouched. Wired across _MODELS/SELECTABLE/LABELS/DESCRIPTIONS/CANDIDATE_SIGNALS; 3 tests (fires ≤45s, not at 50s, logs #122 state); **796 total green**.
