@@ -2,6 +2,13 @@
 
 Charter: `tasks/race_loop.md`. Newest entries at top after iteration 0.
 
+## 2026-07-10 12:00 UTC (out-of-band — post-relaunch verification + pivot memo, operator "do whatever you think is right")
+
+- **Relaunch verified healthy at +47min**: PID 37735 up, cadence 101/10min ✓, race accruing. **#122 confirmed working in production** — 10/10 new shadow rows carry sigma/spot at decision time. **f45 wiring confirmed correct**: the only v7 fire since relaunch was at "fresh 48s", which f45 correctly skipped (the 46–60s bucket it exists to exclude); no f45 row yet in 9 windows ≈ expected at ~3% selectivity, not a flag.
+- **Wrote `docs/PIVOT_2026-07.md`** (operator grant): evidence → options → recommendation. Bottom line: (A) run the race to its pre-registered verdict (f45 bar ~56 trades, sunset 08-27) AND (C) pre-registered slow-market forecasting-skill pilot on fee-free/low-fee categories (paper only, Brier skill + simulated CI>0 over ≥30 resolutions before any funding); (B) 5m microstructure competition rejected — subsidized-MM war, wrong game for this operator/capital. **Filed #162** (pilot build).
+- Standings unchanged in the hour (today red across the board; three of four models negative cumulative). Live OFF.
+- Next scheduled iteration: assess (f45 first rows?) → dev item = #162 scaffold or #114.
+
 ## 2026-07-10 11:11 UTC (out-of-band — PROCESS RELAUNCHED under explicit operator grant "ok relaunch")
 
 - **Old process (PID 65492, code of 07-06) terminated and relaunched as PID 37735 on current develop.** Sequence: operator had already stopped the loop at 10:50 (clean state, no live exposure — the 10 open live rows are June cruft #63-era); SIGTERM → uvicorn drained (held by a dashboard SSE stream) → SIGKILL after port release + loop-stop confirmed; relaunch via `nohup .venv/bin/python main.py > data/uvicorn_20260710.log` from repo root; flock picked up by the new PID; paper loop started via `POST /api/start` (requested_mode=paper governs).
