@@ -2,6 +2,37 @@
 
 Charter: `tasks/race_loop.md`. Newest entries at top after iteration 0.
 
+## 2026-07-10 19:00 UTC — ★ FINAL VERDICT: FAILS. PROJECT CLOSED. ★
+
+Operator directed a simulation verdict ("simulate on past trades and decide") instead of
+waiting for the 07-17 live check. Executed via the validated tick-replay harness
+(reconstruction 100.00% on 1,043 known outcomes; replay matched all 12 live f45 rows on
+side AND price) over the full journaled history, segmented so the last 2.5 days —
+**recorded after f45's spec was frozen in PR #152, untouched by any selection decision** —
+stand alone:
+
+| f45 segment | n | total | mean | WR |
+|---|---|---|---|---|
+| pre-race OOS (<07-02) | 198 | +$114.99 | +$0.581 | 0.722 |
+| race era (07-02→08) | 35 | +$25.67 | +$0.734 | 0.714 |
+| **POST-FREEZE (≥07-09)** | **37** | **−$15.20** | **−$0.411** | **0.486** |
+
+- The deploy rule (amended 07-10) required CI>0 **AND sign-consistent segments**. The only
+  selection-free segment is negative, at a win rate (48.6%) below even the no-fee coin flip.
+  **FAILS.**
+- Not an f45 quirk: the whole fresh family flipped post-freeze (v7 −$17.27/n50 at WR 0.500;
+  v8 −$6.95/n118). The live f45 shadow book independently agrees (12 settled, −$3.79).
+- Reading: whatever fresh-window inefficiency existed in June is gone — decayed, harvested,
+  or an artifact of having mined June data. All three readings yield the same action, which
+  is the project's core lesson one final time: every apparent edge in this market has died
+  on contact with data recorded after the decision that "found" it.
+- **Executed per the rule**: paper loop stopped, process terminated (19:00 UTC), live never
+  re-enabled. Final books: real money lifetime **−$19.35/351 fills**; ledger preserved with
+  2,924 shadow rows across 10 model variants; 828 tests green at close.
+- Remaining assets: the falsification itself, docs/POSTMORTEM_2026-07.md +
+  docs/PIVOT_2026-07.md, the tooling (replay harness, race_status, regime attribution,
+  forecast_journal), and the #162 manual pilot for whoever wants it. Repo → archive.
+
 ## 2026-07-10 ~13:15 UTC (WIND-DOWN DECISION — operator: "decide whether to kill this project")
 
 - **Decision: the project is dead as an income project; it gets one closure check, then archive.** The determining number is the capacity ceiling, not the race: even a fully-real f45 edge caps at ~$2–4/day, which cannot pay for the agent loop's token cost or any human attention. "Do we have anything?" — no: control negative over 400+ trades, v2/v7 ≈ dead, v8 deflating and one-legged; f45 is a 1-week lottery ticket with a capped prize.
