@@ -73,7 +73,7 @@ Env knobs: `BTC_TRADE_*` are canonical; `BTC_LIVE_*` are deprecated read-aliases
 <!-- BEGIN GENERATED:summary -->
 - **Trees:** `btc_bot/` = live loop + signal math; `btc_5m_fv/` = execution/connectors/dashboard/backtest; top-level `config.py`/`db.py`/`logging_setup.py` = foundation. Both ACTIVE, bidirectionally coupled.
 - **Entry:** `python main.py` → FastAPI `btc_5m_fv/ops/dashboard/app.py`; loop starts on operator ▶ Start → `btc_bot/controller.py:request_start`.
-- **Tests:** 808.
+- **Tests:** 828.
 - **Built-but-dead (do not edit expecting runtime effect):** `btc_5m_fv/backtest/conditional.py`, `btc_5m_fv/backtest/harness.py`, `btc_5m_fv/connectors/base.py`, `btc_5m_fv/connectors/binance.py`, `btc_5m_fv/connectors/chainlink.py`, `btc_5m_fv/connectors/polymarket.py`, `btc_5m_fv/ops/controller.py`, `btc_5m_fv/ops/dashboard/panels/_shared.py`, `btc_5m_fv/storage/replay.py`, `btc_5m_fv/strategy/signal.py`, `btc_bot/chronos_signal.py`.
 <!-- END GENERATED:summary -->
 
@@ -156,6 +156,7 @@ Env knobs: `BTC_TRADE_*` are canonical; `BTC_LIVE_*` are deprecated read-aliases
 | `tools/clear_auto_pause.py` | cli | 0 | Clear the adaptive auto-pause and resume entries (#36). |
 | `tools/demo_snapshot.py` | cli | 0 | Print a BTC paper trading snapshot. |
 | `tools/fetch_polymarket_trades.py` | cli | 0 | Pull this account's Polymarket trade history via the CLOB API → CSV. |
+| `tools/forecast_journal.py` | cli | 0 | Slow-market forecasting-skill pilot: journal + scoring (issue #162). |
 | `tools/gen_docs.py` | cli | 0 | Generate the machine-derived sections of the agent docs. |
 | `tools/live_detect_wallet.py` | cli | 0 | Detect the Polymarket funder wallet + signature type from a signer key (#34). |
 | `tools/live_preflight.py` | cli | 0 | Live-launch preflight: verify the .env wallet config end to end (issue #32). |
