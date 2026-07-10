@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.0.0 — FINAL: research archive (2026-07-10)
+
+The program reached its pre-registered verdict and closed. Post-freeze out-of-sample
+segment (data recorded after the final candidate's spec was frozen in PR #152):
+f45 −$0.41/trade over n=37 at WR 0.486; the whole fresh family flipped negative; the live
+shadow book agreed (−$3.79/n12, replay-consistent 12/12). Deploy rule required
+sign-consistent segments → FAILS → bot stopped, live never re-enabled, repo archived.
+
+Final ledger: real money −$19.35 across 351 fills (fees exceeded 100% of the loss);
+2,924 shadow positions across 10 variants; 828 tests green in a clean-venv install.
+
+Week of instrumentation shipped by the agent ops-loop before close (PRs #152–#164):
+f45 signals + replay grid (#149), race_status CLI (#150), honest feed labels (#151),
+silent-stop alerts (#138), vol/basis regime columns (#122), f45 roster arm (#155),
+tick-cadence stall detection (#157), maker/taker placement telemetry — 23% maker share
+(#137), deploy-bar min-n guard, forecast_journal pilot tool (#162). Plus decision docs:
+docs/PIVOT_2026-07.md and the full audit trail in tasks/race_log.md.
+
 ## v0.4.27 — Tick-replay backtest + v8 pre-registered (2026-07-02)
 
 `tools/replay_race.py` (#144, PR #145) replays the full quote history (74,580 ticks, 1,626 labeled windows from Jun 11) through the current roster, fee-true. Validation first: outcome labels agree 564/564 with ground truth (next-window reference print); the harness reproduces the recorded shadow v2 ledger 249/249 windows exactly.
