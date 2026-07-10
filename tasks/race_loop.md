@@ -1,5 +1,13 @@
 # Race Loop Charter — autonomous assess/iterate cycle
 
+> **RETIRED 2026-07-10 (operator decision — see race_log entry of the same date).**
+> The 6h cron loop is cancelled: even the maximum win (~$2–4/day capacity ceiling) cannot
+> pay for the loop's own token cost, let alone attention. Remaining schedule: the bot runs
+> unattended; ONE f45 verdict check ~2026-07-17 (≈56 settled trades); then the bot is
+> stopped and the project archived REGARDLESS of the result (a pass upgrades the postmortem
+> wording, not the economics). The #162 pilot is manual-only, zero agent involvement.
+> Guardrails below remain binding for that final check.
+
 Scheduled agent loop (cron `23 */6 * * *` local, durable, created 2026-07-07). Each firing
 executes **one iteration**: assess → advance one backlog item → log. The mission is to reach a
 **kill-or-deploy verdict on `cushion_fresh_v7`** with maximum evidence per day and **zero

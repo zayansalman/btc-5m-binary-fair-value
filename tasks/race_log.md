@@ -2,6 +2,14 @@
 
 Charter: `tasks/race_loop.md`. Newest entries at top after iteration 0.
 
+## 2026-07-10 ~13:15 UTC (WIND-DOWN DECISION — operator: "decide whether to kill this project")
+
+- **Decision: the project is dead as an income project; it gets one closure check, then archive.** The determining number is the capacity ceiling, not the race: even a fully-real f45 edge caps at ~$2–4/day, which cannot pay for the agent loop's token cost or any human attention. "Do we have anything?" — no: control negative over 400+ trades, v2/v7 ≈ dead, v8 deflating and one-legged; f45 is a 1-week lottery ticket with a capped prize.
+- **Actions taken now**: 6h cron loop CANCELLED (id 730f4ec0) — the token spend stops today. Bot left running unattended (costs nothing, accrues f45 by itself). Charter marked RETIRED.
+- **Remaining schedule**: (1) ~2026-07-17: ONE f45 verdict check (≈56 settled trades) — deploy-bar arithmetic via race_status.py, result written here; (2) then STOP the bot and archive the repo regardless of the result — a pass changes the postmortem wording ("a small real edge existed below the economic floor"), not the decision; (3) 2026-08-27 sunset stands as the hard backstop if the check is missed.
+- **#162 pilot**: manual-only from here (operator's own forecasts via tools/forecast_journal.py; zero agent involvement). Lives or dies on whether the operator actually enjoys forecasting — not sunk cost.
+- **What the project banked**: a venue-true falsification (~$19.35 total tuition), the fee/microstructure map of who actually earns on 5m markets, and reusable discipline/tooling (fee-true ledger, replay harness, pre-registration + FDR habits, race_status/forecast_journal). That value is already realized; nothing after 07-17 adds to it.
+
 ## 2026-07-10 12:53 UTC (iteration 8)
 
 - **f45's first settled trade: a WIN, +$2.21** (fresh 28s-class entry, settled clean). n=1 — means nothing; clock genuinely running is the news. Bar: ~56 trades at replay mean.
