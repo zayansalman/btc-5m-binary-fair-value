@@ -228,6 +228,78 @@ class TestGatherLiveBook:
         assert live.total == pytest.approx(-4.0)  # +4 − 8
         assert live.by_day[-1] == ("2026-07-07", 1, -8.0)
 
+    def test_missing_orders_table_yields_zero_split(self, seeded_db: Path) -> None:
+        """The seeded DB has no btc_live_orders — split degrades to zeroes."""
+        conn = _conn(seeded_db)
+        live = gather_live_book(conn)
+        conn.close()
+        assert (live.entries_matched, live.entries_rested) == (0, 0)
+
+
+_LIVE_ORDERS_TABLE = """
+CREATE TABLE btc_live_orders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_at TEXT, window_slug TEXT, token_id TEXT, intent TEXT, side TEXT,
+  price REAL, size REAL, notional_usd REAL, order_type TEXT, status TEXT,
+  clob_order_id TEXT, error TEXT, details_json TEXT, mode TEXT
+);
+"""
+
+
+class TestPlacementSplit:
+    """#137: maker/taker attribution from the journaled placement response."""
+
+    def _db_with_orders(self, tmp_path: Path) -> Path:
+        db = tmp_path / "orders.db"
+        conn = sqlite3.connect(db)
+        conn.executescript(
+            _SHADOW_TABLE + _POSITIONS_TABLE + _TICKS_TABLE + _CONFIG_TABLE
+            + _LIVE_ORDERS_TABLE
+        )
+        import json as _json
+
+        def order(status: str, placement: str | None, intent="ENTRY", mode="live"):
+            details = (
+                _json.dumps({"response": {"status": placement}})
+                if placement
+                else None
+            )
+            conn.execute(
+                "INSERT INTO btc_live_orders "
+                "(created_at, intent, side, status, details_json, mode) "
+                "VALUES ('2026-07-09T00:00:00+00:00',?,?,?,?,?)",
+                (intent, "Up", status, details, mode),
+            )
+
+        order("SUBMITTED", "matched")
+        order("SUBMITTED", "matched")
+        order("SUBMITTED", "live")
+        order("BLOCKED", None)              # no response → excluded
+        order("SUBMITTED", "matched", intent="EXIT")   # exits excluded
+        order("SUBMITTED", "matched", mode="paper")    # paper rows excluded
+        conn.commit()
+        conn.close()
+        return db
+
+    def test_counts_entry_placements_only(self, tmp_path: Path) -> None:
+        db = self._db_with_orders(tmp_path)
+        conn = _conn(db)
+        live = gather_live_book(conn)
+        conn.close()
+        assert live.entries_matched == 2
+        assert live.entries_rested == 1
+
+    def test_render_shows_maker_share(self, tmp_path: Path) -> None:
+        db = self._db_with_orders(tmp_path)
+        conn = _conn(db)
+        live = gather_live_book(conn)
+        bot = gather_bot_state(conn)
+        conn.close()
+        out = render_text([], live, bot, SINCE, trades_per_day=9.0)
+        assert "2 crossed (taker)" in out
+        assert "1 rested (maker-eligible" in out
+        assert "33% maker share" in out
+
 
 class TestGatherBotState:
     def test_stopped_bot_not_accruing(self, seeded_db: Path) -> None:
