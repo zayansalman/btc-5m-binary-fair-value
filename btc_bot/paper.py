@@ -110,6 +110,70 @@ _reference_cache: dict[int, float] = {}
 _calibrator: _calibration.IsotonicCalibrator | _calibration.IdentityCalibrator | None = None
 
 
+# Retired active-model selections we have already notified about (#142) —
+# one loud notification per model per process, then silent v0 fallback.
+_unknown_model_notified: set[str] = set()
+
+# --- Loop heartbeat + generation (#147 watchdog) --------------------------
+# The heartbeat is stamped at loop entry and after EVERY iteration (including
+# failed ticks); a stalled age while the bot should be running means the loop
+# is wedged on an unbounded await. The generation counter lets an abandoned
+# (wedged, later un-wedged) loop detect it was superseded so it never clears
+# the new loop's globals or writes state=stopped over a running successor.
+_heartbeat_monotonic: float | None = None
+_loop_generation: int = 0
+
+
+def _beat() -> None:
+    global _heartbeat_monotonic
+    _heartbeat_monotonic = time.monotonic()
+
+
+def heartbeat_age_seconds() -> float:
+    """Seconds since the loop last completed an iteration (inf if never)."""
+    if _heartbeat_monotonic is None:
+        return float("inf")
+    return time.monotonic() - _heartbeat_monotonic
+
+
+def _is_current_generation(my_generation: int) -> bool:
+    return _loop_generation == my_generation
+
+
+async def _resolve_active_model() -> str:
+    """Operator-selected model, with retired selections healed to the default.
+
+    A persisted selection pointing at a model removed from the roster (#142
+    surgery — e.g. ``down_skeptic_drift_v6``) falls back to the v0 native
+    path, LOUDLY, once per model per process, so the operator knows their
+    pick is no longer being traded.
+    """
+    active_model = (
+        await get_config(shadow_runner.ACTIVE_MODEL_KEY, shadow_runner.DEFAULT_MODEL)
+        or shadow_runner.DEFAULT_MODEL
+    )
+    if (
+        active_model == shadow_runner.DEFAULT_MODEL
+        or active_model in shadow_runner.CANDIDATE_SIGNALS
+    ):
+        return active_model
+    if active_model not in _unknown_model_notified:
+        _unknown_model_notified.add(active_model)
+        await notify(
+            "btc_model_fallback",
+            f"Active model '{active_model}' is retired from the roster; "
+            f"trading the {shadow_runner.DEFAULT_MODEL} native path instead. "
+            "Pick a current model in the dashboard.",
+            {"retired_model": active_model},
+        )
+        log.warning(
+            "paper.active_model_retired_fallback",
+            retired_model=active_model,
+            fallback=shadow_runner.DEFAULT_MODEL,
+        )
+    return shadow_runner.DEFAULT_MODEL
+
+
 def _get_calibrator() -> _calibration.IsotonicCalibrator | _calibration.IdentityCalibrator:
     global _calibrator
     if _calibrator is None:
@@ -308,18 +372,55 @@ def _loss_halt_stop_detail(gate: Any, mode: str) -> str | None:
     the bot, flatten, and surface this as LAST DETAIL so the operator knows to
     Reset the tally before pressing Start. Returns None when the gate is absent,
     within the limit, or the operator has the bypass on.
+
+    LIVE mode only (#146): a breached PAPER line never hard-stops the loop —
+    its entries are already blocked per tick by the gate's ``block_reason``,
+    and stopping would also kill the shadow-race recorder and settlement on a
+    line that risks zero capital (which silently froze the race on 07-02).
+    ``_notify_paper_halt_pause`` surfaces the paused state instead.
     """
     if gate is None or not gate.loss_halt_breached():
         return None
-    leg = "live" if gate.is_live else "paper"
+    if mode != "live":
+        return None
     pnl = gate.halt_pnl
     limit = gate.cfg.daily_loss_halt_usd
     # Trailing high-water-mark floor (#112): peak - limit. Cite it (not a fixed
     # -limit), since the halt can fire at a POSITIVE pnl after a banked peak.
     return (
-        f"Daily loss halt: {leg} realized {pnl:+.2f} USD at/below trailing floor "
+        f"Daily loss halt: live realized {pnl:+.2f} USD at/below trailing floor "
         f"{gate.loss_halt_floor:+.2f} (peak {gate.halt_peak:+.2f} − {limit:.2f} limit). "
         "Bot stopped & flattened — Reset the halt, then Start to resume."
+    )
+
+
+# One notification per breach episode (#146); re-arms when the halt clears
+# (daily roll or operator reset) so the next episode notifies again.
+_paper_halt_pause_notified = False
+
+
+async def _notify_paper_halt_pause(gate: Any, mode: str) -> None:
+    """Surface a breached PAPER halt as a pause, not a stop (#146)."""
+    global _paper_halt_pause_notified
+    breached = mode != "live" and gate is not None and gate.loss_halt_breached()
+    if not breached:
+        _paper_halt_pause_notified = False
+        return
+    if _paper_halt_pause_notified:
+        return
+    _paper_halt_pause_notified = True
+    await notify(
+        "btc_paper_halt_pause",
+        f"Paper loss halt hit (realized {gate.halt_pnl:+.2f} at/below trailing "
+        f"floor {gate.loss_halt_floor:+.2f}): paper entries paused until the "
+        "daily window rolls or the halt is reset — the loop keeps running and "
+        "shadow logging continues (#146).",
+        {"halt_pnl": gate.halt_pnl, "floor": gate.loss_halt_floor},
+    )
+    log.warning(
+        "paper_loop.loss_halt_pause",
+        halt_pnl=gate.halt_pnl,
+        floor=gate.loss_halt_floor,
     )
 
 
@@ -331,7 +432,12 @@ async def run_paper_loop(stop_event: threading.Event) -> None:
     LiveExecutor. Live boot refusal stops the loop — it never silently falls
     back to paper.
     """
-    global _live_executor, _chainlink_feed, _risk_gate
+    global _live_executor, _chainlink_feed, _risk_gate, _loop_generation
+    # Watchdog bookkeeping (#147): claim a fresh generation and stamp the
+    # heartbeat before any await, so a stall during startup is also visible.
+    _loop_generation += 1
+    my_generation = _loop_generation
+    _beat()
     # Runtime mode selector (dashboard) overrides the env default; live still
     # passes the same boot gate. Falls back to BTC_BOT_MODE when unset.
     mode = await get_config("btc_bot.requested_mode", _config.BTC_BOT_MODE) or "paper"
@@ -409,8 +515,23 @@ async def run_paper_loop(stop_event: threading.Event) -> None:
                 log.warning("paper_loop.loss_halt_stop", detail=stop_detail)
                 await notify("btc_loss_halt_stop", stop_detail)
                 break
+            # Paper breach (#146): entries pause, the loop and the shadow
+            # race keep running — notify once per episode.
+            await _notify_paper_halt_pause(_risk_gate, mode)
+            _beat()  # #147: iteration completed (even a failed tick beats)
             await _sleep_interruptible(stop_event, float(BTC_PAPER_TICK_SECONDS))
     finally:
+        if not _is_current_generation(my_generation):
+            # A watchdog respawn superseded this loop while it was wedged
+            # (#147). Its stop_event is set, so it exits here — but it must
+            # NOT clear the successor's globals or write state=stopped over
+            # a running loop. Only its own local feed gets torn down.
+            log.warning(
+                "paper_loop.superseded_exit", generation=my_generation
+            )
+            feed.stop()
+            feed_task.cancel()
+            return
         if _live_executor is not None:
             # Flatten BEFORE dropping the executor: this thread owns it, so
             # Stop can never paper-close a live position (which would strand
@@ -817,10 +938,7 @@ async def _build_snapshot(client: httpx.AsyncClient) -> PaperSnapshot:
     # signal path below; the other candidates dispatch through the shadow
     # registry. ONLY the side/confidence/reason signal changes — sizing and
     # every downstream risk gate (loss-halt, caps, slippage) are untouched.
-    active_model = (
-        await get_config(shadow_runner.ACTIVE_MODEL_KEY, shadow_runner.DEFAULT_MODEL)
-        or shadow_runner.DEFAULT_MODEL
-    )
+    active_model = await _resolve_active_model()
     edge_override: float | None = None
     if degraded_reason is not None:
         side, confidence, notional = None, 0.0, 0.0
@@ -1454,6 +1572,7 @@ async def _close_rolled_position(
         )
         return False
     settled_held: float | None = None
+    settled_pnl: float | None = None
     if _live_executor is not None:
         # Settle-style live: no exit order — register the resolution with the
         # executor (PnL into the daily halt, slot freed; winning tokens await
@@ -1463,11 +1582,14 @@ async def _close_rolled_position(
         if not result.ok and result.status != "SKIPPED":
             return False
         # Real held size the venue actually settled (0 when the entry never
-        # filled) — the ledger books on THIS, not the recorded shares (#103).
+        # filled) — the ledger books on THIS, not the recorded shares (#103) —
+        # and the executor's fee-true realized PnL (#133), so the ledger row
+        # matches the journal and the daily halt to the cent.
         settled_held = result.size or 0.0
+        settled_pnl = result.notional_usd
     return await _close_position(
         pos, snapshot, 1.0 if won else 0.0, "WINDOW_ROLL",
-        settled=True, settled_held=settled_held,
+        settled=True, settled_held=settled_held, settled_pnl=settled_pnl,
     )
 
 
@@ -1565,6 +1687,7 @@ async def _close_position(
     reason: str,
     settled: bool = False,
     settled_held: float | None = None,
+    settled_pnl: float | None = None,
 ) -> bool:
     """Close one position; returns True when the ledger row was closed.
 
@@ -1633,7 +1756,14 @@ async def _close_position(
         # double-count this live PnL into the PAPER leg (the bug behind
         # paper_pnl mirroring live_pnl).
         held = settled_held if settled_held is not None else float(pos["shares"])
-        pnl = prior_pnl + held * (exit_price - entry_price)
+        # Prefer the executor's realized number — it is net of the entry taker
+        # fee (#133); the price×size fallback covers older callers only.
+        realized = (
+            settled_pnl
+            if settled_pnl is not None
+            else held * (exit_price - entry_price)
+        )
+        pnl = prior_pnl + realized
     else:
         pnl = float(pos["shares"]) * (exit_price - entry_price)
         # Paper closes feed the SAME daily-loss-halt counter live closes do
@@ -1739,8 +1869,65 @@ def _detail_from_snapshot(snapshot: PaperSnapshot) -> str:
         f"edge: {snapshot.edge:+.3f}\n"
         f"Signal: {side}; confidence {snapshot.confidence:.2f}; notional ${snapshot.notional_usd:.0f}\n"
         f"Gate: {_gate_preview_line(snapshot)}\n"
-        f"Feed: Binance public fallback while Chainlink Streams access is pending."
+        f"{_feed_label(snapshot.feed_source)}"
     )
+
+
+# Human labels for the per-component feed_source tokens (issue #151). The old
+# hardcoded "Binance public fallback" line misstated the settlement story: spot
+# and reference resolve on Chainlink — Polymarket's own settlement feed (#21) —
+# and only the volatility SHAPE ever falls back to Binance.
+_FEED_SOURCE_LABELS = {
+    "chainlink_ws": "Chainlink WS",
+    "chainlink_rest_poll": "Chainlink REST-poll",
+    "chainlink_rest": "Chainlink REST",
+    "binance_shape_fallback": "Binance (vol shape)",
+    "binance_public": "Binance public",
+    "binance": "Binance",
+    "clob": "CLOB",
+    "unavailable": "unavailable",
+}
+
+
+def _feed_label(feed_source: str) -> str:
+    """Human-readable feed line derived from the actual per-component sources.
+
+    ``feed_source`` is ``spot=…;ref=…;vol=…;quotes=…`` (see
+    :func:`_parse_feed_source`). Rendering the real sources — rather than a
+    fixed string — lets the status panel tell the truth about the
+    settlement-critical spot/reference feeds (Chainlink) versus the
+    volatility-shape input that may fall back to Binance (issue #151).
+
+    A trailing qualifier states settlement alignment plainly: Polymarket
+    resolves each window on its Chainlink BTC/USD print, so what matters is
+    that spot and reference are Chainlink; a Binance vol-shape fallback is
+    cosmetic to settlement, whereas spot leaving Chainlink is a real warning.
+    """
+    parts = _parse_feed_source(feed_source)
+    if not parts:
+        return "Feed: source unavailable"
+
+    def lbl(token: str | None) -> str:
+        if not token:
+            return "—"
+        return _FEED_SOURCE_LABELS.get(token, token)
+
+    segments = [
+        f"spot {lbl(parts.get('spot'))}",
+        f"ref {lbl(parts.get('ref'))}",
+        f"vol {lbl(parts.get('vol'))}",
+    ]
+    if parts.get("quotes"):
+        segments.append(f"quotes {lbl(parts.get('quotes'))}")
+    line = "Feed: " + " · ".join(segments)
+
+    spot_src = parts.get("spot", "") or ""
+    ref_src = parts.get("ref", "") or ""
+    if spot_src.startswith("chainlink") and ref_src.startswith("chainlink"):
+        line += " (settlement-aligned)"
+    elif not spot_src.startswith("chainlink"):
+        line += " (⚠ spot off Chainlink — settlement risk)"
+    return line
 
 
 def _gate_preview_line(snapshot: PaperSnapshot) -> str:

@@ -1,5 +1,50 @@
 # Changelog
 
+## v1.0.0 — FINAL: research archive (2026-07-10)
+
+The program reached its pre-registered verdict and closed. Post-freeze out-of-sample
+segment (data recorded after the final candidate's spec was frozen in PR #152):
+f45 −$0.41/trade over n=37 at WR 0.486; the whole fresh family flipped negative; the live
+shadow book agreed (−$3.79/n12, replay-consistent 12/12). Deploy rule required
+sign-consistent segments → FAILS → bot stopped, live never re-enabled, repo archived.
+
+Final ledger: real money −$19.35 across 351 fills (fees exceeded 100% of the loss);
+2,924 shadow positions across 10 variants; 828 tests green in a clean-venv install.
+
+Week of instrumentation shipped by the agent ops-loop before close (PRs #152–#164):
+f45 signals + replay grid (#149), race_status CLI (#150), honest feed labels (#151),
+silent-stop alerts (#138), vol/basis regime columns (#122), f45 roster arm (#155),
+tick-cadence stall detection (#157), maker/taker placement telemetry — 23% maker share
+(#137), deploy-bar min-n guard, forecast_journal pilot tool (#162). Plus decision docs:
+docs/PIVOT_2026-07.md and the full audit trail in tasks/race_log.md.
+
+## v0.4.27 — Tick-replay backtest + v8 pre-registered (2026-07-02)
+
+`tools/replay_race.py` (#144, PR #145) replays the full quote history (74,580 ticks, 1,626 labeled windows from Jun 11) through the current roster, fee-true. Validation first: outcome labels agree 564/564 with ground truth (next-window reference print); the harness reproduces the recorded shadow v2 ledger 249/249 windows exactly.
+
+- **cushion_fresh_v7's CI excludes zero** on the full period (+0.344/trade [+0.072, +0.617], n=272) AND on the pre-race half its gates never saw (+0.346 [+0.005, +0.687], n=164) — near-identical expectancy across a regime change.
+- Fragility grid: the **freshness gate carries most of the effect** (v0+fresh60: largest totals in both independent halves, BH-q<0.05 each; 99.4% of first-60s signal ticks had ≥5-share depth) → pre-registered **`fair_value_fresh_v8`** (v0 + first-60s only). Roster is now a clean ablation: v0 / v2 (cushion) / v7 (all gates) / v8 (fresh only).
+- Engine restarted on the 4-model roster (paper mode). Deploy bar unchanged: live only when the LIVE race CI clears zero net of fees — at current point estimates that is ~2–3 weeks of race data, not 5–6.
+
+## v0.4.26 — Roster surgery + race restart (2026-07-02)
+
+Operator mandate: bin the losers, build better candidates (#142, PR #143).
+
+- **Binned** `late_convergence_v3` (favorite-soak trap), `down_skeptic_v4` (IS→OOS rank flip), `cushion_drift_v5` (redundant with v2), `down_skeptic_drift_v6` (worst everywhere). History stays in the ledger; −695 lines of retired signal code.
+- **New challenger `cushion_fresh_v7`** = v2 + first-60s freshness gate (+$88.57 of family profit sat in 0–60s; every later bucket negative) + 0.065 claimed-edge cap (larger claims realized worst). Gates frozen a-priori; the resumed race is the out-of-sample test.
+- **Retired-model heal**: the persisted active model (`down_skeptic_drift_v6`) now falls back to the v0 native path with a loud one-time notification (`_resolve_active_model`).
+- Rejected in recon (not built): both-sides pair-arb (only 2–2.5% of sub-$1 ticks persist one tick — stale-book flickers) and a regression-calibrated EV gate (unidentifiable coefficients).
+- Race restarted 2026-07-02 in **paper mode** on the new roster (v0 control / v2 champion / v7 challenger); stale position 1768 settled organically (+$2.49 gross; next reconcile trues to +$2.41 net).
+
+## v0.4.25 — Postmortem: boot heal, fee-true books, ledger reconciled (2026-07-02)
+
+Forensic postmortem of the 06-25 outage and the full trade history (docs/POSTMORTEM_2026-07.md, #132–#138). Venue truth: bot-era PnL **−$17.24** = +$6.27 gross signal − $23.51 taker fees; the books had shown −$8.01/−$3.10 (fee-blind).
+
+- **#132** — boot reconciliation no longer hard-refuses on CLOB-pruned entry orders (the outage): resolved-window rows close as `RECONCILED_STALE_RESOLVED`; unresolved rows adopt the journal's placement match; refusal reserved for genuinely unknowable live risk.
+- **#133** — fee-true booking: the venue's taker fee (`0.07·p·(1−p)`/share, USDC, on the placement-crossed portion) is captured at entry and booked at settlement/exit; ledger row = journal = daily-halt to the cent; fee math shared with the shadow ledger.
+- **#134** — ledger reconciled to venue records (324 corrections, 4 phantoms voided): live closed PnL −$3.10 → −$17.77; stranded position 1768 (won +$2.41, auto-redeemed 30 s after the crash) heals on next boot.
+- Postmortem doc adds the pre-registered restart protocol: shadow-only ≥6 weeks, deploy bar = 95% CI > 0 net of fees; night-gate and selectivity hypotheses formally dead (FDR/permutation/OOS).
+
 ## v0.4.24 — Fix red CI: declare numpy for the regime-attribution tool (2026-06-23)
 
 `tools/regime_attribution.py` (#120) imports numpy, but numpy was declared nowhere — so a clean CI install (`pip install -e .[test]`) couldn't import it, failing **two hard gates**: the test job (`ModuleNotFoundError` collecting `test_regime_attribution.py` → whole suite aborts) and docs-drift (`gen_docs` can't introspect the tool → AGENTS.md/CODE_MAP.md drift). Local/dev venvs had numpy, masking it.

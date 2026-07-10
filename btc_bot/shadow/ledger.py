@@ -32,6 +32,10 @@ async def record_shadow_signal(
     shares: float,
     quote_source: str,
     feed_source: str,
+    spot_at_decision: float | None = None,
+    reference_at_decision: float | None = None,
+    sigma_per_second: float | None = None,
+    drift_per_second: float | None = None,
 ) -> None:
     """Log one model's would-be trade for a window as an OPEN shadow position.
 
@@ -39,6 +43,11 @@ async def record_shadow_signal(
     index, so the first signal a model emits for a window wins and later signals
     in the same window are silently dropped — recording is idempotent per
     (window, model).
+
+    ``spot_at_decision`` / ``reference_at_decision`` / ``sigma_per_second`` /
+    ``drift_per_second`` snapshot the market state at record time (issue #122)
+    so volatility and basis become a-priori regime axes; they default to NULL
+    for callers that do not supply them.
     """
     async with _db.connect() as conn:
         await conn.execute(
@@ -46,8 +55,10 @@ async def record_shadow_signal(
             INSERT OR IGNORE INTO btc_model_shadow_positions(
               created_at, window_slug, model_id, side, entry_price,
               notional_usd, shares, fair_prob, edge, confidence, reason,
-              state, quote_source, feed_source
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)
+              state, quote_source, feed_source,
+              spot_at_decision, reference_at_decision, sigma_per_second,
+              drift_per_second
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)
             """,
             (
                 created_at,
@@ -63,6 +74,10 @@ async def record_shadow_signal(
                 reason,
                 quote_source,
                 feed_source,
+                spot_at_decision,
+                reference_at_decision,
+                sigma_per_second,
+                drift_per_second,
             ),
         )
         await conn.commit()

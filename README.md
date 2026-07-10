@@ -1,188 +1,174 @@
-# BTC 5m Binary Fair Value
+# BTC 5m Binary Fair Value — a trading lab that stopped itself on evidence
 
-A modular, testable trading system for **BTC 5-minute binary fair value** trading on Polymarket Up/Down markets. Built with clean architecture, exchange-agnostic connectors, deterministic replay backtesting, and explicit paper order lifecycle simulation.
+**Status: ARCHIVED (research complete, 2026-07-10).** This repository is the full record of a
+30-day quantitative research program on Polymarket's BTC 5-minute Up/Down binary markets:
+a fair-value model, a paper/live execution stack, a five-model shadow "race", a validated
+tick-replay backtester, and an autonomous agent ops-loop — ending in a **rigorous negative
+result**, reached before it could get expensive.
 
----
+> **The finding:** at retail latency, 5-minute BTC direction is a coin flip priced correctly
+> to within the venue's taker fee. Every apparent edge (seven model variants, three
+> "race leaders") died on contact with data recorded *after* the decision that found it.
+> The actors who do profit are execution businesses — venue-subsidized market makers and
+> sub-100ms latency snipers — not predictors. Total real-money cost of the answer: **−$19.35
+> across 351 fills**, with taker fees exceeding 100% of the loss.
 
-## Quick Start
-
-```bash
-python3.11 -m venv .venv
-./.venv/bin/pip install -e ".[test]"
-cp .env.example .env
-./.venv/bin/python -m uvicorn btc_5m_fv.ops.dashboard.app:app --reload --port 7860
-```
-
-Open the dashboard at `http://127.0.0.1:7860`.
-
-## What It Does
-
-1. Discovers the active BTC 5-minute Up/Down market on Polymarket
-2. Computes a **fair probability** that BTC finishes above the reference price using a log-normal volatility model (Black-Scholes CDF)
-3. Compares fair probability to market price to find **edge**
-4. Paper-trades when edge, confidence, time-remaining, and risk filters all pass
-5. Manages positions with dynamic exits (target, stop, time decay, band reentry)
-6. Records every tick to SQLite for deterministic replay backtesting
-7. Provides a real-time operator dashboard with health telemetry and incident tracking
-8. Exposes operator runtime controls (e.g. **max trade size**) that the loop reads every tick — adjustable from the dashboard CONTROLS card without a restart, in paper and live
-
-Live trading is **built** (`btc_5m_fv/execution/live.py`) but **off by default and multi-gated**: it runs only with `BTC_BOT_MODE=live` AND `BTC_LIVE_CONFIRM=YES_I_UNDERSTAND` AND a private key AND a coherent wallet AND a clean config parse. In the default paper mode no orders are placed and no key is required. Agents must never flip the gate; the operator launches live.
-
-> This repo is **two coupled code trees** — `btc_bot/` (live loop + signal math) and `btc_5m_fv/` (execution, connectors, dashboard, backtest). See `docs/CODE_MAP.md` for the full routing picture.
+Most trading repos claim an edge. This one demonstrates the machinery for proving you
+don't have one — which is the harder and more valuable build.
 
 ---
+
+## Headline results (all venue-true, fee-inclusive)
+
+| Question | Answer | Evidence |
+|---|---|---|
+| Does the fair-value model have directional edge? | **No** | Unfiltered control: ≈$0 over 400+ settled shadow trades |
+| Do freshness/cushion/edge-cap gates create edge? | **No** | All 7 variants regressed to null as n grew; final candidate's post-freeze segment: −$0.41/trade, WR 48.6% (n=37) |
+| Does switching to the recent leader help? | **No** | Simulated on own race data: follow-the-leader +$3–6 vs hold +$16.60 — switching buys the day *after* the big day |
+| Do regimes (time/edge/vol/basis) hide an edge? | **No** | A-priori bands, side-attributed, permutation + FDR: 0/12 and 0/75 cells survive |
+| Where did the live losses actually go? | **Fees** | Gross +$6.27 vs taker fees −$23.51 (June era); realized WR 55% vs fee breakeven 55.7% |
+| Who *does* earn here? | **Execution businesses** | Makers get 0 fees + 20% rebates of taker fees + a >$5M/month liquidity-rewards pool; our resting-quote backtest measured their adverse selection (fills 98% of losers, 75% of winners) |
+| Could passive (maker) execution fix it? | **No** | Backtested: adverse selection, not fees, is the maker's rent — from a slow quoter it's a loss |
+
+## Why this repo is worth reading
+
+The negative result is load-bearing because of *how* it was produced:
+
+- **Fee-true accounting everywhere.** One fee model (`btc_bot/shadow/fees.py`,
+  `0.07·p·(1−p)` per share) settles the shadow ledger, the live book, the replayer, and the
+  breakeven math identically. The books were reconciled to the venue's own Data-API
+  cashflows when they disagreed.
+- **Pre-registration before evaluation.** Every gate variant was written down as a
+  hypothesis in a GitHub issue — thresholds frozen — *before* the replay that judged it
+  (#144, #149, #162). In-sample slicing was treated as hypothesis generation only.
+- **A validated simulator.** `tools/replay_race.py` reconstructs window outcomes from the
+  settlement feed's own next-window print (**100.00% agreement** on 1,043 ground-truth
+  outcomes) and reproduces the recorded shadow ledger **exactly** (side and entry price) —
+  so when the replay disagreed with hope, the replay won.
+- **A clean ablation, not a bake-off.** The five racing models form strict subsets
+  (`f45 ⊂ v7 ⊂ v8∩v2 ⊂ v0`), so each gate's *marginal* PnL is directly measurable — which
+  is how "the edge lives in the fresh∩cushion interaction" was isolated, and later how it
+  was watched decaying to zero out-of-sample.
+- **Kill criteria written before the data arrived.** Deploy bar (95% CI > 0 net of fees,
+  sign-consistent segments), kill floors, and a sunset date were pre-registered in
+  `docs/POSTMORTEM_2026-07.md` and enforced — including against three tempting
+  "race leaders" that later collapsed, and finally against the project itself.
+- **Multiple-testing discipline.** Regime and slice claims had to survive
+  Benjamini–Hochberg FDR and one-vs-rest permutation tests. None did, twice.
+- **An agent-operated ops loop** ran assess→build→log cycles every 6 hours
+  (`tasks/race_loop.md` charter with binding guardrails; `tasks/race_log.md` is the full
+  audit trail), shipping 13 PRs of instrumentation while never touching the live gate.
 
 ## Architecture
 
-```
-btc_5m_fv/
-├── core/           # Domain types, abstract interfaces, exceptions
-├── strategy/       # Fair value math, signal generation, confidence sizing
-├── connectors/     # Polymarket, Binance, Chainlink (stub), registry
-├── storage/        # Market data recorder, deterministic replay engine
-├── backtest/       # Full-market harness + conditional backtest
-├── execution/      # Paper order lifecycle, risk service
-└── ops/            # Controller, telemetry, incidents, FastAPI dashboard
-```
-
-### Key Design Decisions
-
-- **Async throughout** — all I/O (HTTP, SQLite) uses `asyncio` via `httpx` and `aiosqlite`
-- **Interface-driven** — every component implements an ABC from `core.interfaces`
-- **SQLite WAL mode** — concurrent reads during writes for dashboard queries
-- **Deterministic replay** — market data recorder enables ground-truth backtesting
-- **Explicit order states** — PENDING -> ACKNOWLEDGED -> FILLED (not instant fills)
-- **Venue-independent risk** — risk checks know nothing about Polymarket
-
----
-
-## Strategy
-
-**BTC 5m Binary Fair Value** estimates the fair probability that BTC finishes Up or Down over a fixed 5-minute window, compares to the market-implied price, and enters when edge exceeds 4.5%.
-
-### Core Math
+Two coupled trees plus a small shared foundation:
 
 ```
-z = log(spot / reference) / (sigma * sqrt(remaining_seconds))
-fair_up_prob = 0.5 * (1 + erf(z / sqrt(2)))
-edge = fair_up_prob - market_up_price
+btc_bot/                  # the live loop + signal math
+├── paper.py              #   tick loop, snapshots, settle-style position lifecycle
+├── controller.py         #   start/stop, watchdog (#147), silent-stop detector (#138)
+├── strategy.py           #   fair-value math + executable-edge signal (pure)
+├── params.py             #   operator-tunable runtime params
+└── shadow/               #   the model race
+    ├── signals.py        #   candidate strategies as PURE functions (view → signal | None)
+    ├── runner.py         #   roster, per-tick recording (idempotent), live dispatch
+    ├── ledger.py         #   INSERT OR IGNORE journal + fee-true settlement
+    └── fees.py           #   the single Polymarket taker-fee model
+
+btc_5m_fv/                # execution / connectors / ops
+├── core/                 #   domain types, interfaces, exceptions
+├── strategy/  connectors/  storage/  backtest/
+├── execution/            #   paper lifecycle + LIVE executor (multi-gated) + RiskGate (#64)
+└── ops/dashboard/        #   FastAPI operator dashboard (SSE), panels, runtime controls
+
+config.py  db.py  logging_setup.py   # foundation: env parsing, SQLite + migrations, structlog
+tools/                    # research instruments (see below)
+tests/                    # 828 tests, network-free, DB-isolated
 ```
 
-Where `sigma` is per-second volatility from the last 90 1-second Binance closes, floored at 2bps/s.
+**Design decisions that carried the project:**
 
-### Entry Filters (all must pass)
+- **Pure signal functions.** Every candidate strategy is
+  `fn(SnapshotView, params) → ShadowSignal | None` over **frozen dataclasses** — no I/O, no
+  clock, no DB — so the same function is unit-tested with hand-built fixtures, raced live
+  by the runner, and replayed over history by the backtester with zero behavioral drift.
+- **Idempotent journaling.** Shadow recording is `INSERT OR IGNORE` against a unique
+  `(window, model)` index: crash-replays and duplicate ticks cannot double-count.
+- **One risk path for paper and live.** The same `RiskGate` (per-trade cap, daily trailing
+  loss-halt, bankroll cap) evaluates both modes, so paper is a faithful preview of live —
+  and the halts fired correctly in production three times.
+- **Live is multi-gated, never implicit.** Real orders require mode + literal confirm
+  string + key + coherent wallet + clean config parse; any missing gate refuses to boot
+  rather than degrade. A kill-switch file flattens and halts.
+- **Defense in depth on ops:** singleton `flock` (two loops can never share one ledger),
+  in-process heartbeat watchdog that respawns a wedged *paper* loop but only notifies for
+  *live* (#147), silent-death detection with one-shot alerts (#138), tick-cadence
+  monitoring that catches feed-flap journaling stalls the heartbeat can't see (#157).
+- **Additive, backfilled migrations.** Schema evolves via `ALTER TABLE` maps + JSON
+  backfills (e.g. maker/taker attribution recovered retroactively from journaled CLOB
+  responses); tools tolerate pre-migration snapshots via `NULL AS col` selects.
+- **Docs that can't rot.** `tools/gen_docs.py` generates the module map and test counts
+  into `docs/` inside `<!-- GENERATED -->` blocks; a CI drift job fails if they're stale.
+- **Secrets redacted at the sink.** Every string persisted to the ledger or notification
+  feed passes through redaction; the private key never logs.
 
-| Filter | Threshold | Purpose |
-|--------|-----------|---------|
-| Time remaining | > 60s | Avoid expiry uncertainty |
-| Edge magnitude | > 4.5% | Filter noise |
-| Confidence | > 50% | Minimum conviction |
-| Price bounds | 0.05 - 0.95 | Avoid slippage at extremes |
+## The research instruments (`tools/`)
 
-### Sizing
+| Tool | What it does |
+|---|---|
+| `replay_race.py` | Tick-replay backtester over the full quote history; self-validating (outcome reconstruction + shadow-ledger reproduction); fragility grid for gate variants |
+| `race_status.py` | One-shot fee-true standings: per-model CI (z + bootstrap), WR vs fee breakeven, deploy-bar required-n/ETA, live book, maker share, bot health & tick cadence |
+| `regime_attribution.py` | A-priori regime bands (time/edge/vol/basis), side-attributed cells, two-sided edge gate, one-vs-rest permutation + BH-FDR |
+| `shadow_performance.py` | Wilson win-rate bands + exact binomial tails vs fee-adjusted breakeven |
+| `reconcile_live_ledger.py` | Reconciles the bot's books to the venue's public Data-API cashflows (found the fee-blind booking bug) |
+| `forecast_journal.py` | The successor experiment (#162): pre-registered forecasting-skill pilot for *slow* markets — Brier skill vs market + fee-true simulated PnL, verdict gated at ≥30 resolutions |
+| `chainlink_lead_lag.py`, `offline_replay.py`, `gen_docs.py`, … | feed lead/lag measurement, offline replays, docs generation |
 
-Linear scale from $1 (50% confidence) to $5 (99% confidence) based on edge magnitude.
+## The strategy that was tested
 
-### Exits (priority order)
+Fair probability of finishing Up from a log-normal diffusion around the settlement feed's
+reference print — `z = ln(spot/ref) / (σ·√t_remaining)`, `P = Φ(z)` — priced against
+executable CLOB asks, entered only through layered gates (edge band 4.5–7%, favorites
+≥ 0.50, first-60s freshness, spot-vs-strike cushion, claimed-edge cap), held to settlement,
+sized ~$3 with a singleton-position constraint. Settlement alignment mattered: windows
+resolve on Polymarket's Chainlink stream, not Binance (measured basis ≈ $50), so spot and
+reference come from the settlement-aligned feed with per-component provenance journaling.
 
-1. **WINDOW_ROLL** — new 5-min window started
-2. **TIME** — < 45s remaining
-3. **TARGET** — +10% PnL
-4. **STOP** — -8% PnL
-5. **BAND_REENTRY** — edge fell below half threshold
+## Reading the record
 
----
+- **`docs/POSTMORTEM_2026-07.md`** — the June live era: fee-blind booking bug, venue-true
+  re-accounting, the restart protocol this project then obeyed.
+- **`docs/PIVOT_2026-07.md`** — the endgame decision memo: who actually earns on 5m markets
+  (with the venue's fee/rebate schedule), why competing there was rejected, and the
+  pre-registered slow-market pilot.
+- **`tasks/race_log.md`** — the full audit trail: every race assessment, every shipped PR,
+  every operator action, three false leaders, and the final verdict.
+- **`tasks/race_loop.md`** — the agent ops-loop charter (guardrails, iteration procedure,
+  pre-registered decision framework).
+- **`docs/CODE_MAP.md` / `docs/FILE_MAP.md`** — generated routing map and module status.
+- **`CHANGELOG.md`** — v0.1 monolith → v1.0.0 archive, PR by PR.
 
-## Systems Scorecard
-
-- **Scope:** BTC 5m Up/Down markets only
-- **Operator control:** Start, Stop, Refresh, visible activity feed
-- **Risk control:** 1 open position, $1-$5 sizing, late-window skip, target/stop/time exits, drawdown monitoring
-- **Feed discipline:** Binance public fallback; Chainlink Data Streams intended as settlement reference
-- **Auditability:** every tick, entry, exit, and dashboard event persisted to SQLite
-- **Testability:** the full pytest suite (count tracked in `docs/FILE_MAP.md` / CI), deterministic fixtures, network-free unit tests
-- **Failure visibility:** feed health telemetry, incident states, operator runbooks
-
----
-
-## Testing
+## Running it (archived, paper-only)
 
 ```bash
-# Full suite
-pytest tests/ -v
-
-# Unit only (network-free)
-pytest tests/unit/ -v
-
-# With coverage
-pytest tests/ --cov=btc_5m_fv --cov-report=term-missing
+python3 -m venv .venv
+./.venv/bin/pip install -e ".[test]"
+cp .env.example .env
+./.venv/bin/python main.py          # dashboard at http://127.0.0.1:7860
+DB_PATH=/tmp/t.db ./.venv/bin/python -m pytest tests/ -q   # 828 tests, DB-isolated
 ```
 
-The suite covers all modules: core types, strategy math, connectors, storage, backtest, execution, risk, telemetry, incidents, dashboard. The current test count is generated into `docs/FILE_MAP.md` and enforced by CI, so it never rots here.
-
----
-
-## CLI Tools
-
-The real tools are repo-root scripts under `tools/`, run with the venv interpreter:
+The ledger ships with 2,924 shadow positions across 10 model variants and the full tick
+journal — every number in this README is reproducible from it:
 
 ```bash
-# One-shot snapshot of the current market + fair value
-./.venv/bin/python tools/demo_snapshot.py
-
-# Backtest the BTC strategy
-./.venv/bin/python tools/backtest_btc_strategy.py
-
-# Replay recorded market data offline
-./.venv/bin/python tools/offline_replay.py
-
-# Live pre-go-live helpers (see docs/OPERATIONS_RUNBOOK.md)
-./.venv/bin/python tools/live_setup.py          # one-time wallet/deposit setup
-./.venv/bin/python tools/live_detect_wallet.py  # detect funder + signature type
-./.venv/bin/python tools/live_preflight.py       # gate / reachability / balance check
-
-# Other utilities: chainlink_lead_lag.py, clear_auto_pause.py,
-# fetch_polymarket_trades.py, gen_docs.py
+./.venv/bin/python tools/race_status.py
+./.venv/bin/python tools/replay_race.py --grid
+./.venv/bin/python tools/regime_attribution.py --axis vol
 ```
 
----
+Live trading remains multi-gated and OFF. It should stay that way; that's the finding.
 
-## Configuration
+## License
 
-Copy `.env.example` to `.env` and adjust:
-
-```bash
-DATA_DIR=./data
-DB_PATH=./data/btc_5m_binary_fair_value.db
-DASHBOARD_PORT=7860
-
-BTC_BOT_MODE=paper
-BTC_PAPER_MIN_TRADE_USD=1
-BTC_PAPER_MAX_TRADE_USD=5
-BTC_PAPER_TICK_SECONDS=5
-BTC_PAPER_ENTRY_EDGE_MIN=0.045
-BTC_PAPER_MIN_CONFIDENCE=0.50
-BTC_PAPER_ENTRY_MIN_REMAINING_SECONDS=60
-BTC_PAPER_TARGET_RETURN=0.10
-BTC_PAPER_STOP_RETURN=-0.08
-BTC_PAPER_TIME_EXIT_SECONDS=45
-```
-
----
-
-## Project Evolution
-
-See `CHANGELOG.md` for the full rebuild history from v0.1 (monolithic demo) to v0.2 (modular system).
-
-See `docs/ROADMAP.md` for future priorities.
-
----
-
-## Safety Boundaries
-
-- Paper is the **default** mode; `BTC_BOT_MODE` accepts `{"paper", "live"}`.
-- Live trading is **built and multi-gated** (`btc_5m_fv/execution/live.py`): it activates only with `BTC_BOT_MODE=live` AND `BTC_LIVE_CONFIRM=YES_I_UNDERSTAND` AND a private key AND a coherent wallet AND a clean config parse. Any missing gate makes Start refuse — live never silently falls back to paper.
-- BTC 5m Up/Down markets only.
-- One open position per window (paper and live).
-- Stop disables new entries immediately; paper positions are force-closed, live positions are cancelled and flattened through the executor.
-- **Agents never flip the live gate or place orders — the operator launches.** See `docs/OPERATIONS_RUNBOOK.md` for the go-live procedure.
+MIT — see `LICENSE`.

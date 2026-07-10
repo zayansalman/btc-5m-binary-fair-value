@@ -88,6 +88,56 @@ class TestLossHaltStopDetail:
         assert _loss_halt_stop_detail(g, "live") is None
 
     @pytest.mark.asyncio
+    async def test_paper_breach_never_stops_the_loop(self, isolated_db) -> None:
+        """#146: a halted PAPER line must not kill the shadow-race collector.
+        Entries stay blocked by the per-entry gate; the loop keeps ticking so
+        shadow logging and settlement continue on a zero-capital line."""
+        g = RiskGate(_cfg(), is_live=False)
+        await g.record_realized_pnl(-12.4, is_live=False)
+        assert g.loss_halt_breached()  # the halt IS breached...
+        assert _loss_halt_stop_detail(g, "paper") is None  # ...but no hard stop
+
+
+class TestPaperHaltPauseNotify:
+    @pytest.mark.asyncio
+    async def test_notifies_once_per_episode_and_rearms(self, isolated_db) -> None:
+        import btc_bot.paper as paper
+
+        paper._paper_halt_pause_notified = False
+        g = RiskGate(_cfg(), is_live=False)
+        await g.record_realized_pnl(-12.4, is_live=False)
+
+        await paper._notify_paper_halt_pause(g, "paper")
+        await paper._notify_paper_halt_pause(g, "paper")  # same episode: no dup
+
+        async with _db.connect() as conn:
+            async with conn.execute(
+                "SELECT COUNT(*) AS n FROM notification_feed"
+                " WHERE event_type = 'btc_paper_halt_pause'"
+            ) as cur:
+                assert (await cur.fetchone())["n"] == 1
+
+        # Episode ends (e.g. daily roll / reset) -> the notifier re-arms.
+        g2 = RiskGate(_cfg(), is_live=False)
+        await paper._notify_paper_halt_pause(g2, "paper")
+        assert paper._paper_halt_pause_notified is False
+
+    @pytest.mark.asyncio
+    async def test_never_fires_in_live_mode(self, isolated_db) -> None:
+        import btc_bot.paper as paper
+
+        paper._paper_halt_pause_notified = False
+        g = RiskGate(_cfg(), is_live=True)
+        await g.record_realized_pnl(-12.4, is_live=True)
+        await paper._notify_paper_halt_pause(g, "live")
+        async with _db.connect() as conn:
+            async with conn.execute(
+                "SELECT COUNT(*) AS n FROM notification_feed"
+                " WHERE event_type = 'btc_paper_halt_pause'"
+            ) as cur:
+                assert (await cur.fetchone())["n"] == 0
+
+    @pytest.mark.asyncio
     async def test_none_when_bypassed(self, isolated_db) -> None:
         from btc_5m_fv.execution.gate import set_loss_halt_bypass
 

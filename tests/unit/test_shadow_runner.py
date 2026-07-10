@@ -94,12 +94,48 @@ async def test_favorite_window_logs_v0_and_cushion(test_db, params) -> None:
     # A clean cushioned favourite: v0 fires AND the cushion gate passes.
     assert "fair_value_v0" in rows
     assert "cushion_favorite_v2" in rows
-    # v0 fires Up here and the regime is neutral -> the regime-aware skeptic
-    # logs too (it reduces to v4, which never tolls an Up pick).
-    assert "down_skeptic_drift_v6" in rows
+    # 180s into the window: the freshness gates (<=60s) skip v7 AND v8 even
+    # though v2 trades — the whole point of the fresh family (#142, #144).
+    assert "cushion_fresh_v7" not in rows
+    assert "fair_value_fresh_v8" not in rows
     assert rows["cushion_favorite_v2"]["side"] == "Up"
     assert rows["cushion_favorite_v2"]["entry_price"] == pytest.approx(0.56)
     assert rows["cushion_favorite_v2"]["shares"] == runner.SHADOW_SHARES
+
+
+@pytest.mark.asyncio
+async def test_fresh_window_logs_v7_too(test_db, params) -> None:
+    """First 60s of the window + modest edge claim -> v7 logs alongside v2."""
+    await runner.record_shadow(_snapshot(remaining_seconds=250), params)
+    rows = await _models_for(test_db, "btc-updown-5m-1700000000")
+    assert "cushion_fresh_v7" in rows
+    assert rows["cushion_fresh_v7"]["side"] == "Up"
+    assert rows["cushion_fresh_v7"]["entry_price"] == pytest.approx(0.56)
+    assert rows["cushion_fresh_v7"]["reason"].startswith("fresh 50s;")
+    # v8 (freshness alone) fires on the same fresh window.
+    assert "fair_value_fresh_v8" in rows
+    assert rows["fair_value_fresh_v8"]["reason"].startswith("fresh 50s;")
+    # ...but f45 (≤45s gate, #155) does NOT fire at 50s elapsed — that is the
+    # whole point of the tighter freshness window.
+    assert "cushion_fresh_v7_f45" not in rows
+
+
+@pytest.mark.asyncio
+async def test_very_fresh_window_logs_f45_alongside_v7(test_db, params) -> None:
+    """≤45s into the window: f45 (#155) logs alongside v7, and records the
+    decision-time market state for the #122 regime axes."""
+    await runner.record_shadow(_snapshot(remaining_seconds=270), params)  # 30s elapsed
+    rows = await _models_for(test_db, "btc-updown-5m-1700000000")
+    assert "cushion_fresh_v7_f45" in rows
+    f45 = rows["cushion_fresh_v7_f45"]
+    assert f45["side"] == "Up"
+    assert f45["reason"].startswith("fresh 30s;")
+    # v7 (≤60s) fires on the same window — additive, not a replacement.
+    assert "cushion_fresh_v7" in rows
+    # #122: the runner populated the regime columns from the snapshot.
+    assert f45["spot_at_decision"] == pytest.approx(64020.0)
+    assert f45["reference_at_decision"] == pytest.approx(63990.0)
+    assert f45["sigma_per_second"] == pytest.approx(2.5e-5)
 
 
 @pytest.mark.asyncio
@@ -131,27 +167,33 @@ async def test_settle_books_net_of_fee_pnl(test_db, params) -> None:
 
 def test_model_registry_constants() -> None:
     assert runner.DEFAULT_MODEL == "fair_value_v0"
-    # Logged set: full roster incl. the restored late_convergence_v3 (#111).
-    assert set(runner.MODEL_IDS) == {
+    # Post-surgery roster (#142): control, champion, challenger — retired
+    # models (v3/v4/v5/v6) are neither logged nor selectable nor dispatchable.
+    # #155 added cushion_fresh_v7_f45 (the #149 replay winner) as a 5th arm;
+    # additive only — the racing specs v0/v2/v7/v8 are unchanged.
+    expected = [
         "fair_value_v0",
         "cushion_favorite_v2",
-        "late_convergence_v3",
-        "down_skeptic_v4",
-        "cushion_drift_v5",
-        "down_skeptic_drift_v6",
-    }
-    # Operator-selectable set is the full roster, in vN experiment order (#111).
-    assert runner.SELECTABLE_MODELS == [
-        "fair_value_v0",
-        "cushion_favorite_v2",
-        "late_convergence_v3",
-        "down_skeptic_v4",
-        "cushion_drift_v5",
-        "down_skeptic_drift_v6",
+        "cushion_fresh_v7",
+        "fair_value_fresh_v8",
+        "cushion_fresh_v7_f45",
     ]
-    # v3/v4/v6 are live-dispatchable; v0 stays out (native path).
-    assert "down_skeptic_drift_v6" in runner.CANDIDATE_SIGNALS
-    assert "late_convergence_v3" in runner.CANDIDATE_SIGNALS
+    assert list(runner.MODEL_IDS) == expected
+    assert runner.SELECTABLE_MODELS == expected
+    assert set(runner.CANDIDATE_SIGNALS) == {
+        "cushion_favorite_v2",
+        "cushion_fresh_v7",
+        "fair_value_fresh_v8",
+        "cushion_fresh_v7_f45",
+    }
+    for retired in (
+        "late_convergence_v3",
+        "down_skeptic_v4",
+        "cushion_drift_v5",
+        "down_skeptic_drift_v6",
+    ):
+        assert retired not in runner.MODEL_IDS
+        assert retired not in runner.CANDIDATE_SIGNALS
     assert "fair_value_v0" not in runner.CANDIDATE_SIGNALS
     # every logged id has a label + description for the dashboard
     for mid in runner.MODEL_IDS:

@@ -3,18 +3,20 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
 import config as _config
 from btc_5m_fv.execution.live import LiveBootRefused, assert_live_boot_allowed
+from btc_bot import paper as _paper
 from btc_bot.paper import (
     count_open_positions,
     force_close_open_positions,
     run_paper_loop,
 )
 from config import BTC_BOT_MODE, BTC_PAPER_MAX_TRADE_USD, BTC_PAPER_MIN_TRADE_USD
-from db import get_config, set_config
+from db import get_config, notify, set_config
 from logging_setup import get_logger
 
 log = get_logger("btc_controller")
@@ -30,6 +32,55 @@ LIVE_MODE_DETAIL = (
 _runner_thread: threading.Thread | None = None
 _stop_event: threading.Event | None = None
 _thread_lock = threading.Lock()
+
+# --- Loop watchdog (#147) --------------------------------------------------
+# The 2026-07-05 incident: the paper loop wedged on an unbounded await —
+# process alive, dashboard serving, zero ticks for ~14h, and Start could not
+# recover it (the alive-thread short-circuit). The watchdog stamps out the
+# whole wedge CLASS: a stalled heartbeat while the bot should be running is
+# abandoned and respawned in paper mode; live mode only notifies — the
+# watchdog must never auto-restart a real-money path.
+WATCHDOG_STALL_SECONDS = 180.0
+WATCHDOG_POLL_SECONDS = 20.0
+_watchdog_thread: threading.Thread | None = None
+_desired_running = False
+_mode_cache = "paper"
+_live_stall_notified = False
+
+# --- Silent-stop detector (#138) -------------------------------------------
+# Complements the #147 watchdog. The watchdog catches a WEDGED loop (thread
+# alive, heartbeat stale) and respawns/notifies. It cannot catch a loop or
+# whole process that DIES: a dead in-process watchdog notifies no one, and the
+# persisted state is left reading "running" with no stop event ever written
+# (the exact 06-24 incident in this issue). get_status() already self-heals
+# that stale "running" row to "stopped" — but did so SILENTLY. This flag makes
+# it emit exactly one notification per silent death so the operator learns the
+# bot went down instead of staring at a frozen dashboard.
+_silent_stop_notified = False
+
+
+def watchdog_verdict(
+    desired_running: bool,
+    mode: str,
+    heartbeat_age: float,
+    threshold: float = WATCHDOG_STALL_SECONDS,
+) -> str:
+    """'restart' | 'notify' | 'ok' for one watchdog poll (pure decision)."""
+    if not desired_running or heartbeat_age <= threshold:
+        return "ok"
+    return "notify" if mode == "live" else "restart"
+
+
+def is_silent_stop(prior_state: str, runner_alive: bool) -> bool:
+    """The silent-death signature (#138): the persisted state says the loop is
+    running, yet no runner thread is alive in THIS process.
+
+    True means the loop (or a prior process hosting it) died without an
+    operator stop, so no 'stopped' event was ever journaled. Distinct from the
+    #147 watchdog's wedge case, where the thread is still alive but not
+    heartbeating.
+    """
+    return prior_state == "running" and not runner_alive
 
 
 @dataclass
@@ -64,6 +115,7 @@ def _is_runner_alive() -> bool:
 
 async def get_status() -> BtcBotStatus:
     """Return current BTC controller status."""
+    global _silent_stop_notified
     state = await get_config("btc_bot.state", "stopped")
     mode = await get_config("btc_bot.mode", BTC_BOT_MODE)
     updated_at = await get_config("btc_bot.updated_at")
@@ -72,14 +124,31 @@ async def get_status() -> BtcBotStatus:
     # State derives from the actual runner thread, not the stored row alone
     # (issue #23): a display that can read STOPPED while the loop places
     # orders makes the operator's kill decision unreliable — and vice versa.
-    if state == "running" and not _is_runner_alive():
+    runner_alive = _is_runner_alive()
+    if is_silent_stop(state, runner_alive):
+        # #138: self-heal the stale row AND alert once — a silent death must
+        # not look identical to an idle dashboard.
+        if not _silent_stop_notified:
+            _silent_stop_notified = True
+            log.error("btc.silent_stop_detected", last_heartbeat=updated_at)
+            await notify(
+                "btc_silent_stop",
+                "Detected silent bot stop: the loop is not running but the "
+                f"saved state was 'running' (last heartbeat {updated_at or 'unknown'}). "
+                "No operator stop was recorded — the loop or process died "
+                "unexpectedly. Press Start to resume (#138).",
+                {"last_heartbeat": updated_at, "mode": mode},
+            )
         state = "stopped"
         detail = "BTC bot loop is not running in this process. Press Start to restart."
         await set_config("btc_bot.state", state)
         await set_config("btc_bot.detail", detail)
-    elif state != "running" and _is_runner_alive():
+    elif state != "running" and runner_alive:
         state = "running"
         await set_config("btc_bot.state", state)
+    if runner_alive:
+        # A confirmed-healthy loop re-arms the detector for the next death.
+        _silent_stop_notified = False
 
     return BtcBotStatus(
         state=state or "stopped",
@@ -138,7 +207,13 @@ async def request_start() -> BtcBotStatus:
             await set_config("btc_bot.detail", detail)
             log.error("btc.live_start_refused", error=detail)
             return await get_status()
+    global _desired_running, _mode_cache, _silent_stop_notified
+    _desired_running = True
+    _mode_cache = mode
+    _silent_stop_notified = False  # #138: re-arm on every legitimate start
+    _paper._beat()  # startup grace: the watchdog measures from Start
     _ensure_runner_started()
+    _ensure_watchdog_started()
     await set_config("btc_bot.state", "running")
     await set_config("btc_bot.mode", mode)
     await set_config("btc_bot.updated_at", now)
@@ -170,6 +245,8 @@ async def request_stop() -> BtcBotStatus:
     """
     now = datetime.now(UTC).isoformat(timespec="seconds")
     mode = _config.BTC_BOT_MODE
+    global _desired_running
+    _desired_running = False  # an operator stop is never a stall (#147)
     if _stop_event is not None:
         _stop_event.set()
     runner = _runner_thread
@@ -210,11 +287,24 @@ async def request_stop() -> BtcBotStatus:
     return await get_status()
 
 
-def _ensure_runner_started() -> None:
+def _ensure_runner_started(force: bool = False) -> None:
+    """Spawn the runner thread; ``force`` abandons a wedged-but-alive one.
+
+    The abandoned thread's stop_event is set first, so if it ever un-wedges
+    it exits immediately — and the loop's generation guard (#147) stops it
+    from clearing the successor's globals on the way out.
+    """
     global _runner_thread, _stop_event
     with _thread_lock:
         if _runner_thread is not None and _runner_thread.is_alive():
-            return
+            if not force:
+                return
+            if _stop_event is not None:
+                _stop_event.set()
+            log.warning(
+                "watchdog.abandoning_wedged_runner",
+                thread=_runner_thread.name,
+            )
         _stop_event = threading.Event()
         _runner_thread = threading.Thread(
             target=_run_loop_in_thread,
@@ -227,6 +317,58 @@ def _ensure_runner_started() -> None:
 
 def _run_loop_in_thread(stop_event: threading.Event) -> None:
     asyncio.run(run_paper_loop(stop_event))
+
+
+def _ensure_watchdog_started() -> None:
+    global _watchdog_thread
+    with _thread_lock:
+        if _watchdog_thread is not None and _watchdog_thread.is_alive():
+            return
+        _watchdog_thread = threading.Thread(
+            target=_watchdog_loop, name="btc-loop-watchdog", daemon=True
+        )
+        _watchdog_thread.start()
+
+
+def _watchdog_loop() -> None:
+    global _live_stall_notified
+    while True:
+        time.sleep(WATCHDOG_POLL_SECONDS)
+        try:
+            verdict = watchdog_verdict(
+                _desired_running, _mode_cache, _paper.heartbeat_age_seconds()
+            )
+            if verdict == "ok":
+                _live_stall_notified = False
+                continue
+            age = _paper.heartbeat_age_seconds()
+            if verdict == "restart":
+                log.warning("watchdog.loop_stalled_restarting", age_seconds=age)
+                asyncio.run(
+                    notify(
+                        "btc_loop_watchdog_restart",
+                        f"Loop watchdog: no heartbeat for {age:.0f}s while the "
+                        "paper bot should be running — abandoned the wedged "
+                        "loop and respawned it (#147).",
+                        {"age_seconds": age},
+                    )
+                )
+                _paper._beat()  # grace period for the fresh loop's startup
+                _ensure_runner_started(force=True)
+            elif not _live_stall_notified:
+                _live_stall_notified = True
+                log.error("watchdog.live_loop_stalled", age_seconds=age)
+                asyncio.run(
+                    notify(
+                        "btc_loop_watchdog_stall_live",
+                        f"Loop watchdog: no heartbeat for {age:.0f}s in LIVE "
+                        "mode. NOT auto-restarting a real-money path — check "
+                        "the process and restart manually (#147).",
+                        {"age_seconds": age},
+                    )
+                )
+        except Exception as e:  # noqa: BLE001 — the watchdog must never die
+            log.warning("watchdog.poll_failed", error=f"{type(e).__name__}: {e}")
 
 
 async def _safe_force_close() -> tuple[int, str | None]:

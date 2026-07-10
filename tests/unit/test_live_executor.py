@@ -8,6 +8,7 @@ cancel-on-roll, and paper-mode defaults.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -662,6 +663,110 @@ async def test_exit_fill_feeds_daily_loss_tracker(journal_db, tmp_path: Path) ->
 
 
 # ---------------------------------------------------------------------------
+# Fee-true booking (#133): the venue charges a taker fee of 0.07·p·(1−p) per
+# share, in USDC, on the portion of an order that crosses at placement
+# (status='matched'); resting (maker) fills and redemptions are fee-free.
+# The live books ignored this and overstated PnL (booked −$8.01 vs venue-true
+# −$17.24 over the bot era). Oracle numbers below are position 1768's real
+# venue economics: BUY 5.09 @ 0.51 cost $2.68493 all-in, redeemed at $5.09.
+# ---------------------------------------------------------------------------
+
+_TAKER_ENTRY_1768 = {
+    "success": True,
+    "errorMsg": "",
+    "orderID": "0xTAKER",
+    "status": "matched",
+    "makingAmount": "2.5959",  # USDC paid at price×size (fee charged on top)
+    "takingAmount": "5.09",  # outcome tokens received
+}
+_FEE_1768 = 0.07 * 0.51 * (1 - 0.51) * 5.09  # 0.089049 USDC
+
+
+async def _taker_entry_executor(tmp_path: Path) -> LiveExecutor:
+    client = _mock_client(_mock_book(best_ask="0.51"))
+    client.create_and_post_order.return_value = dict(_TAKER_ENTRY_1768)
+    executor = _executor(client, tmp_path)
+    entry = await executor.submit_entry(UP_TOKEN, 0.51, 2.5959)
+    assert entry.ok
+    return executor
+
+
+@pytest.mark.asyncio
+async def test_settlement_books_entry_taker_fee_on_win(
+    journal_db, tmp_path: Path
+) -> None:
+    executor = await _taker_entry_executor(tmp_path)
+
+    result = await executor.record_settlement(True, "btc-updown-5m-1782332700")
+
+    expected = 5.09 * (1.0 - 0.51) - _FEE_1768  # +2.4051 — the real redemption net
+    assert result.ok and result.status == "SETTLED"
+    assert result.notional_usd == pytest.approx(expected, abs=1e-4)
+    assert executor.daily_realized_pnl == pytest.approx(expected, abs=1e-4)
+    rows = await _journal_rows(journal_db)
+    settle = [r for r in rows if r["intent"] == "SETTLEMENT"][-1]
+    assert settle["notional_usd"] == pytest.approx(expected, abs=1e-4)
+
+
+@pytest.mark.asyncio
+async def test_settlement_books_entry_taker_fee_on_loss(
+    journal_db, tmp_path: Path
+) -> None:
+    """A lost taker position costs exactly the USDC paid all-in at entry."""
+    executor = await _taker_entry_executor(tmp_path)
+
+    result = await executor.record_settlement(False, "btc-updown-5m-1782332700")
+
+    assert result.ok
+    assert executor.daily_realized_pnl == pytest.approx(-2.68493, abs=1e-3)
+
+
+@pytest.mark.asyncio
+async def test_settlement_books_no_fee_for_resting_maker_fill(
+    journal_db, tmp_path: Path
+) -> None:
+    """An entry that rested (status='live') and filled later is a maker fill:
+    no fee — settlement books gross PnL."""
+    client = _mock_client()  # placement rests; get_order later says 5.26 matched
+    executor = _executor(client, tmp_path)
+    entry = await executor.submit_entry(UP_TOKEN, 0.57, 3.0)
+    assert entry.ok
+
+    result = await executor.record_settlement(True, "btc-updown-5m-1782332700")
+
+    assert result.ok
+    assert executor.daily_realized_pnl == pytest.approx(5.26 * (1.0 - 0.57))
+
+
+@pytest.mark.asyncio
+async def test_exit_immediate_fill_books_sell_taker_fee(
+    journal_db, tmp_path: Path
+) -> None:
+    """A SELL that crosses at placement pays the taker fee on its proceeds;
+    a maker (resting) entry contributes no entry fee."""
+    client = _mock_client()
+    executor = _executor(client, tmp_path)
+    entry = await executor.submit_entry(UP_TOKEN, 0.57, 3.0)
+    assert entry.ok
+    client.create_and_post_order.return_value = {
+        "success": True,
+        "errorMsg": "",
+        "orderID": "0xSELL",
+        "status": "matched",
+        "makingAmount": "5.26",  # tokens sold
+        "takingAmount": "2.893",  # USDC received (0.55/share)
+    }
+
+    result = await executor.submit_exit(side_price=0.55)
+
+    assert result.ok
+    sell_fee = 0.07 * 0.55 * (1 - 0.55) * 5.26
+    assert executor.daily_realized_pnl == pytest.approx(
+        5.26 * (0.55 - 0.57) - sell_fee, abs=1e-4
+    )
+
+
+# ---------------------------------------------------------------------------
 # Kill switch
 # ---------------------------------------------------------------------------
 
@@ -999,6 +1104,100 @@ async def test_boot_closes_open_row_when_entry_never_filled(
     assert row["state"] == "closed"
     assert row["exit_reason"] == "RECONCILED_UNFILLED"
     assert executor.entry_block_reason(3.0) is None
+
+
+# ---------------------------------------------------------------------------
+# Boot reconciliation when the CLOB no longer knows the entry order (#132).
+# A window that has already RESOLVED holds no executable risk: boot must heal
+# (close the stale row; the reconcile tool trues-up its PnL), never refuse.
+# An UNRESOLVED window adopts from the journal's placement response when the
+# lookup fails; only an unknowable fill state on live risk may refuse boot.
+# ---------------------------------------------------------------------------
+
+_RESOLVED_SLUG = "btc-updown-5m-1700000000"  # window start long in the past
+
+
+def _unresolved_slug() -> str:
+    return f"btc-updown-5m-{int(time.time()) + 3600}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("lookup", ["returns_none", "raises"])
+async def test_boot_closes_stale_row_when_order_pruned_and_window_resolved(
+    journal_db, tmp_path: Path, lookup: str
+) -> None:
+    """The 2026-06-25 outage: get_order returned None for a resolved window's
+    order and boot hard-refused (then crashed on NoneType). Zero live risk
+    remained — boot must close the row for reconciliation and proceed."""
+    position_id = await _seed_open_position(journal_db, window_slug=_RESOLVED_SLUG)
+    await journal_db.journal_live_order(
+        intent="ENTRY", side="BUY", status="SUBMITTED", window_slug=_RESOLVED_SLUG,
+        token_id=UP_TOKEN, price=0.51, size=5.09, clob_order_id="0xPRUNED",
+        details={"response": {"status": "matched", "takingAmount": "5.09"}},
+    )
+    client = _mock_client()
+    if lookup == "returns_none":
+        client.get_order.return_value = None
+    else:
+        client.get_order.side_effect = RuntimeError("order not found")
+    executor = _executor(client, tmp_path)
+
+    await executor.start()  # must NOT raise LiveBootRefused
+
+    async with journal_db.connect() as conn:
+        async with conn.execute(
+            "SELECT state, exit_reason FROM btc_paper_positions WHERE position_id = ?",
+            (position_id,),
+        ) as cur:
+            row = dict(await cur.fetchone())
+    assert row["state"] == "closed"
+    assert row["exit_reason"] == "RECONCILED_STALE_RESOLVED"
+    assert executor.entry_block_reason(3.0) is None
+
+
+@pytest.mark.asyncio
+async def test_boot_adopts_unresolved_row_from_journal_when_lookup_fails(
+    journal_db, tmp_path: Path
+) -> None:
+    """Live risk in a still-open window with a pruned/unreachable order lookup:
+    the journal's own placement response recorded the match — adopt from it."""
+    slug = _unresolved_slug()
+    await _seed_open_position(journal_db, window_slug=slug)
+    await journal_db.journal_live_order(
+        intent="ENTRY", side="BUY", status="SUBMITTED", window_slug=slug,
+        token_id=UP_TOKEN, price=0.57, size=5.26, clob_order_id="0xPRUNED",
+        details={"response": {"status": "matched", "takingAmount": "5.26"}},
+    )
+    client = _mock_client()
+    client.get_order.return_value = None
+    executor = _executor(client, tmp_path)
+
+    await executor.start()
+
+    assert executor.entry_block_reason(3.0) == (
+        "an open position/order already exists (max 1)"
+    )
+
+
+@pytest.mark.asyncio
+async def test_boot_refuses_unresolved_row_when_fill_state_unknowable(
+    journal_db, tmp_path: Path
+) -> None:
+    """No venue answer AND no journal fill record on an unresolved window is
+    genuinely blind live risk — the refusal safety must be preserved, with a
+    truthful message (not the NoneType AttributeError artifact)."""
+    slug = _unresolved_slug()
+    await _seed_open_position(journal_db, window_slug=slug)
+    await journal_db.journal_live_order(
+        intent="ENTRY", side="BUY", status="SUBMITTED", window_slug=slug,
+        token_id=UP_TOKEN, price=0.57, size=5.26, clob_order_id="0xPRUNED",
+    )
+    client = _mock_client()
+    client.get_order.return_value = None
+    executor = _executor(client, tmp_path)
+
+    with pytest.raises(LiveBootRefused, match="not resolved"):
+        await executor.start()
 
 
 # ---------------------------------------------------------------------------

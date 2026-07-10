@@ -386,15 +386,17 @@ class TestModelSelector:
         from btc_bot.shadow import runner
 
         html = controls.render(
-            trade_shares_current=None, current_price=None, active_model="down_skeptic_v4"
+            trade_shares_current=None, current_price=None, active_model="fair_value_v0"
         )
         for mid in runner.SELECTABLE_MODELS:
             assert f"value='{mid}'" in html
-        # The full roster is selectable now (#111): the former controls and the
-        # restored late_convergence_v3 all appear as options.
+        # Post-surgery roster (#142): control, champion, challenger.
         assert "value='fair_value_v0'" in html
         assert "value='cushion_favorite_v2'" in html
-        assert "value='late_convergence_v3'" in html
+        assert "value='cushion_fresh_v7'" in html
+        # Retired models no longer render as options.
+        assert "value='late_convergence_v3'" not in html
+        assert "value='down_skeptic_drift_v6'" not in html
         # An unknown id is never rendered as an option.
         assert "value='no_such_model'" not in html
 

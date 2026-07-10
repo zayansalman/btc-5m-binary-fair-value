@@ -1,3 +1,60 @@
+# Tick-replay backtest + v8 (#144) (2026-07-02)
+
+Full autonomy granted ("your call and game"). Chose the move that collapses the waiting time:
+the tick journal reaches back to Jun 11 — six days BEFORE the shadow race — so v7's gates
+(designed on race data) were testable out-of-sample immediately.
+
+- [x] `tools/replay_race.py`: replay 74,580 ticks / 1,626 windows, fee-true, first-signal-per-window
+- [x] Outcome labeler validated 564/564 (next-window reference print); harness reproduces recorded shadow v2 249/249
+- [x] v7 OOS CONFIRMED: +0.346/trade [+0.005, +0.687] pre-race vs +0.341 in-sample — stable across regimes
+- [x] Fragility grid → freshness gate is the engine; depth realism checked (99.4% ≥5 shares)
+- [x] Pre-registered `fair_value_fresh_v8` (freshness alone); roster = clean ablation v0/v2/v7/v8
+- [x] PR #145 → develop (728 tests green); engine restarted on the 4-model roster
+
+## Review
+The replay converts "wait 6 weeks" into "confirm in ~2–3": v7/v8 enter the live race with a
+quantified prior instead of a hunch. Deploy bar unchanged and non-negotiable: live capital
+only when the LIVE race CI clears zero net of fees. If the race contradicts the replay,
+the race wins — that disagreement itself would be the most important finding.
+
+# Roster surgery + race restart (#142) (2026-07-02)
+
+Operator escalated: "create new or better strategies, bin the ones that suck, become profitable."
+
+- [x] Design recon: pair-arb REJECTED (2% tick persistence = stale books); EV-regression gate REJECTED (unidentifiable); entry-timing structure FOUND (all family profit in first 60s); edge-cap supported (+4.8¢ vs −1.2¢/share around 0.065)
+- [x] Bin v3/v4/v5/v6 (evidence in #142); roster = v0 control / v2 champion / v7 challenger
+- [x] Build `cushion_fresh_v7` = v2 + ≤60s freshness + 0.065 edge-cap (TDD; gates frozen a-priori)
+- [x] Retired-active-model heal (`_resolve_active_model`, loud one-time notify) — v6 was still persisted
+- [x] PR #143 → develop (720 tests green, ruff clean)
+- [x] Race RESTARTED in paper mode 2026-07-02; 1768 settled organically +$2.49; fallback notification confirmed
+
+## Review
+The profitable path is procedural, not magical: fee-true books (#133), a 3-model race with
+one evidence-motivated challenger, and the pre-registered deploy bar (95% CI > 0 net of
+fees, sign-consistent OOS). v7's two gates are the only levers the frozen data supports;
+everything else tested null or artifactual. Live stays OFF until a model clears the bar.
+
+# Postmortem + EMS repair (#132–#138) (2026-07-02)
+
+Operator declared the project failed; full forensic pass over live/shadow/paper history.
+
+- [x] Forensics: venue-true PnL −$17.24 (gross +$6.27, fees −$23.51); books were fee-blind
+- [x] Shadow race final read: no model ≠ 0; IS→OOS rank inversion; night gate + selectivity dead
+- [x] #132 boot-reconcile heal (the 06-25 outage) — fixed, TDD, PR #139 → develop
+- [x] #133 fee-true booking (journal = ledger = halt) — fixed, TDD, PR #140 → develop
+- [x] #134 ledger reconciled: −$3.10 → −$17.77, 4 phantoms voided; 1768 heals on next boot
+- [x] #135 docs/POSTMORTEM_2026-07.md + pre-registered restart protocol
+- [x] Backlog as issues: #136 paper fee parity, #137 maker/taker telemetry, #138 stop watchdog
+
+## Review
+The failure was three-layered: (1) a fee-dominated market where the signal's gross edge
+(+0.7% of turnover) is under the taker fee (2.6%); (2) fee-blind books that hid the true
+bleed and let the loss-halt fire late; (3) an EMS that died on a heal-able boot state and
+stayed dead. Layers 2–3 are fixed on develop. Layer 1 has no validated fix: the only
+evidence-sane path is the shadow-only restart protocol in the postmortem (deploy bar:
+95% CI > 0 net of fees). OPERATOR ACTIONS: reset active model off `down_skeptic_drift_v6`;
+one Start to heal row 1768; decide shadow-restart vs retire.
+
 # Regime-attribution instrument (#120) (2026-06-23)
 
 Operator pushed back on my stance re: regime ID + auto strategy selection. Decision,

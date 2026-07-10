@@ -120,6 +120,59 @@ async def test_settle_resolves_both_with_net_of_fee_pnl(test_db):
 
 
 @pytest.mark.asyncio
+async def test_regime_columns_migrated_and_default_null(test_db):
+    """#122: the migration adds the vol/basis columns; omitting them → NULL."""
+    async with test_db.connect() as conn:
+        cols = {
+            r["name"]
+            for r in await (
+                await conn.execute("PRAGMA table_info(btc_model_shadow_positions)")
+            ).fetchall()
+        }
+    assert {
+        "spot_at_decision",
+        "reference_at_decision",
+        "sigma_per_second",
+        "drift_per_second",
+    } <= cols
+
+    # A caller that does not supply them (the default) records NULLs.
+    await _record(test_db, model_id="legacy", side="Up")
+    row = (await _fetch_all(test_db))[0]
+    assert row["spot_at_decision"] is None
+    assert row["sigma_per_second"] is None
+
+
+@pytest.mark.asyncio
+async def test_regime_columns_persist_when_supplied(test_db):
+    """#122: decision-time market state is stored verbatim for regime axes."""
+    await record_shadow_signal(
+        created_at="2026-07-09T12:00:00+00:00",
+        window_slug="btc-updown-5m-1783600000",
+        model_id="v0",
+        side="Up",
+        entry_price=0.55,
+        fair_prob=0.60,
+        edge=0.05,
+        confidence=0.70,
+        reason="enter Up",
+        notional_usd=2.75,
+        shares=5.0,
+        quote_source="clob",
+        feed_source="chainlink_ws",
+        spot_at_decision=62_800.0,
+        reference_at_decision=62_750.0,
+        sigma_per_second=4.2e-05,
+        drift_per_second=-1.1e-06,
+    )
+    row = (await _fetch_all(test_db))[0]
+    assert row["spot_at_decision"] == pytest.approx(62_800.0)
+    assert row["reference_at_decision"] == pytest.approx(62_750.0)
+    assert row["sigma_per_second"] == pytest.approx(4.2e-05)
+    assert row["drift_per_second"] == pytest.approx(-1.1e-06)
+
+
+@pytest.mark.asyncio
 async def test_settle_only_touches_open_rows_of_the_window(test_db):
     """Settle is scoped to the window and ignores already-settled rows."""
     await _record(test_db, model_id="alpha", side="Up", window_slug="win-A")

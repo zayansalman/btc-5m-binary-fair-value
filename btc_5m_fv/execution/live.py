@@ -36,6 +36,7 @@ The private key is never logged and never journaled.
 from __future__ import annotations
 
 import asyncio
+import json
 import math
 import sys
 import time
@@ -56,6 +57,7 @@ from db import (  # type: ignore[import-untyped]
     notify,
 )
 from logging_setup import get_logger  # type: ignore[import-untyped]
+from btc_bot.shadow.fees import taker_fee_per_share  # canonical venue fee math
 from btc_5m_fv.execution.gate import EntryRequest, GateConfig, RiskGate
 
 log = get_logger("btc_live")
@@ -187,6 +189,58 @@ def _filled_shares(response: dict[str, Any]) -> float:
         return 0.0
 
 
+def _placement_crossed_shares(response: dict[str, Any], side: str) -> float:
+    """Outcome-token shares that CROSSED at placement — the taker portion.
+
+    The venue charges its taker fee only on this portion; anything that rests
+    and fills later is a maker fill and fee-free. For a BUY the tokens are the
+    ``takingAmount`` (received); for a SELL they are the ``makingAmount``
+    (sold). Unknown/unparseable responses count as zero crossed (maker), so a
+    fee is never invented.
+    """
+    if str(response.get("status") or "").lower() != "matched":
+        return 0.0
+    key = "takingAmount" if side == BUY else "makingAmount"
+    try:
+        return float(response.get(key) or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+_WINDOW_SECONDS = 300  # 5-minute up/down markets
+_WINDOW_RESOLVE_GRACE_SECONDS = 60
+
+
+def _window_resolved(window_slug: str, *, now: float | None = None) -> bool:
+    """True when the slug's window has certainly resolved.
+
+    Window slugs end in the window's unix start second (…-5m-1782332700); the
+    market resolves ``_WINDOW_SECONDS`` later. Unparseable slugs return False,
+    so an unknown window is treated as possibly-live risk, never discarded.
+    """
+    try:
+        start = int(str(window_slug).rsplit("-", 1)[-1])
+    except (TypeError, ValueError):
+        return False
+    now_s = time.time() if now is None else now
+    return now_s >= start + _WINDOW_SECONDS + _WINDOW_RESOLVE_GRACE_SECONDS
+
+
+def _journal_filled_shares(details_json: object) -> float:
+    """Shares the journalled placement response matched at submit (0 if unknown).
+
+    The ENTRY journal row stores the raw CLOB placement response under
+    ``details_json.response`` — venue truth captured at submit time, still
+    available after the CLOB has pruned the order itself.
+    """
+    try:
+        details = json.loads(details_json) if details_json else {}  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0.0
+    response = details.get("response") if isinstance(details, dict) else None
+    return _filled_shares(response) if isinstance(response, dict) else 0.0
+
+
 def _avg_fill_price(response: dict[str, Any], side: str, limit_price: float) -> float:
     """Average executed price from a matched order, else the limit (#103).
 
@@ -287,6 +341,9 @@ class LiveExecutor:
         self._entry_size: float = 0.0
         self._entry_matched_size: Optional[float] = None
         self._entry_sold_size: float = 0.0
+        # USDC taker fee charged at entry on the placement-crossed portion
+        # (0.07·p·(1−p) per share); 0 for maker fills. Booked at realization.
+        self._entry_taker_fee_usd: float = 0.0
         self._position_open = False
         # Exit order tracking — only set while an exit SELL might still rest.
         self._exit_order_id: Optional[str] = None
@@ -417,7 +474,8 @@ class LiveExecutor:
         row = open_rows[0]
         async with connect() as db:
             async with db.execute(
-                "SELECT token_id, clob_order_id, price, size FROM btc_live_orders "
+                "SELECT token_id, clob_order_id, price, size, details_json "
+                "FROM btc_live_orders "
                 "WHERE intent = 'ENTRY' AND status = 'SUBMITTED' AND window_slug = ? "
                 "ORDER BY id DESC LIMIT 1",
                 (row["window_slug"],),
@@ -435,19 +493,66 @@ class LiveExecutor:
             )
             return
 
+        matched: float | None
         try:
             raw_order = await asyncio.to_thread(
                 self._client.get_order, entry["clob_order_id"]
             )
-            matched = float(raw_order.get("size_matched") or 0.0)
+            # The CLOB returns None once it has pruned an order (e.g. its
+            # window resolved long ago) — no answer, not an error.
+            matched = (
+                float(raw_order.get("size_matched") or 0.0)
+                if raw_order is not None
+                else None
+            )
         except Exception as e:  # noqa: BLE001
-            raise LiveBootRefused(
-                f"Boot reconciliation failed: could not fetch entry order "
-                f"{entry['clob_order_id']} for open position "
-                f"{row['position_id']} ({type(e).__name__}: {e}). Flatten manually on "
-                "Polymarket and close the ledger row, or retry once the CLOB is "
-                "reachable."
-            ) from e
+            log.warning(
+                "live_executor.reconcile_order_lookup_failed",
+                order_id=entry["clob_order_id"],
+                error=f"{type(e).__name__}: {e}",
+            )
+            matched = None
+
+        if matched is None:
+            # No venue answer for the order. A resolved window holds no
+            # executable risk, so refusing boot protects nothing — close the
+            # stale row and let tools/reconcile_live_ledger.py true-up its
+            # realized PnL from the Data API. For a window still in flight,
+            # the journal's own placement response is venue truth from submit
+            # time: adopt any match it recorded; refuse only when live risk is
+            # genuinely unknowable.
+            journal_matched = _journal_filled_shares(entry["details_json"])
+            if _window_resolved(row["window_slug"]):
+                await self._close_ledger_row(row, "RECONCILED_STALE_RESOLVED")
+                await notify(
+                    "btc_live_reconciled",
+                    f"Closed stale live position {row['position_id']} "
+                    f"({row['window_slug']}): its window already resolved and "
+                    "the CLOB no longer returns the entry order. Run "
+                    "tools/reconcile_live_ledger.py to true-up realized PnL.",
+                    {
+                        "position_id": row["position_id"],
+                        "journal_matched": journal_matched,
+                    },
+                )
+                log.warning(
+                    "live_executor.reconcile_closed_stale_resolved",
+                    position_id=row["position_id"],
+                    window_slug=row["window_slug"],
+                    journal_matched=journal_matched,
+                )
+                return
+            if journal_matched > 0:
+                matched = journal_matched
+            else:
+                raise LiveBootRefused(
+                    f"Boot reconciliation failed: the CLOB could not return "
+                    f"entry order {entry['clob_order_id']} for open position "
+                    f"{row['position_id']} and window {row['window_slug']} has "
+                    "not resolved yet — refusing to trade blind on live risk. "
+                    "Retry once the CLOB is reachable, or flatten manually on "
+                    "Polymarket and close the ledger row."
+                )
 
         if matched <= 0:
             # Entry never filled and its remainder was just cancelled by
@@ -467,6 +572,11 @@ class LiveExecutor:
         self._entry_size = float(entry["size"] or row["shares"])
         self._entry_matched_size = matched
         self._entry_sold_size = 0.0
+        # Bot entries are marketable limits, so assume the adopted fill
+        # crossed (taker) — the reconcile tool is the exact true-up.
+        self._entry_taker_fee_usd = round(
+            taker_fee_per_share(self._entry_price) * matched, 6
+        )
         self._position_open = True
         await notify(
             "btc_live_reconciled",
@@ -576,7 +686,11 @@ class LiveExecutor:
         held = _round_size_down(max(0.0, matched - self._entry_sold_size))
         entry_price = self._entry_price or 0.0
         payout = 1.0 if won else 0.0
-        pnl = round(held * (payout - entry_price), 4)
+        # Realize net of the entry taker fee (#133): the venue charged it in
+        # USDC at entry, so a lost taker position costs exactly the cash paid
+        # and a won one redeems at $1/share minus that entry fee.
+        fee = self._entry_taker_fee_usd if held > 0 else 0.0
+        pnl = round(held * (payout - entry_price) - fee, 4)
         if held > 0:
             await self.record_realized_pnl(pnl)
         await journal_live_order(
@@ -589,6 +703,7 @@ class LiveExecutor:
             size=held,
             notional_usd=pnl,
             error=None if won else "resolved against position; tokens worthless",
+            details={"entry_taker_fee_usd": fee},
         )
         log.info(
             "live_executor.settled",
@@ -598,7 +713,9 @@ class LiveExecutor:
             pnl=pnl,
         )
         self._clear_position()
-        return LiveOrderResult(ok=True, status="SETTLED", price=payout, size=held)
+        return LiveOrderResult(
+            ok=True, status="SETTLED", price=payout, size=held, notional_usd=pnl
+        )
 
     @property
     def daily_realized_pnl(self) -> float:
@@ -770,6 +887,14 @@ class LiveExecutor:
             self._entry_price = _avg_fill_price(result.raw, BUY, price)
             self._entry_size = size
             self._entry_sold_size = 0.0
+            # The venue charges its taker fee, in USDC, on the shares that
+            # crossed at placement; a resting (maker) remainder is fee-free.
+            crossed = _round_size_down(_placement_crossed_shares(result.raw, BUY))
+            self._entry_taker_fee_usd = (
+                round(taker_fee_per_share(self._entry_price) * min(crossed, size), 6)
+                if crossed > 0
+                else 0.0
+            )
             self._position_open = True
             await self.gate.record_buy_notional(round(price * size, 4))
             filled = _round_size_down(_filled_shares(result.raw))
@@ -892,7 +1017,9 @@ class LiveExecutor:
             self._exit_order_id = None
             self._exit_price = None
             await self._register_exit_fill(
-                sellable, _avg_fill_price(result.raw, SELL, price)
+                sellable,
+                _avg_fill_price(result.raw, SELL, price),
+                taker_size=_placement_crossed_shares(result.raw, SELL),
             )
             if self._entry_sold_size >= matched:
                 self._clear_position()
@@ -910,7 +1037,11 @@ class LiveExecutor:
         final, _ = await self._order_fill_info(result.order_id, default_size=0.0)
         self._exit_order_id = None
         self._exit_price = None
-        await self._register_exit_fill(final, _avg_fill_price(result.raw, SELL, price))
+        await self._register_exit_fill(
+            final,
+            _avg_fill_price(result.raw, SELL, price),
+            taker_size=_placement_crossed_shares(result.raw, SELL),
+        )
         if matched > 0 and self._entry_sold_size >= matched:
             # The order actually filled completely during the cancel race.
             self._clear_position()
@@ -992,6 +1123,7 @@ class LiveExecutor:
         self._entry_size = 0.0
         self._entry_matched_size = None
         self._entry_sold_size = 0.0
+        self._entry_taker_fee_usd = 0.0
         self._position_open = False
         self._exit_order_id = None
         self._exit_price = None
@@ -1030,14 +1162,34 @@ class LiveExecutor:
         self._clear_position()
         return True
 
-    async def _register_exit_fill(self, sold_size: float, exit_price: float | None) -> None:
-        """Account a confirmed exit fill: track sold shares, record realized PnL."""
+    async def _register_exit_fill(
+        self,
+        sold_size: float,
+        exit_price: float | None,
+        *,
+        taker_size: float = 0.0,
+    ) -> None:
+        """Account a confirmed exit fill: track sold shares, record realized PnL.
+
+        ``taker_size`` is the portion of the SELL that crossed at placement —
+        the venue charges its taker fee on that portion's proceeds (#133); a
+        fill of a resting SELL is a maker fill and fee-free, so callers that
+        register fills discovered by order lookup pass no taker size. The
+        ENTRY-side taker fee stays booked at settlement (settle style is the
+        deployed config); a position fully flattened by exits leaves its entry
+        fee to the reconcile tool.
+        """
         if sold_size <= 0:
             return
         self._entry_sold_size = round(self._entry_sold_size + sold_size, SIZE_DECIMALS)
         entry_px = self._entry_price or 0.0
         px = exit_price if exit_price is not None else entry_px
-        await self.record_realized_pnl(sold_size * (px - entry_px))
+        fee = (
+            round(taker_fee_per_share(px) * min(taker_size, sold_size), 6)
+            if taker_size > 0
+            else 0.0
+        )
+        await self.record_realized_pnl(sold_size * (px - entry_px) - fee)
 
     async def _try_cancel(self, order_id: str, reason: str) -> bool:
         """Cancel one order; True only when it is confirmed no longer live.
