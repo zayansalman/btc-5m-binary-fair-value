@@ -136,6 +136,10 @@ reference come from the settlement-aligned feed with per-component provenance jo
 
 ## Reading the record
 
+- **`docs/FINDINGS.md`** — the seven findings in full, with the evidence for each.
+- **`docs/ARCHITECTURE.md`** — the engineering tour: patterns, ops defense-in-depth,
+  data layer, testing/CI, and the process discipline that made the negative result credible.
+- **`docs/TIMELINE.md`** — the thirty days, event by event.
 - **`docs/POSTMORTEM_2026-07.md`** — the June live era: fee-blind booking bug, venue-true
   re-accounting, the restart protocol this project then obeyed.
 - **`docs/PIVOT_2026-07.md`** — the endgame decision memo: who actually earns on 5m markets
