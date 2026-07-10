@@ -61,6 +61,12 @@ Z_95 = 1.959963984540054
 BOOTSTRAP_N = 10_000
 BOOTSTRAP_SEED = 42
 
+# A "CLEARS NOW" verdict claim needs a real sample behind it. One winning
+# trade has sd=0 and a degenerate CI "above zero" — without this floor the
+# tracker would print a deploy-bar pass on n=1 (observed with f45's first
+# settled trade, 2026-07-10). 30 matches the attribution instrument's min_n.
+MIN_N_FOR_CLEARS = 30
+
 # Tick-cadence health (#157). The paper loop journals a tick every ~5s, so a
 # healthy 10-minute window holds ~120 ticks. The #147 watchdog only checks the
 # heartbeat, which stays fresh even when a flapping settlement feed collapses
@@ -392,9 +398,16 @@ def render_text(
             f"  {s.model_id:<22} mean {s.mean:+.4f} (sd {s.sd:.2f}) · "
             f"boot95 [{s.boot_lo:+.3f},{s.boot_hi:+.3f}] · have {s.n} · "
         )
-        if s.t_lo > 0:
+        if s.t_lo > 0 and s.n >= MIN_N_FOR_CLEARS:
             # The interval already excludes zero — the bar is met right now.
             lines.append(base + "CLEARS NOW")
+        elif s.t_lo > 0:
+            # Degenerate small-sample interval (e.g. one winning trade → sd 0
+            # → CI collapses above zero). A verdict claim on a handful of
+            # trades is exactly the false signal this tracker must not emit.
+            lines.append(
+                base + f"CI>0 but n<{MIN_N_FOR_CLEARS} — sample too small to mean anything"
+            )
         elif s.req_n is None:
             # Non-positive point estimate can never clear as n grows.
             lines.append(base + "mean ≤ 0 — does not clear on current estimate")
