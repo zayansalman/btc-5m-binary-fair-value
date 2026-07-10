@@ -2,6 +2,17 @@
 
 Charter: `tasks/race_loop.md`. Newest entries at top after iteration 0.
 
+## 2026-07-10 06:53 UTC (iteration 7)
+
+- Race (settled, fee-true; Δ since it6 00:53): **v8 +$22.91/n203 (Δ −$14.02/+25 — REGRESSING)** · v2 +$5.27/n226 (Δ +$15.48/+28) · v7 +$0.14/n81 (Δ −$3.02/+10, ≈zero) · **v0 +$0.12/n380 — EXACTLY zero over 380 trades.** Today: v8 −$10.4/29, v0 −$11.1/54, v2 +$10.1/35.
+- **The second leader is collapsing on schedule.** v8's mean fell $0.21→$0.11 in 6h; side attribution shows it was never two-sided — Up leg +$22.26/n100 carries ~everything, Down +$0.65/n103 ≈ 0 (directional tilt, fails the side test). Daily decomp: one day (07-09 +$20.56) is the whole total; ex-best-day ≈ +$2.35/174 ≈ 0. Same regression-to-null v7 showed at it4. Field = coin-flip-after-fees; v0's 380-trade zero is the cleanest statement of it yet.
+- Deploy bar (nominal leader v8): mean $0.1128, z-CI [−0.227, +0.453]; needs ~1842 → **~182d** (40d at it6 — bar receding again as the estimate deflates).
+- Live book: **−$19.35/351 (Δ$0)** — live OFF. Bot: mode=paper, state=running, accruing=YES, cadence 107/10min ✓. Overnight: operator cleared an auto-pause 03:29; **paper loss halt fired 04:45** (−6.30 ≤ trailing floor) — shadow accrual continued through it (#146 works as designed; last shadow row 06:50).
+- Health flags: (1) **still no restart** — f45 0 rows; #151/#138/#122/#155/#161 all merged but inactive on the running pre-merge process. (2) v7 kill-watch: mean +$0.0017 at n=81 — flat, not negative; needs <0 at n≥150.
+- **Advanced: #137 SHIPPED** (PR #161, `709983e`) — `placement_status` column + idempotent json_extract backfill + insert-time derivation; race_status LIVE BOOK now shows **272 crossed (taker) / 79 rested = 23% maker share** (validates the issue's ~21%). Calibration so-what: fee-true books overstate live fees by ~23% of entries; NOT a licence to chase maker fills (#130 dead idea stands). 8 tests, **808 total green**.
+- Verdict check (§4): none met — but the pattern (two leaders regressed, control at exact zero) points toward the **08-27 sunset** as the likely outcome absent f45 evidence. Cron created 07-07, expires ~07-14 — ~4d out, >36h, no re-arm.
+- Next: iteration 8 → assess → #114 (persist conditionId/token_id). Pending operator (5th consecutive iteration): **restart the paper loop** — f45 is the only untested hypothesis with replay CI>0, and every day unrestarted is a day of no f45 evidence.
+
 ## 2026-07-10 00:53 UTC (iteration 6)
 
 - Race (settled, fee-true; Δ since it5 18:58): **v8 +$36.93/n178 (Δ +$16.00/+23)** pulling ahead · v0 +$11.20/n333 (Δ +$4.62/+36) · v7 +$3.16/n71 (Δ +$1.96/+8) · v2 −$10.21/n198 (Δ −$6.61/+18, sinking). ~85 new trades in 6h — healthy accrual resumed.
