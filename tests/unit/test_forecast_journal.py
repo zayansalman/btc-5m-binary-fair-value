@@ -11,7 +11,6 @@ from pathlib import Path
 import pytest
 
 from tools.forecast_journal import (
-    DIVERGENCE_MIN,
     brier,
     cmd_add,
     cmd_report,
