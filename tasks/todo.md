@@ -1,3 +1,49 @@
+# Reopen: 9 issues filed, discuss-first process (#169–#177) (2026-08-04)
+
+Project was ARCHIVED 2026-07-10 (v1.0.0, negative result — see `docs/FINDINGS.md`,
+`docs/PIVOT_2026-07.md`, `docs/POSTMORTEM_2026-07.md`). Operator is reopening it. Before any
+build work, filed 9 issues to scope the reopen — 8 are discuss-first (mechanism has to make
+sense in plain language + on paper before any code; only then test on samples), 1 is a
+mechanical rename already in progress.
+
+- [ ] **#169** `[P1]` Remove "fair value" branding across the codebase (mechanical; in progress
+      this session — `btc_5m_fv/` → `btc_5m_exec/`, `fair_value.py` → `pricing_model.py`,
+      `fair_value_v0/v1` → `pricing_v0/v1`; 175 text refs / 402 import-path refs across ~100
+      files; regenerate `docs/FILE_MAP.md` via `tools/gen_docs.py`, don't hand-edit)
+- [ ] **#170** `[P0]` Strategy legibility — what it's doing, evidence, math, references. Current
+      gate lineage: `cushion_favorite_v2` → `cushion_fresh_v7` → `cushion_fresh_v7_f45` →
+      `cushion_fresh_v7_f45_spread`, plus `fair_value_fresh_v8` (`btc_bot/shadow/signals.py`)
+- [ ] **#171** `[P0]` Real architecture — PNG diagram of current state, decide target, rebuild.
+      Sibling repos `pretrade-risk-controls`/`ledger-recon`/`polymarket-ems` look decomposed
+      from this project but aren't wired as dependencies anywhere (not in requirements.txt,
+      not published). `btc_5m_fv/backtest/harness.py` confirmed dead code this session (tested,
+      zero production importers — unrelated to f45/v7/v8, which run through `tools/replay_race.py`
+      and already fill at real best-ask, fee-true, validated against live fills)
+- [ ] **#172** `[P1]` UI redesign — current dashboard reads as generic AI-scaffolded UI
+- [ ] **#173** `[P2]` OCaml/C++ for perf-critical components — profile first, no blanket rewrite
+- [ ] **#174** `[P1]` Market + reference data — used deliberately, not just Chainlink+Binance fallback
+- [ ] **#175** `[P1]` Market regimes + order types — regime *switching* already falsified
+      (0/12 cells, 0/75 slices, FDR); revisit only with genuinely new regime definitions
+- [ ] **#176** `[P1]` Long/short + hedging via Kraken spot alongside Polymarket binaries —
+      real-money cross-venue; same launch-gate discipline as existing live path (Claude never
+      executes trades/transfers)
+- [ ] **#177** `[P2]` Bidirectional sync with sibling repos — updates flow both ways (master →
+      siblings and siblings → master); options include submodules, a private package index, or
+      a GitHub Actions workflow (possibly an AI agent) opening sync PRs automatically
+
+## Order-book re-test premise check (folded into #170, not a separate build)
+Investigated re-testing f45/v7/v8 against real order-book depth instead of mid-price. Premise
+was wrong: `replay_race.py` already fills at real recorded best-ask (not mid), fee-true,
+validated against 12 live fills with positive slippage. No true L2 depth exists anywhere —
+not locally (order-book fetch discards all but best level, `btc_bot/paper.py::_best_level`),
+not in the public HF dataset (`aliplayer1/polymarket-crypto-updown`'s `orderbook` config,
+23.6GB, is also top-of-book only). Venue books run 250-350 shares deep vs. the 5-share order
+size — top-of-book was never binding. One legitimate cheap follow-up if revisited: confirm
+`up_ask_size`/`down_ask_size` (already in schema, not currently SELECTed by `load_ticks()`)
+were ≥5 on every f45 fill — needs the historical ticks DB, not present in this checkout.
+
+---
+
 # Tick-replay backtest + v8 (#144) (2026-07-02)
 
 Full autonomy granted ("your call and game"). Chose the move that collapses the waiting time:
