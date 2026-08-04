@@ -160,10 +160,10 @@ def test_real_tree_wiring_truth():
     assert by["btc_bot/paper.py"].status == "WIRED"
     assert by["btc_bot/strategy.py"].status == "WIRED"
     # The live risk gate + executor are WIRED.
-    assert by["btc_5m_fv/execution/gate.py"].status == "WIRED"
-    assert by["btc_5m_fv/execution/live.py"].status == "WIRED"
+    assert by["btc_5m_exec/execution/gate.py"].status == "WIRED"
+    assert by["btc_5m_exec/execution/live.py"].status == "WIRED"
     # Known dead-in-active-tree module is flagged.
-    assert by["btc_5m_fv/ops/controller.py"].status == "DEAD?"
+    assert by["btc_5m_exec/ops/controller.py"].status == "DEAD?"
 
 
 def test_test_count_is_positive_int():
@@ -172,7 +172,7 @@ def test_test_count_is_positive_int():
 
 
 def test_entrypoint_importable():
-    assert gd.entrypoint_ok(gd.REPO) is True  # btc_5m_fv.ops.dashboard.app imports
+    assert gd.entrypoint_ok(gd.REPO) is True  # btc_5m_exec.ops.dashboard.app imports
 
 
 def test_replace_block_is_idempotent():

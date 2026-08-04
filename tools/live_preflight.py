@@ -17,7 +17,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 import config as _config  # noqa: E402  (loads .env)
-from btc_5m_fv.execution.live import (  # noqa: E402
+from btc_5m_exec.execution.live import (  # noqa: E402
     LiveBootRefused,
     assert_live_boot_allowed,
 )

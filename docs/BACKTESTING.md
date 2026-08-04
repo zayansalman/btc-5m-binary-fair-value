@@ -1,6 +1,6 @@
 # Backtesting
 
-The repo includes a repeatable local backtest for the BTC 5m Binary Fair Value
+The repo includes a repeatable local backtest for the BTC 5m Binary Pricing Model
 strategy.
 
 ```bash
@@ -35,7 +35,7 @@ This is not a full-market backtest. It only evaluates opportunities that
 appear in the user's historical buy log. It cannot measure markets that were
 skipped, full CLOB fill quality, or quote-path exits after entry.
 
-A full-market replay harness already exists at `btc_5m_fv/backtest/harness.py`,
+A full-market replay harness already exists at `btc_5m_exec/backtest/harness.py`,
 but it is **not wired into the live path** — nothing in `btc_bot/` or the
 dashboard imports it (it is exercised only by tests). The live backtest that
 the dashboard and CLI actually use is `btc_bot/backtest.py` (the

@@ -6,53 +6,53 @@ _Status: `WIRED` = has non-test importers; `DEAD?` = no importers found (investi
 
 | Module | Status | Importers | Role |
 |---|---|---|---|
-| `btc_5m_fv/__init__.py` | pkg | 0 | BTC 5m Binary Fair Value trading system. |
-| `btc_5m_fv/backtest/__init__.py` | pkg | 0 | Backtesting harness and metrics. |
-| `btc_5m_fv/backtest/conditional.py` | DEAD? | 0 | Conditional backtest — evaluates strategy on historical user trades. |
-| `btc_5m_fv/backtest/harness.py` | DEAD? | 0 | Full-market backtest harness. |
-| `btc_5m_fv/backtest/metrics.py` | WIRED | 1 | Backtest metrics, friction models, and reporting data classes. |
-| `btc_5m_fv/connectors/__init__.py` | pkg | 0 | Exchange and data connectors. |
-| `btc_5m_fv/connectors/base.py` | DEAD? | 0 | Re-export abstract base classes and exceptions for connector authors. |
-| `btc_5m_fv/connectors/binance.py` | DEAD? | 0 | Binance connector — BTC spot price and recent close history. |
-| `btc_5m_fv/connectors/chainlink.py` | DEAD? | 0 | Chainlink Data Streams connector stub. |
-| `btc_5m_fv/connectors/chainlink_settlement.py` | WIRED | 1 | Settlement-aligned Chainlink BTC/USD feed via Polymarket endpoints (issue #21). |
-| `btc_5m_fv/connectors/polymarket.py` | DEAD? | 0 | Polymarket connector — discovers the current BTC 5-minute binary market window. |
-| `btc_5m_fv/connectors/registry.py` | WIRED | 1 | Connector registry — manages the lifecycle and discovery of all connectors. |
-| `btc_5m_fv/core/__init__.py` | pkg | 0 | Core domain types, interfaces, and exceptions. |
-| `btc_5m_fv/core/exceptions.py` | WIRED | 4 | Custom exception hierarchy for the BTC 5m Binary Fair Value trading system. |
-| `btc_5m_fv/core/interfaces.py` | WIRED | 10 | Abstract base classes for all pluggable system components. |
-| `btc_5m_fv/core/types.py` | WIRED | 10 | All domain types and enums for the BTC 5m Binary Fair Value trading system. |
-| `btc_5m_fv/execution/__init__.py` | pkg | 0 | Paper and live execution managers. |
-| `btc_5m_fv/execution/gate.py` | WIRED | 4 | Venue-independent pre-trade risk gate (issue #64). |
-| `btc_5m_fv/execution/live.py` | WIRED | 6 | Live execution on the Polymarket CLOB via py-clob-client. |
-| `btc_5m_fv/execution/paper.py` | WIRED | 1 | Paper execution manager — explicit order lifecycle with SQLite persistence. |
-| `btc_5m_fv/execution/risk.py` | WIRED | 1 | Venue-independent risk service — pre-trade and post-trade risk controls. |
-| `btc_5m_fv/ops/__init__.py` | pkg | 0 | Operator controls and telemetry. |
-| `btc_5m_fv/ops/controller.py` | DEAD? | 0 | Unified bot controller — tick loop using execution manager + risk service. |
-| `btc_5m_fv/ops/dashboard/__init__.py` | pkg | 0 | FastAPI dashboard for BTC 5m Binary Fair Value trading system. |
-| `btc_5m_fv/ops/dashboard/app.py` | WIRED | 2 | FastAPI dashboard for BTC 5m Binary Fair Value trading system. |
-| `btc_5m_fv/ops/dashboard/ems.py` | WIRED | 1 | EMS view orchestrator (#37). |
-| `btc_5m_fv/ops/dashboard/panels/__init__.py` | pkg | 1 | Dashboard panels. |
-| `btc_5m_fv/ops/dashboard/panels/_data.py` | WIRED | 1 | Read-only SQLite loaders for dashboard panels. |
-| `btc_5m_fv/ops/dashboard/panels/_shared.py` | DEAD? | 0 | Shared rendering primitives for dashboard panels. |
-| `btc_5m_fv/ops/dashboard/panels/blotter.py` | WIRED | 1 | Trade blotter: open positions on top, last 12 closed below, mode chip per row. |
-| `btc_5m_fv/ops/dashboard/panels/controls.py` | WIRED | 1 | Operator runtime controls (#50, #89): live-editable risk knobs. |
-| `btc_5m_fv/ops/dashboard/panels/decision_engine.py` | WIRED | 1 | Decision engine panel: inputs → computation → gates → final banner + tail. |
-| `btc_5m_fv/ops/dashboard/panels/guardrails.py` | WIRED | 1 | Risk guardrails: daily spend, loss-halt, bot state, recent BLOCKED entries. |
-| `btc_5m_fv/ops/dashboard/panels/market.py` | WIRED | 1 | Live market panel: probability gauge, UP/DOWN book, basis. |
-| `btc_5m_fv/ops/dashboard/panels/performance.py` | WIRED | 1 | Performance / alpha panel: combined equity curve + LIVE/PAPER mini-cards. |
-| `btc_5m_fv/ops/dashboard/panels/ribbon.py` | WIRED | 1 | Top status ribbon: mode/state pills, daily PnL split, feed liveness chips. |
-| `btc_5m_fv/ops/dashboard/panels/strategy.py` | WIRED | 1 | Strategy panel: active params, proposed-vs-applied delta, calibration. |
-| `btc_5m_fv/ops/dashboard/panels/tca.py` | WIRED | 1 | TCA panel: quoted spread, half-spread, edge capture, Brier calibration. |
-| `btc_5m_fv/ops/incidents.py` | WIRED | 1 | Incident state machine and operator runbooks for the BTC 5m FV system. |
-| `btc_5m_fv/ops/telemetry.py` | WIRED | 1 | Feed health telemetry and latency tracking for the BTC 5m FV system. |
-| `btc_5m_fv/storage/__init__.py` | pkg | 0 | Persistence layer — database, recording, and replay. |
-| `btc_5m_fv/storage/recorder.py` | WIRED | 2 | Market data recorder — persists raw market snapshots to SQLite for deterministic replay. |
-| `btc_5m_fv/storage/replay.py` | DEAD? | 0 | Deterministic replay — feed recorded market data through a signal generator. |
-| `btc_5m_fv/strategy/__init__.py` | pkg | 0 | Signal generation module — fair value, sizing, and signal composition. |
-| `btc_5m_fv/strategy/fair_value.py` | WIRED | 2 | Fair-value probability and volatility estimation. |
-| `btc_5m_fv/strategy/signal.py` | DEAD? | 0 | Signal composition — bridge raw edge into a fully typed :class:`Signal`. |
-| `btc_5m_fv/strategy/sizing.py` | WIRED | 1 | Position sizing derived from signal confidence and strategy parameters. |
+| `btc_5m_exec/__init__.py` | pkg | 0 | BTC 5m Binary Pricing Model trading system. |
+| `btc_5m_exec/backtest/__init__.py` | pkg | 0 | Backtesting harness and metrics. |
+| `btc_5m_exec/backtest/conditional.py` | DEAD? | 0 | Conditional backtest — evaluates strategy on historical user trades. |
+| `btc_5m_exec/backtest/harness.py` | DEAD? | 0 | Full-market backtest harness. |
+| `btc_5m_exec/backtest/metrics.py` | WIRED | 1 | Backtest metrics, friction models, and reporting data classes. |
+| `btc_5m_exec/connectors/__init__.py` | pkg | 0 | Exchange and data connectors. |
+| `btc_5m_exec/connectors/base.py` | DEAD? | 0 | Re-export abstract base classes and exceptions for connector authors. |
+| `btc_5m_exec/connectors/binance.py` | DEAD? | 0 | Binance connector — BTC spot price and recent close history. |
+| `btc_5m_exec/connectors/chainlink.py` | DEAD? | 0 | Chainlink Data Streams connector stub. |
+| `btc_5m_exec/connectors/chainlink_settlement.py` | WIRED | 1 | Settlement-aligned Chainlink BTC/USD feed via Polymarket endpoints (issue #21). |
+| `btc_5m_exec/connectors/polymarket.py` | DEAD? | 0 | Polymarket connector — discovers the current BTC 5-minute binary market window. |
+| `btc_5m_exec/connectors/registry.py` | WIRED | 1 | Connector registry — manages the lifecycle and discovery of all connectors. |
+| `btc_5m_exec/core/__init__.py` | pkg | 0 | Core domain types, interfaces, and exceptions. |
+| `btc_5m_exec/core/exceptions.py` | WIRED | 4 | Custom exception hierarchy for the BTC 5m Binary Pricing Model trading system. |
+| `btc_5m_exec/core/interfaces.py` | WIRED | 10 | Abstract base classes for all pluggable system components. |
+| `btc_5m_exec/core/types.py` | WIRED | 10 | All domain types and enums for the BTC 5m Binary Pricing Model trading system. |
+| `btc_5m_exec/execution/__init__.py` | pkg | 0 | Paper and live execution managers. |
+| `btc_5m_exec/execution/gate.py` | WIRED | 4 | Venue-independent pre-trade risk gate (issue #64). |
+| `btc_5m_exec/execution/live.py` | WIRED | 6 | Live execution on the Polymarket CLOB via py-clob-client. |
+| `btc_5m_exec/execution/paper.py` | WIRED | 1 | Paper execution manager — explicit order lifecycle with SQLite persistence. |
+| `btc_5m_exec/execution/risk.py` | WIRED | 1 | Venue-independent risk service — pre-trade and post-trade risk controls. |
+| `btc_5m_exec/ops/__init__.py` | pkg | 0 | Operator controls and telemetry. |
+| `btc_5m_exec/ops/controller.py` | DEAD? | 0 | Unified bot controller — tick loop using execution manager + risk service. |
+| `btc_5m_exec/ops/dashboard/__init__.py` | pkg | 0 | FastAPI dashboard for BTC 5m Binary Pricing Model trading system. |
+| `btc_5m_exec/ops/dashboard/app.py` | WIRED | 2 | FastAPI dashboard for BTC 5m Binary Pricing Model trading system. |
+| `btc_5m_exec/ops/dashboard/ems.py` | WIRED | 1 | EMS view orchestrator (#37). |
+| `btc_5m_exec/ops/dashboard/panels/__init__.py` | pkg | 1 | Dashboard panels. |
+| `btc_5m_exec/ops/dashboard/panels/_data.py` | WIRED | 1 | Read-only SQLite loaders for dashboard panels. |
+| `btc_5m_exec/ops/dashboard/panels/_shared.py` | DEAD? | 0 | Shared rendering primitives for dashboard panels. |
+| `btc_5m_exec/ops/dashboard/panels/blotter.py` | WIRED | 1 | Trade blotter: open positions on top, last 12 closed below, mode chip per row. |
+| `btc_5m_exec/ops/dashboard/panels/controls.py` | WIRED | 1 | Operator runtime controls (#50, #89): live-editable risk knobs. |
+| `btc_5m_exec/ops/dashboard/panels/decision_engine.py` | WIRED | 1 | Decision engine panel: inputs → computation → gates → final banner + tail. |
+| `btc_5m_exec/ops/dashboard/panels/guardrails.py` | WIRED | 1 | Risk guardrails: daily spend, loss-halt, bot state, recent BLOCKED entries. |
+| `btc_5m_exec/ops/dashboard/panels/market.py` | WIRED | 1 | Live market panel: probability gauge, UP/DOWN book, basis. |
+| `btc_5m_exec/ops/dashboard/panels/performance.py` | WIRED | 1 | Performance / alpha panel: combined equity curve + LIVE/PAPER mini-cards. |
+| `btc_5m_exec/ops/dashboard/panels/ribbon.py` | WIRED | 1 | Top status ribbon: mode/state pills, daily PnL split, feed liveness chips. |
+| `btc_5m_exec/ops/dashboard/panels/strategy.py` | WIRED | 1 | Strategy panel: active params, proposed-vs-applied delta, calibration. |
+| `btc_5m_exec/ops/dashboard/panels/tca.py` | WIRED | 1 | TCA panel: quoted spread, half-spread, edge capture, Brier calibration. |
+| `btc_5m_exec/ops/incidents.py` | WIRED | 1 | Incident state machine and operator runbooks for the BTC 5m pricing-model system. |
+| `btc_5m_exec/ops/telemetry.py` | WIRED | 1 | Feed health telemetry and latency tracking for the BTC 5m pricing-model system. |
+| `btc_5m_exec/storage/__init__.py` | pkg | 0 | Persistence layer — database, recording, and replay. |
+| `btc_5m_exec/storage/recorder.py` | WIRED | 2 | Market data recorder — persists raw market snapshots to SQLite for deterministic replay. |
+| `btc_5m_exec/storage/replay.py` | DEAD? | 0 | Deterministic replay — feed recorded market data through a signal generator. |
+| `btc_5m_exec/strategy/__init__.py` | pkg | 0 | Signal generation module — pricing model, sizing, and signal composition. |
+| `btc_5m_exec/strategy/pricing_model.py` | WIRED | 2 | Pricing-model probability and volatility estimation. |
+| `btc_5m_exec/strategy/signal.py` | DEAD? | 0 | Signal composition — bridge raw edge into a fully typed :class:`Signal`. |
+| `btc_5m_exec/strategy/sizing.py` | WIRED | 1 | Position sizing derived from signal confidence and strategy parameters. |
 | `btc_bot/__init__.py` | pkg | 8 | BTC 5-minute paper-trading package. |
 | `btc_bot/adaptive.py` | WIRED | 3 | Adaptive risk controller (#36): edge-decay auto-pause + calibration. |
 | `btc_bot/backtest.py` | WIRED | 5 | Backtest and optimize the BTC 5-minute binary strategy on local history. |
@@ -72,9 +72,9 @@ _Status: `WIRED` = has non-test importers; `DEAD?` = no importers found (investi
 | `btc_bot/shadow/signals.py` | WIRED | 2 | Candidate strategies for the shadow forward-tester. |
 | `btc_bot/shadow/types.py` | WIRED | 4 | Shared data contracts for the shadow forward-tester. |
 | `btc_bot/strategy.py` | WIRED | 6 | Shared BTC 5-minute binary strategy math. |
-| `config.py` | WIRED | 25 | Configuration for the local BTC 5-minute binary fair-value strategy lab. |
+| `config.py` | WIRED | 25 | Configuration for the local BTC 5-minute binary pricing-model strategy lab. |
 | `dashboard.py` | WIRED | 1 | Local Gradio dashboard for BTC 5-minute paper trading. |
-| `db.py` | WIRED | 13 | SQLite storage for the BTC 5-minute binary fair-value strategy lab. |
+| `db.py` | WIRED | 13 | SQLite storage for the BTC 5-minute binary pricing-model strategy lab. |
 | `logging_setup.py` | WIRED | 9 | Structured JSON logging with structlog. Module + trade_id context. |
 | `main.py` | cli | 0 | Entrypoint for the BTC 5-minute paper trading system. |
 | `tools/backtest_btc_strategy.py` | cli | 0 | Run the BTC strategy backtest and parameter optimizer. |
@@ -87,7 +87,7 @@ _Status: `WIRED` = has non-test importers; `DEAD?` = no importers found (investi
 | `tools/live_detect_wallet.py` | cli | 0 | Detect the Polymarket funder wallet + signature type from a signer key (#34). |
 | `tools/live_preflight.py` | cli | 0 | Live-launch preflight: verify the .env wallet config end to end (issue #32). |
 | `tools/live_setup.py` | cli | 0 | One-time live-trading onboarding (issues #32, #33). |
-| `tools/offline_replay.py` | cli | 0 | Offline replay of the BTC 5-m fair-value strategy on HF Polymarket data. |
+| `tools/offline_replay.py` | cli | 0 | Offline replay of the BTC 5-m pricing-model strategy on HF Polymarket data. |
 | `tools/race_status.py` | cli | 0 | One-shot fee-true race standings + deploy-bar tracker (issue #150). |
 | `tools/reconcile_live_ledger.py` | cli | 0 | Reconcile the live paper-ledger against the REAL Polymarket account (issue #102). |
 | `tools/regime_attribution.py` | cli | 0 | Regime-attribution instrument for the shadow forward-tester (issue #120). |

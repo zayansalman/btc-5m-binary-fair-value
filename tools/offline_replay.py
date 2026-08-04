@@ -1,4 +1,4 @@
-"""Offline replay of the BTC 5-m fair-value strategy on HF Polymarket data.
+"""Offline replay of the BTC 5-m pricing-model strategy on HF Polymarket data.
 
 Issue #56. Replays ``btc_bot.strategy.fair_up_probability`` +
 ``signal_from_executable_edges`` over the HF dataset

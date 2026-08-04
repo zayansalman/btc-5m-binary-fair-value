@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 import config as _config
-from btc_5m_fv.execution.live import LiveBootRefused, assert_live_boot_allowed
+from btc_5m_exec.execution.live import LiveBootRefused, assert_live_boot_allowed
 from btc_bot import paper as _paper
 from btc_bot.paper import (
     count_open_positions,

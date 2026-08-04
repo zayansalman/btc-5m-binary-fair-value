@@ -8,13 +8,13 @@ Polymarket 7% taker fee. No real orders are ever placed from here — this is a
 pure paper comparison harness.
 
 Candidates (all are logged AND operator-selectable; see ``SELECTABLE_MODELS``):
-- ``fair_value_v0``       — the live strategy, logged as the control baseline.
+- ``pricing_v0``          — the live strategy, logged as the control baseline.
 - ``cushion_favorite_v2`` — v0 + a cushion gate (spot clearly on the favoured
   side of the strike): the only model sign-positive in-sample AND out-of-sample
   in the 06-18→06-24 race.
 - ``cushion_fresh_v7``    — v2 restricted to the first 60s of the window with
   edge claims capped at 0.065 (postmortem-motivated challenger, #142).
-- ``fair_value_fresh_v8`` — v0 in the first 60s only: the freshness gate
+- ``pricing_fresh_v8``    — v0 in the first 60s only: the freshness gate
   alone, pre-registered from the tick-replay evidence (#144). Together the
   roster is a clean ablation: v0 / v2 (cushion) / v7 (all gates) / v8 (fresh).
 
@@ -113,10 +113,10 @@ def _v0_control(
 _MODELS: dict[
     str, Callable[[SnapshotView, strategy.StrategyParams], ShadowSignal | None]
 ] = {
-    "fair_value_v0": _v0_control,
+    "pricing_v0": _v0_control,
     "cushion_favorite_v2": signals.cushion_favorite_v2,
     "cushion_fresh_v7": signals.cushion_fresh_v7,
-    "fair_value_fresh_v8": signals.fair_value_fresh_v8,
+    "pricing_fresh_v8": signals.pricing_fresh_v8,
     # Added #155 on the #149 replay evidence (OOS CI [+0.275, +0.887] vs v7's
     # [+0.080, +0.624]): v7 with the freshness gate tightened 60s→45s, the
     # 46–60s bucket having been fee-true negative for both fresh models.
@@ -132,7 +132,7 @@ _MODELS: dict[
 # in paper AND live. v0 is the default and uses the loop's native signal path;
 # the others dispatch through CANDIDATE_SIGNALS.
 ACTIVE_MODEL_KEY = "btc_model.active"
-DEFAULT_MODEL = "fair_value_v0"
+DEFAULT_MODEL = "pricing_v0"
 MODEL_IDS: list[str] = list(_MODELS.keys())
 
 # Operator-selectable models for the dashboard dropdown. The full logged roster
@@ -140,10 +140,10 @@ MODEL_IDS: list[str] = list(_MODELS.keys())
 # stays the default. Kept as an explicit list (not just MODEL_IDS) so a model can
 # be hidden from the selector later without dropping it from the logged set.
 SELECTABLE_MODELS: list[str] = [
-    "fair_value_v0",
+    "pricing_v0",
     "cushion_favorite_v2",
     "cushion_fresh_v7",
-    "fair_value_fresh_v8",
+    "pricing_fresh_v8",
     "cushion_fresh_v7_f45",
 ]
 
@@ -153,17 +153,17 @@ SELECTABLE_MODELS: list[str] = [
 # is v4 and its regime-drift child is v6 because cushion_drift (v5) was logged
 # between them (#108).
 MODEL_LABELS: dict[str, str] = {
-    "fair_value_v0": "Fair-Value · Settle (v0)",
+    "pricing_v0": "Pricing · Settle (v0)",
     "cushion_favorite_v2": "Cushion Favorite (v2)",
     "cushion_fresh_v7": "Cushion · Fresh+Capped (v7)",
-    "fair_value_fresh_v8": "Fair-Value · Fresh (v8)",
+    "pricing_fresh_v8": "Pricing · Fresh (v8)",
     "cushion_fresh_v7_f45": "Cushion · Fresh≤45s+Capped (v7·f45)",
 }
 MODEL_DESCRIPTIONS: dict[str, str] = {
-    "fair_value_v0": "v0 baseline · edge 0.045–0.07 · favorites ≥0.50 · hold→resolution",
+    "pricing_v0": "v0 baseline · edge 0.045–0.07 · favorites ≥0.50 · hold→resolution",
     "cushion_favorite_v2": "v0 + cushion: spot clearly on the favoured side of the strike",
     "cushion_fresh_v7": "v2 + first-60s windows only + edge claims capped at 0.065 (adverse-selection guard)",
-    "fair_value_fresh_v8": "v0 in the first 60s of the window only — the freshness gate alone (#144 replay evidence)",
+    "pricing_fresh_v8": "v0 in the first 60s of the window only — the freshness gate alone (#144 replay evidence)",
     "cushion_fresh_v7_f45": "v7 with the freshness gate tightened to ≤45s (#149 replay: 46–60s bucket was fee-negative)",
 }
 
@@ -174,7 +174,7 @@ CANDIDATE_SIGNALS: dict[
 ] = {
     "cushion_favorite_v2": signals.cushion_favorite_v2,
     "cushion_fresh_v7": signals.cushion_fresh_v7,
-    "fair_value_fresh_v8": signals.fair_value_fresh_v8,
+    "pricing_fresh_v8": signals.pricing_fresh_v8,
     "cushion_fresh_v7_f45": signals.cushion_fresh_v7_f45,
 }
 
@@ -184,7 +184,7 @@ def candidate_signal(
 ) -> ShadowSignal | None:
     """Live-dispatch helper: the selected candidate's would-be trade, or None.
 
-    Returns None for ``fair_value_v0`` / unknown ids — the caller falls back to
+    Returns None for ``pricing_v0`` / unknown ids — the caller falls back to
     the native v0 path for those.
     """
     fn = CANDIDATE_SIGNALS.get(model_id)

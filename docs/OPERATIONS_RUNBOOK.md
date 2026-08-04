@@ -1,6 +1,6 @@
 # Operations Runbook
 
-This runbook is for the local BTC 5-minute binary fair-value strategy lab. The goal is to
+This runbook is for the local BTC 5-minute binary pricing-model strategy lab. The goal is to
 make operation boring: visible state, bounded risk, and fast Stop behavior.
 Paper mode is the default; live mode is strictly opt-in (see "Going live").
 

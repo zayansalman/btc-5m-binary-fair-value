@@ -33,7 +33,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import config as _config  # noqa: E402
-from btc_5m_fv.execution.live import assert_live_boot_allowed  # noqa: E402
+from btc_5m_exec.execution.live import assert_live_boot_allowed  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

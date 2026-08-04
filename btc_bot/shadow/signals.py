@@ -225,7 +225,7 @@ def cushion_fresh_v7_f45_spread(
     )
 
 
-def fair_value_fresh_v8(
+def pricing_fresh_v8(
     view: SnapshotView,
     params: strategy.StrategyParams,
     max_age_seconds: int = 60,

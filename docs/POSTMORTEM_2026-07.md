@@ -41,7 +41,7 @@ boot now heals resolved-window rows). Irony: position 1768 **won** — auto-rede
 
 - **No model is distinguishable from zero.** Best: `cushion_favorite_v2` +$42.33, n=249,
   +0.17/trade, 95% CI [−0.14, +0.48], t=1.10. Powering a verdict on it needs ~1,623 trades
-  (~39 more days). `fair_value_v0` (+0.08/trade) needs ~104 days.
+  (~39 more days). `pricing_v0` (+0.08/trade) needs ~104 days.
 - **In-sample ranking inverted out-of-sample** (cut 06-23): `down_skeptic_v4` IS#1 → OOS#5;
   v0 IS#2 → OOS#4. Only the cushion family stayed sign-positive both sides
   (v2: +0.22 IS / +0.08 OOS; v5: +0.24 / +0.03). Ranking-on-a-week = noise-chasing;
@@ -64,7 +64,7 @@ boot now heals resolved-window rows). Irony: position 1768 **won** — auto-rede
 1. **Do not resume live trading now.** There is no validated positive-edge configuration;
    live trading today pays ~2.6% of turnover in fees to gamble on a CI that spans zero.
 2. Operator actions before any restart: reset the active model away from
-   `down_skeptic_drift_v6` (dashboard → active model; `fair_value_v0` as neutral baseline
+   `down_skeptic_drift_v6` (dashboard → active model; `pricing_v0` as neutral baseline
    or `cushion_favorite_v2` as the candidate under test); press Start once so the #132 heal
    closes stale row 1768; re-run `tools/reconcile_live_ledger.py --apply` afterwards.
 3. **Shadow-only for ≥6 weeks** (all six models keep logging; fee-true basis; no live

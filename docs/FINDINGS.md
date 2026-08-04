@@ -6,7 +6,7 @@ reproducible from the shipped ledger (`tools/race_status.py`, `tools/replay_race
 
 ## 1. There is no directional edge at retail latency
 
-- **The unfiltered control (v0)** — the raw fair-value signal with standard entry filters —
+- **The unfiltered control (v0)** — the raw pricing-model signal with standard entry filters —
   finished at ≈ **$0 over 400+ settled shadow trades** (drifting slightly negative at
   close). Five-minute BTC direction is priced correctly to within the fee.
 - **Live confirms paper.** Real-money lifetime: **−$19.35 across 351 fills**; June-era

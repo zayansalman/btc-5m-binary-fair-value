@@ -528,7 +528,7 @@ def _history_markdown() -> str:
 def _brief_markdown() -> str:
     return (
         "### System Brief\n"
-        "This is a local BTC 5-minute binary fair-value strategy lab. It is useful "
+        "This is a local BTC 5-minute binary pricing-model strategy lab. It is useful "
         "as a personal paper bot and as a compact example of trading-system "
         "discipline: market discovery, feed labeling, confidence-based sizing, "
         "one-position risk control, structured event logs, and a dashboard kill "
@@ -571,7 +571,7 @@ def _backtest_markdown() -> str:
     report_path = DATA_DIR / "backtests" / "latest.json"
     if not report_path.exists():
         return (
-            "### BTC 5m Binary Fair Value Backtest\n"
+            "### BTC 5m Binary Pricing Model Backtest\n"
             "No local report yet. Run:\n\n"
             "```bash\n"
             "./.venv/bin/python tools/backtest_btc_strategy.py\n"
@@ -609,13 +609,13 @@ def _btc_stop_views() -> tuple[str, str, str, str, str]:
 
 def build_ui() -> gr.Blocks:
     initial = _btc_views()
-    with gr.Blocks(title="BTC 5m Binary Fair Value", css=CSS) as app:
+    with gr.Blocks(title="BTC 5m Binary Pricing Model", css=CSS) as app:
         gr.HTML(
             """
             <div class='hero'>
-              <h1>BTC 5m Binary Fair Value</h1>
+              <h1>BTC 5m Binary Pricing Model</h1>
               <p>Local paper-trading dashboard for Polymarket BTC Up/Down 5-minute markets.
-              Resolution-aware fair-value signal, bounded paper sizing, and operator controls.</p>
+              Resolution-aware pricing-model signal, bounded paper sizing, and operator controls.</p>
             </div>
             """
         )

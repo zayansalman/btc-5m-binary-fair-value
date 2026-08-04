@@ -1,5 +1,28 @@
 # Changelog
 
+## v1.0.1 — Remove "fair value" branding (#169) (2026-08-04)
+
+Reopen housekeeping before any new build work (see the 9-issue reopen scope filed this
+session). "Fair value" overclaimed rigor the strategy never had — the logic is empirical
+entry-gate heuristics layered on a market-implied probability, not a derived fair value.
+Mechanical rename, no behavior change: 828 tests still green.
+
+- **`btc_5m_fv/` → `btc_5m_exec/`** (matches its real role per `docs/CODE_MAP.md`: execution
+  gate + dashboard + backtest + connectors); **`strategy/fair_value.py` →
+  `strategy/pricing_model.py`**.
+- Model-id literals `fair_value_v0` → `pricing_v0`, `fair_value_fresh_v8` → `pricing_fresh_v8`
+  (`btc_bot/shadow/runner.py`, `signals.py`); dashboard dropdown/labels follow.
+- Package name `btc-5m-fv` → `btc-5m-exec` in `pyproject.toml`; all imports, docstrings,
+  comments, and current-state docs (README, AGENTS.md, `docs/*.md`) updated to match.
+- `docs/FILE_MAP.md` and the `<!-- GENERATED -->` blocks in `AGENTS.md`/`docs/CODE_MAP.md`
+  regenerated via `tools/gen_docs.py` — not hand-edited.
+- Left unchanged (deliberately): the `data/btc_5m_binary_fair_value.db` default filename
+  (`config.py`, `.env.example`, `Dockerfile`, `tools/*.py`) — a data-layer identifier, not
+  code branding; renaming it risks silently pointing a live deployment at a new, empty DB
+  file. Also left unchanged: historical records that would be falsified by editing them —
+  every `CHANGELOG.md` entry below this one, `tasks/*.md` session logs, and the dated
+  per-issue archives under `docs/specs/` and `docs/superpowers/`.
+
 ## v1.0.0 — FINAL: research archive (2026-07-10)
 
 The program reached its pre-registered verdict and closed. Post-freeze out-of-sample
