@@ -5,14 +5,14 @@ from __future__ import annotations
 import pytest
 from dataclasses import FrozenInstanceError
 
-from btc_5m_fv.core.exceptions import (
+from btc_5m_exec.core.exceptions import (
     BtcBotError,
     ConfigurationError,
     FeedError,
     MarketDiscoveryError,
     RiskBreach,
 )
-from btc_5m_fv.core.types import (
+from btc_5m_exec.core.types import (
     BacktestMetrics,
     BacktestParams,
     BtcBotStatus,

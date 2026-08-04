@@ -7,10 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from btc_5m_fv.backtest.harness import FullMarketBacktestHarness
-from btc_5m_fv.backtest.metrics import BacktestResult, FrictionModel
-from btc_5m_fv.core.interfaces import AbstractSignalGenerator
-from btc_5m_fv.core.types import (
+from btc_5m_exec.backtest.harness import FullMarketBacktestHarness
+from btc_5m_exec.backtest.metrics import BacktestResult, FrictionModel
+from btc_5m_exec.core.interfaces import AbstractSignalGenerator
+from btc_5m_exec.core.types import (
     MarketWindow,
     Side,
     Signal,
@@ -18,7 +18,7 @@ from btc_5m_fv.core.types import (
     StrategyParams,
     Tick,
 )
-from btc_5m_fv.storage.recorder import MarketDataRecorder
+from btc_5m_exec.storage.recorder import MarketDataRecorder
 
 
 # ---------------------------------------------------------------------------

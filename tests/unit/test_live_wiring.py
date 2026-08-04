@@ -19,7 +19,7 @@ import config as _config
 import db as _db
 import btc_bot.controller as controller
 import btc_bot.paper as paper
-from btc_5m_fv.execution.live import LiveOrderResult
+from btc_5m_exec.execution.live import LiveOrderResult
 
 
 @pytest_asyncio.fixture
@@ -380,7 +380,7 @@ def test_config_mode_choices_reject_unknown(monkeypatch: pytest.MonkeyPatch) -> 
 def _dash_module():
     import importlib
 
-    return importlib.import_module("btc_5m_fv.ops.dashboard.app")
+    return importlib.import_module("btc_5m_exec.ops.dashboard.app")
 
 
 def test_dashboard_paper_copy_by_default(monkeypatch: pytest.MonkeyPatch) -> None:

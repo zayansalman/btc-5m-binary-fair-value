@@ -19,7 +19,7 @@ from py_clob_client_v2 import OrderPayload
 
 import config as _config
 import db as _db
-from btc_5m_fv.execution.live import (
+from btc_5m_exec.execution.live import (
     BUY,
     CONFIRM_PHRASE,
     SELL,
@@ -1277,7 +1277,7 @@ async def test_boot_cancel_retries_transient_then_succeeds(
 ) -> None:
     """A transient 425 'order manager not ready' on cancel_all is retried,
     not treated as fatal — reconciliation succeeds once the cancel does."""
-    monkeypatch.setattr("btc_5m_fv.execution.live._BOOT_CANCEL_BACKOFF_SECONDS", 0.0)
+    monkeypatch.setattr("btc_5m_exec.execution.live._BOOT_CANCEL_BACKOFF_SECONDS", 0.0)
     client = _mock_client()
     client.cancel_all.side_effect = [
         Exception("PolyApiException[status_code=425, order manager not ready]"),
@@ -1297,7 +1297,7 @@ async def test_boot_cancel_refuses_after_exhausting_retries(
 ) -> None:
     """If the cancel keeps failing, boot is STILL refused — the never-trade-on-
     unknown-resting-orders safety is preserved, just no longer tripped by a blip."""
-    monkeypatch.setattr("btc_5m_fv.execution.live._BOOT_CANCEL_BACKOFF_SECONDS", 0.0)
+    monkeypatch.setattr("btc_5m_exec.execution.live._BOOT_CANCEL_BACKOFF_SECONDS", 0.0)
     client = _mock_client()
     client.cancel_all.side_effect = Exception("PolyApiException[status_code=425]")
     ex = _executor(client, tmp_path)

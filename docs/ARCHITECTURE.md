@@ -23,12 +23,12 @@ generated status in [FILE_MAP.md](FILE_MAP.md).)
 │  Binance vol │           └────────┬───────────────┘         idempotent)
 └──────────────┘                    │ real orders (multi-gated)
                                     ▼
-                          btc_5m_fv/execution/live.py
+                          btc_5m_exec/execution/live.py
                           CLOB executor · RiskGate · kill switch
 ```
 
-- **`btc_bot/`** — the live tick loop, fair-value math, and the shadow race.
-- **`btc_5m_fv/`** — layered core/strategy/connectors/storage/execution/ops.
+- **`btc_bot/`** — the live tick loop, pricing-model math, and the shadow race.
+- **`btc_5m_exec/`** — layered core/strategy/connectors/storage/execution/ops.
 - **Foundation** — `config.py` (env parsing that *refuses* live boot on parse errors),
   `db.py` (SQLite + additive migrations + backfills), `logging_setup.py` (structlog).
 - **`tools/`** — research instruments; read-only against the ledger by construction.

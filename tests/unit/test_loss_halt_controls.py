@@ -19,8 +19,8 @@ import pytest_asyncio
 from fastapi.testclient import TestClient
 
 import db as _db
-from btc_5m_fv.execution.gate import GateConfig, RiskGate, get_loss_halt_bypass
-from btc_5m_fv.ops.dashboard.panels import guardrails
+from btc_5m_exec.execution.gate import GateConfig, RiskGate, get_loss_halt_bypass
+from btc_5m_exec.ops.dashboard.panels import guardrails
 from btc_bot.paper import _loss_halt_stop_detail
 
 
@@ -47,7 +47,7 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClie
     """TestClient on an isolated DB. The lifespan runs init_db + the #76
     migration, so the bypass starts OFF (halt ON)."""
     monkeypatch.setattr(_db, "DB_PATH", tmp_path / "test_lh_ep.db")
-    from btc_5m_fv.ops.dashboard.app import app
+    from btc_5m_exec.ops.dashboard.app import app
 
     with TestClient(app) as c:
         yield c
@@ -139,7 +139,7 @@ class TestPaperHaltPauseNotify:
 
     @pytest.mark.asyncio
     async def test_none_when_bypassed(self, isolated_db) -> None:
-        from btc_5m_fv.execution.gate import set_loss_halt_bypass
+        from btc_5m_exec.execution.gate import set_loss_halt_bypass
 
         await set_loss_halt_bypass(True)
         g = RiskGate(_cfg(), is_live=True)
@@ -237,7 +237,7 @@ class TestLossHaltEndpoints:
 class TestBypassMigration:
     @pytest.mark.asyncio
     async def test_clears_stale_flag_once(self, isolated_db) -> None:
-        from btc_5m_fv.execution.gate import (
+        from btc_5m_exec.execution.gate import (
             migrate_clear_stale_bypass_v76,
             set_loss_halt_bypass,
         )
@@ -248,7 +248,7 @@ class TestBypassMigration:
 
     @pytest.mark.asyncio
     async def test_does_not_wipe_later_deliberate_bypass(self, isolated_db) -> None:
-        from btc_5m_fv.execution.gate import (
+        from btc_5m_exec.execution.gate import (
             migrate_clear_stale_bypass_v76,
             set_loss_halt_bypass,
         )

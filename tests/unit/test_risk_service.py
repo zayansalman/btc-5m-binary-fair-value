@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from btc_5m_fv.core.types import (
+from btc_5m_exec.core.types import (
     OrderState,
     PaperOrder,
     PaperPosition,
@@ -12,7 +12,7 @@ from btc_5m_fv.core.types import (
     Signal,
     SignalAction,
 )
-from btc_5m_fv.execution.risk import RiskService
+from btc_5m_exec.execution.risk import RiskService
 
 
 # ---------------------------------------------------------------------------

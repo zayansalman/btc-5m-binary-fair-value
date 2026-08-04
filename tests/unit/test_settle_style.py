@@ -14,7 +14,7 @@ import pytest_asyncio
 
 import db as _db
 import btc_bot.paper as paper
-from btc_5m_fv.execution.live import LiveExecutor
+from btc_5m_exec.execution.live import LiveExecutor
 
 
 @pytest_asyncio.fixture
@@ -357,8 +357,8 @@ async def test_retired_active_model_falls_back_to_default_loudly_once(test_db):
     first = await paper._resolve_active_model()
     second = await paper._resolve_active_model()
 
-    assert first == "fair_value_v0"
-    assert second == "fair_value_v0"
+    assert first == "pricing_v0"
+    assert second == "pricing_v0"
     async with _db.connect() as conn:
         async with conn.execute(
             "SELECT COUNT(*) AS n FROM notification_feed"

@@ -15,13 +15,13 @@ moving it toward the engineering shape expected of serious trading systems.
   dashboard state.
 
 > Several earlier roadmap items have since shipped and were removed from this
-> list: the market-data recorder (`btc_5m_fv/storage/recorder.py`), the
-> full-market replay + backtest harness (`btc_5m_fv/storage/replay.py`,
-> `btc_5m_fv/backtest/harness.py` — built, though not yet wired into the live
+> list: the market-data recorder (`btc_5m_exec/storage/recorder.py`), the
+> full-market replay + backtest harness (`btc_5m_exec/storage/replay.py`,
+> `btc_5m_exec/backtest/harness.py` — built, though not yet wired into the live
 > tooling; see `docs/BACKTESTING.md`), feed/latency telemetry
-> (`btc_5m_fv/ops/telemetry.py`), incident states (`btc_5m_fv/ops/incidents.py`
+> (`btc_5m_exec/ops/telemetry.py`), incident states (`btc_5m_exec/ops/incidents.py`
 > + `docs/OPERATIONS_RUNBOOK.md`), the dedicated-wallet live executor
-> (`btc_5m_fv/execution/live.py`), and CI with deterministic fixtures
+> (`btc_5m_exec/execution/live.py`), and CI with deterministic fixtures
 > (`.github/workflows/ci.yml`). What remains below is genuine future work.
 
 ## Priority Buildout

@@ -1,8 +1,8 @@
-# BTC 5m Binary Fair Value — a trading lab that stopped itself on evidence
+# BTC 5m Binary Pricing Model — a trading lab that stopped itself on evidence
 
 **Status: ARCHIVED (research complete, 2026-07-10).** This repository is the full record of a
 30-day quantitative research program on Polymarket's BTC 5-minute Up/Down binary markets:
-a fair-value model, a paper/live execution stack, a five-model shadow "race", a validated
+a pricing model, a paper/live execution stack, a five-model shadow "race", a validated
 tick-replay backtester, and an autonomous agent ops-loop — ending in a **rigorous negative
 result**, reached before it could get expensive.
 
@@ -22,7 +22,7 @@ don't have one — which is the harder and more valuable build.
 
 | Question | Answer | Evidence |
 |---|---|---|
-| Does the fair-value model have directional edge? | **No** | Unfiltered control: ≈$0 over 400+ settled shadow trades |
+| Does the pricing model have directional edge? | **No** | Unfiltered control: ≈$0 over 400+ settled shadow trades |
 | Do freshness/cushion/edge-cap gates create edge? | **No** | All 7 variants regressed to null as n grew; final candidate's post-freeze segment: −$0.41/trade, WR 48.6% (n=37) |
 | Does switching to the recent leader help? | **No** | Simulated on own race data: follow-the-leader +$3–6 vs hold +$16.60 — switching buys the day *after* the big day |
 | Do regimes (time/edge/vol/basis) hide an edge? | **No** | A-priori bands, side-attributed, permutation + FDR: 0/12 and 0/75 cells survive |
@@ -67,7 +67,7 @@ Two coupled trees plus a small shared foundation:
 btc_bot/                  # the live loop + signal math
 ├── paper.py              #   tick loop, snapshots, settle-style position lifecycle
 ├── controller.py         #   start/stop, watchdog (#147), silent-stop detector (#138)
-├── strategy.py           #   fair-value math + executable-edge signal (pure)
+├── strategy.py           #   pricing-model math + executable-edge signal (pure)
 ├── params.py             #   operator-tunable runtime params
 └── shadow/               #   the model race
     ├── signals.py        #   candidate strategies as PURE functions (view → signal | None)
@@ -75,7 +75,7 @@ btc_bot/                  # the live loop + signal math
     ├── ledger.py         #   INSERT OR IGNORE journal + fee-true settlement
     └── fees.py           #   the single Polymarket taker-fee model
 
-btc_5m_fv/                # execution / connectors / ops
+btc_5m_exec/              # execution / connectors / ops
 ├── core/                 #   domain types, interfaces, exceptions
 ├── strategy/  connectors/  storage/  backtest/
 ├── execution/            #   paper lifecycle + LIVE executor (multi-gated) + RiskGate (#64)

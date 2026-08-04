@@ -8,7 +8,7 @@ outcome tokens (issue #22), and records entries/exits in SQLite. In paper
 mode (the default) no real orders are ever placed. When ``BTC_BOT_MODE=live``
 AND the live boot gate passes (private key +
 ``BTC_LIVE_CONFIRM=YES_I_UNDERSTAND``), entries/exits are ALSO routed through
-:class:`btc_5m_fv.execution.live.LiveExecutor`, which places real risk-gated
+:class:`btc_5m_exec.execution.live.LiveExecutor`, which places real risk-gated
 orders on the Polymarket CLOB.
 
 Data-source discipline (three sources, zero level-mixing):
@@ -57,16 +57,16 @@ from config import (
 import config as _config
 from db import connect, get_config, journal_live_order, notify, set_config
 from logging_setup import get_logger
-from btc_5m_fv.connectors.chainlink_settlement import (
+from btc_5m_exec.connectors.chainlink_settlement import (
     ChainlinkSettlementConnector,
     ChainlinkWsFeed,
 )
-from btc_5m_fv.execution.live import (
+from btc_5m_exec.execution.live import (
     DEFAULT_MIN_ORDER_SIZE,
     LiveExecutor,
     build_live_executor,
 )
-from btc_5m_fv.execution.gate import (
+from btc_5m_exec.execution.gate import (
     EntryRequest,
     RiskGate,
     build_gate_from_config,
@@ -286,7 +286,7 @@ class PaperSnapshot:
     # Gamma outcomePrices Up — journaled ONLY to quantify staleness vs the book.
     gamma_up_price: float | None = None
     # True when the Chainlink settlement feed could not price this tick;
-    # entries are blocked and fair-value-based exits are suppressed.
+    # entries are blocked and pricing-model-based exits are suppressed.
     feed_degraded: bool = False
     # Pre-calibration fair_up_prob — populated when a calibrator is active so
     # the dashboard can show raw vs calibrated and the journal stays auditable.
@@ -1835,7 +1835,7 @@ def _exit_reason(snapshot: PaperSnapshot, pos: dict[str, Any], exit_price: float
         return "TARGET"
     if pnl <= notional * BTC_PAPER_STOP_RETURN:
         return "STOP"
-    # Fair-value-based exit only when fair value is trustworthy this tick:
+    # Pricing-model-based exit only when the pricing model is trustworthy this tick:
     # a degraded settlement feed or an unquotable book pins edge near zero,
     # which must not masquerade as "the edge genuinely collapsed".
     if (

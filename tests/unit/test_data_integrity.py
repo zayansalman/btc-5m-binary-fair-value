@@ -1,6 +1,6 @@
 """Unit tests for the data-integrity layer (issues #21/#22).
 
-Covers the tie-rule fair value, executable-edge signal selection, the
+Covers the tie-rule pricing model, executable-edge signal selection, the
 Chainlink settlement connector (REST reference stabilization, fast
 settlement, REST spot poll), the WS feed frame handling, and the
 degraded-feed exit suppression. No external network calls.
@@ -13,7 +13,7 @@ import json
 import httpx
 import pytest
 
-from btc_5m_fv.connectors.chainlink_settlement import (
+from btc_5m_exec.connectors.chainlink_settlement import (
     ChainlinkSettlementConnector,
     ChainlinkWsFeed,
     build_subscribe_message,

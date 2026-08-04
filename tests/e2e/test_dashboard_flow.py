@@ -17,7 +17,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 from fastapi.testclient import TestClient
 
-from btc_5m_fv.ops.dashboard.app import app
+from btc_5m_exec.ops.dashboard.app import app
 
 
 @pytest.fixture
@@ -53,7 +53,7 @@ class TestFullPageLoad:
     def test_strategy_panel_shows_params(self, client: TestClient):
         text = client.get("/").text
         # Strategy panel surfaces the model + bands.
-        assert "Fair-Value" in text
+        assert "Pricing" in text
         assert "Edge band" in text
         assert "Settlement" in text
 

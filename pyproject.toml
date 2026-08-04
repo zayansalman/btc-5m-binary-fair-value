@@ -3,9 +3,9 @@ requires = ["setuptools>=61", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "btc-5m-fv"
+name = "btc-5m-exec"
 version = "0.2.0"
-description = "BTC 5-minute binary fair-value trading system"
+description = "BTC 5-minute binary pricing-model trading system"
 requires-python = ">=3.11"
 dependencies = [
     # http2 extra (h2) is REQUIRED, not optional: the Polymarket crypto-price
@@ -37,7 +37,7 @@ dev = ["ruff>=0.4", "mypy>=1.9"]
 setup = ["polymarket-client"]
 
 [tool.setuptools]
-packages = ["btc_5m_fv", "btc_bot"]
+packages = ["btc_5m_exec", "btc_bot"]
 py-modules = ["db", "config", "logging_setup", "main", "dashboard"]
 
 [tool.ruff]
@@ -49,8 +49,8 @@ target-version = "py311"
 # sys.path before importing top-level modules (config, db, logging_setup) or
 # the package itself, so those imports intentionally follow the sys.path
 # bootstrap and cannot be hoisted to the top of the file.
-"btc_5m_fv/execution/live.py" = ["E402"]
-"btc_5m_fv/ops/dashboard/app.py" = ["E402"]
+"btc_5m_exec/execution/live.py" = ["E402"]
+"btc_5m_exec/ops/dashboard/app.py" = ["E402"]
 "tests/e2e/test_dashboard_flow.py" = ["E402"]
 "tests/unit/test_dashboard.py" = ["E402"]
 "tools/backtest_btc_strategy.py" = ["E402"]

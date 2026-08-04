@@ -1,6 +1,6 @@
 """Probability calibration for the side-relative model output (#37).
 
-The Black-Scholes-with-tie-mass fair-value model produces a raw probability
+The Black-Scholes-with-tie-mass pricing model produces a raw probability
 P(chosen side wins). Across the closed-trade journal this estimate has a
 non-trivial Brier score, meaning the predicted probabilities are systematically
 off — too confident in some bands, not confident enough in others. Calibration

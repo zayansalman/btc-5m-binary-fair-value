@@ -74,7 +74,7 @@ class Trade:
 
 
 def load_ticks(db_path: Path) -> dict[str, list[sqlite3.Row]]:
-    """Ticks with an executable two-sided book and a fair value, per window."""
+    """Ticks with an executable two-sided book and a pricing-model value, per window."""
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     rows = conn.execute(

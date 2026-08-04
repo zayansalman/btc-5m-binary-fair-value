@@ -1,4 +1,4 @@
-"""SQLite storage for the BTC 5-minute binary fair-value strategy lab."""
+"""SQLite storage for the BTC 5-minute binary pricing-model strategy lab."""
 from __future__ import annotations
 
 import json

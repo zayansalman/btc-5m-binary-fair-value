@@ -8,7 +8,7 @@ built.
 ## Why
 
 Layer 1 (isotonic calibration) reduced Brier from 0.275 to 0.242 on the existing
-log-normal fair-value model — a real lift. Layer 3 asks: is there a second,
+log-normal pricing model — a real lift. Layer 3 asks: is there a second,
 independent probability source that can be ensembled with the calibrated
 baseline to push Brier further?
 
