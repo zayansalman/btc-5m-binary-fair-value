@@ -134,6 +134,24 @@ sized ~$3 with a singleton-position constraint. Settlement alignment mattered: w
 resolve on Polymarket's Chainlink stream, not Binance (measured basis ≈ $50), so spot and
 reference come from the settlement-aligned feed with per-component provenance journaling.
 
+## Strategy design (reopened, 2026-08)
+
+The archive above answers the question it set out to ask. A second phase, tracked in
+issues #169–#177, is documenting a redesigned strategy **on paper before any code**, per
+the resolution process in #170 (*discuss → write it down and confirm it makes sense
+independent of any backtest → only then test on samples*).
+
+- **`docs/STRATEGY_DESIGN.md`** — thesis, ingredients, signal families, the horizon
+  analysis that moves the directional target off 5-minute markets, and the two strategies
+  (Accumulator, Scalper) with their model rosters.
+- **`docs/MODEL_STACK.md`** — every model in the stack: what it calculates, the mechanism,
+  its published source, and whether it is reused, adapted or must be built.
+- **`docs/FACTORS.md`** — every input: description, how it is computed, from which source,
+  and why it is present — including the deliberate exclusions and their reasons.
+
+Nothing in those three documents has been tested. They specify the measurement program
+that would test them.
+
 ## Reading the record
 
 - **`docs/FINDINGS.md`** — the seven findings in full, with the evidence for each.
