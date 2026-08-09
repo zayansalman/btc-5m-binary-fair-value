@@ -48,7 +48,7 @@ Two structural facts follow, and both drive design decisions later in this docum
    where uncertainty is highest. Mid-range taker trading is the most expensive place on
    the curve to operate.
 2. **Maker pays no fee and earns the spread** — but inherits adverse selection. The v1.0.0
-   research tested this and killed it (see §8); the sibling research folder's VPIN evidence
+   research tested this and killed it (see §9); the sibling research folder's VPIN evidence
    for this market category corroborates it independently.
 
 Fee formula source: `btc_bot/shadow/fees.py`, verified against real venue fills during the
@@ -85,7 +85,7 @@ horizons in §4).
 | **Intraday momentum / reversal** | Continuation after flow-backed moves; reversal after flow-less spikes. | mins | Marginal alone; the with-flow vs without-flow split is the usable part, and it is subsumed by OFI. |
 | **Time-of-day seasonality** | Funding resets, session opens and expiries create semi-deterministic flow. | calendar | Small, free; a conditioning variable, not a signal. |
 | **Options dealer positioning (GEX)** | Dealer hedging pins or accelerates spot. | hours–days | **No** — too slow for the horizons in scope. |
-| **News / scheduled macro** | A CPI or FOMC release inside a window. | event | **As a stand-down gate**, not a direction signal (see §9). |
+| **News / scheduled macro** | A CPI or FOMC release inside a window. | event | **As a stand-down gate**, not a direction signal (see §10). |
 
 ---
 
@@ -100,34 +100,42 @@ together.** The tilt a sustained drift produces over a window is `(μ/σ)·√τ
 
 ### The ladder that actually exists
 
-Verified against the venue's live catalogue (2026-08-09). The up/down binary family is
-listed at **four horizons only — 5m, 15m, 4h, and daily** (two daily windows, 2AM and 6AM
-ET). **There is no 1-hour market.** The same four-rung ladder is listed for eight assets:
-BTC, ETH, SOL, XRP, DOGE, BNB, HYPE, ZEC.
+Verified against the venue's live catalogue and UI (2026-08-09). The up/down binary family
+is listed at **four horizons — 5m, 15m, 1h, and daily** — for eight assets: BTC, ETH, SOL,
+XRP, DOGE, BNB, HYPE, ZEC. (A `-4h-` slug family exists in the API as stale leftovers with
+zero active events; it is not in the UI and is excluded.)
+
+**Settlement source differs by rung, and it matters.** Per the market descriptions: the
+hourly market resolves on the **Binance BTC/USDT 1-hour candle** (close ≥ open), and the
+daily market on the **Binance 1-minute candle at 12:00 ET**, noon-to-noon — not on
+Chainlink prints as the 5m/15m markets are. Exact comparison wording to be re-verified at
+build time, but the consequence is major: **for the 1h and daily rungs, strike and
+settlement are the same free Binance data the measurement program backtests on.** The
+Chainlink-proxy concern applies only to the short rungs.
 
 Observed book state at the time of survey:
 
-| Horizon | Resting liquidity | Spread | Concurrent BTC markets |
-|---|---|---|---|
-| 5 min | ~$2,500 | 1¢ | ~18 |
-| 15 min | ~$4,300 | 1¢ | ~5 |
-| **4 hour** | ~$1,700 | 1¢ | 1 |
-| **Daily** | **~$12,900** | 1¢ | 2 |
+| Horizon | Book depth | Spread | Traded volume | Windows/day (BTC) |
+|---|---|---|---|---|
+| 5 min | ~$2,500 | 1¢ | small | 288 |
+| 15 min | ~$4,300 | 1¢ | small | 96 |
+| **1 hour** | ~$4,700 | ~2¢ | **$10k–$33k per window** | 24 |
+| **Daily** | **~$36,700** | 1¢ | large | 1 |
 
-Spread is a uniform 1¢ across the ladder, so it does not offset the fee advantage of longer
-horizons — the fee is the entire differentiator. Note that the daily book is the deepest on
-the ladder by a factor of five.
+The hourly market's traded volume is the standout: $10k–$33k per window is organic flow,
+not seeded maker quotes. The daily book is the deepest on the ladder by roughly 8×.
 
 ### The economics across the ladder
 
 At BTC's typical ~2.5%/day vola and an assumed sustained 2%/day drift — the *same*
-forecasting skill applied at each listed window length, using the observed 0.5¢ half-spread:
+forecasting skill applied at each listed window length, using each rung's observed
+half-spread:
 
-| Market | σ̂√τ (coverable ground) | Win rate from that drift | Edge over 50¢ | Cost (fee 1.75¢ + half-spread 0.5¢) as % of edge |
+| Market | σ̂√τ (coverable ground) | Win rate from that drift | Edge over 50¢ | Cost (fee 1.75¢ + observed half-spread) as % of edge |
 |---|---|---|---|---|
 | **5 min** | 0.15% | 51.9% | 1.9¢ | **118% — structurally underwater** |
 | **15 min** | 0.26% | 53.3% | 3.3¢ | 68% |
-| **4 hour** | 1.02% | 62.8% | 12.8¢ | **18%** |
+| **1 hour** | 0.51% | 56.5% | 6.5¢ | **42%** |
 | **1 day** | 2.50% | 78.8% | 28.8¢ | **8%** |
 
 **How to read this table correctly.** It does **not** say that longer horizons offer free
@@ -135,7 +143,7 @@ money — an efficient market prices an obvious drift, so if the drift is visibl
 ask already sits at 78¢ and the edge is zero again. What the last column measures is **how
 much forecasting skill survives translation into profit**. At 5 minutes, the toll exceeds
 the entire tilt a strong drift can produce: even a perfect drift forecast cannot pay for
-itself. At 4 hours, the same skill keeps ~82% of what it earns.
+itself. At 1 hour the same skill keeps ~58% of what it earns; at daily, ~92%.
 
 This reproduces, from the fee formula alone, the conclusion the v1.0.0 research reached
 empirically and the sibling research folder reached from market-structure evidence: the
@@ -145,19 +153,19 @@ empirically and the sibling research folder reached from market-structure eviden
 
 | Constraint | Effect |
 |---|---|
-| **Signal horizon must match market horizon** | OFI predicts seconds-to-minutes: strongest at 5m, weak at 4h, worthless at daily. Longer horizons need different (trend, positioning, macro) signals. |
-| **Verification time** | 288 windows/day at 5m, ~6 at 4h, 2 at daily — **per asset**. Across the eight listed assets that becomes ~48/day at 4h and ~16/day at daily, which makes both testable in months rather than years. Cross-asset samples are correlated, so effective sample size is lower than the raw count. |
+| **Signal horizon must match market horizon** | OFI predicts seconds-to-minutes: strongest at 5m, weakened but plausibly alive at 1h, worthless at daily. Daily needs genuinely slower signals (trend, positioning, macro). |
+| **Verification time** | Per asset: 288 windows/day at 5m, 24 at 1h, 1 at daily. Across the eight listed assets: ~192/day at 1h and ~8/day at daily — both testable in weeks-to-months. Cross-asset samples are correlated, so effective sample size is materially lower than the raw count. |
 | **Competition** | Forecasting a day of BTC attracts far more skilled capital than forecasting five minutes. Cheaper toll, harder game. |
-| **Window overlap** | 4h and daily windows overlap in time. Holding both is *doubled exposure to one directional view*, not diversification — it must be handled in sizing, and ignoring it inflates effective sample size in testing. |
+| **Window overlap** | Each 1h window sits inside the daily window (and the eight assets are highly correlated). Holding hourly and daily positions on the same lean is *doubled exposure to one view*, not diversification — handled in sizing, and accounted for in effective sample size. |
 
 ### Decision
 
 | Market | Role | Rationale |
 |---|---|---|
-| **4 hour** | **Primary — Accumulator** | Fee burden falls to ~18%; positioning and trend signals still carry at this horizon; ~48 windows/day across the eight listed assets permits validation in weeks. |
-| **Daily** | **Co-primary — Accumulator** | Best economics on the ladder (~8%) *and* the deepest book (~$12.9k). Sample rate is workable across eight assets. Requires genuinely slower signals than 4h. |
+| **1 hour** | **Primary — Accumulator** | Fee burden ~42%; $10k–$33k of organic traded volume per window; 1h OFI/flow signals plausibly still alive; ~192 windows/day across eight assets permits validation in weeks. Settles on Binance candles — no settlement-source proxy issue. |
+| **Daily** | **Co-primary — Accumulator** | Best economics on the ladder (~8%) *and* the deepest book (~$36.7k). Requires genuinely slower signals than 1h. Also Binance-settled. |
 | **5 min** | **Scalper only** | Directional holding is dead here by the table above. The gamma play is untouched by this analysis — it does not hold to resolution and does not depend on drift (§6). |
-| **15 min** | Not scheduled | At 68% cost burden it is dominated by 4h on economics and by 5m on sample rate. No role unless 4h/daily liquidity disappoints. |
+| **15 min** | Not scheduled | At 68% cost burden it is dominated by 1h on economics and by 5m on sample rate. No role unless 1h/daily liquidity disappoints. |
 
 ### Book switching by regime — the rule, and the condition it depends on
 
@@ -178,16 +186,16 @@ always trade the longest book — no switching logic, no added complexity. If `�
 materially higher in some regimes, the switch earns its place.
 
 `μ/σ` by regime is a directly measurable quantity, and measuring it is the **first**
-question in the Phase A program (§10). No switching machinery is built before that answer
+question in the Phase A program (§11). No switching machinery is built before that answer
 exists.
 
 ---
 
-## 5. Strategy 1 — the Accumulator (4h / daily, book selected by regime)
+## 5. Strategy 1 — the Accumulator (1h / daily, book selected by regime)
 
 > When the market is leaning, buy the leaning side window after window at flat size, hold
 > each to resolution, and let a modest win-rate advantage compound across many windows.
-> The book traded — 4h or daily — is selected by the vola regime, per the `τ = (T·σ/μ)²`
+> The book traded — 1h or daily — is selected by the vola regime, per the `τ = (T·σ/μ)²`
 > rule in §4, *conditional on that rule's premise surviving measurement*.
 
 | Model | What it calculates | How the math works | Why this model |
@@ -227,15 +235,72 @@ what the measurement program must falsify.
 
 ---
 
-## 7. Shared chassis
+## 7. Strategy 3 — the Vola trade (mid-window, 1h primary)
+
+> Mid-window, the market's price implies a volatility. When the vola engine's forecast σ̂
+> disagrees with that implied σ by more than the cost stack, buy the side the market has
+> mispriced — the favorite if implied vola is too high, the underdog if too low. No
+> directional view is required.
+
+**The mechanism.** At window open, spot equals the strike, `z = 0`, and fair value is 50¢
+*regardless of vola* — these contracts carry no vola information at open, and betting there
+is a pure direction bet on the one quantity that is barely forecastable. Once spot has
+drifted from the strike, the price becomes a joint statement about direction *and*
+remaining vola, and the vola half is recoverable by running the pricing formula backwards:
+
+```
+σ_implied = ln(S/K) / (Φ⁻¹(price) · √τ)
+```
+
+Comparing σ_implied against σ̂ converts "is vola mispriced here?" from a speculation into a
+per-second measurement (§2). The bet is then on the *magnitude* of remaining movement — the
+quantity that vola clustering makes genuinely forecastable — not its sign.
+
+**Worked example (1h market, 30 minutes remaining).** Spot 0.25% above strike;
+σ̂ = 8.5×10⁻⁵/sec gives coverable ground σ̂√τ = 0.36%; z = 0.69; fair = Φ(0.69) ≈ 75¢.
+Market ask for Up is 70¢ → implied z = Φ⁻¹(0.70) = 0.52 → implied coverable ground 0.48% —
+the market is pricing ~32% more remaining vola than the engine forecasts. If σ̂ is right,
+the favorite is 5¢ cheap: edge 5¢ − fee (0.07·0.70·0.30 ≈ 1.5¢) − half-spread ≈ **+3¢ net**.
+
+| Model | What it calculates | How the math works | Why this model |
+|---|---|---|---|
+| Vola engine + BOCPD | σ̂ — the forecast this strategy monetizes | §5's engine, unchanged | The entire trade *is* this forecast; no new estimator |
+| Implied-σ inversion | The market's σ | Pricing formula solved backwards from the observed price | Turns the market's opinion into a measurable number |
+| N(d₂) + tie mass | Fair price under σ̂ | §5's prior, unchanged | Maps the vola view back into cents of edge |
+| QLIKE contest | Whether σ̂ actually beats σ_implied | Both score as forecasts of realized remaining-window vola | The trade's premise, tested as a forecast before it is ever traded |
+| Cost model, flat sizing, Brier | As §5 | — | Unchanged chassis |
+
+**Entry gates.** A floor on `|z|` — the inversion is degenerate at z ≈ 0 (price 50¢ carries
+no vola information), and precision decays near it. Conveniently, the tradeable region is
+therefore *away* from 50¢, which is also where the fee parabola is cheapest. Plus a floor
+on τ, and the §8 staleness cap. Exit: hold to resolution by default; closing early on gap
+convergence pays the round-trip cost and must clear it.
+
+**Why it can exist:** vola clustering is among the most replicated regularities in finance
+— it is why EWMA, GARCH and HAR work; retail sets marginal mid-window prices on these
+books; and any maker quoting σ formulaically inherits its staleness at regime breaks —
+precisely the moments BOCPD is built to catch.
+
+**Why it might not — stated honestly:** v1.0.0 was already, in effect, comparing its own
+Φ(z) to the market price and found ≈$0. That is *evidence against* this strategy, and it is
+reopened rather than refuted only because of three specific differences: v1.0.0 used a
+naive 120-second rolling stdev for σ (no EWMA/HAR, no regime handling, no break resets),
+traded only the 5m rung where costs consume 118% of any edge, and never scored σ̂ against
+σ_implied as forecasts. M0.5 (§11) settles whether those differences matter.
+
+---
+
+## 8. Shared chassis
 
 - **The regime layer is the switchboard.** It makes two decisions, not one: *which
   strategy* is armed (Accumulator vs Scalper vs nothing), and *which book* the Accumulator
-  trades (4h vs daily, per §4). Ambiguous regime readings arm nothing. Flat is a position,
-  and historically the most profitable one in this market.
-- **Correlated exposure across books.** 4h and daily windows overlap in time, and the eight
-  listed assets are highly correlated with each other. Total directional exposure — not
-  per-position size — is the quantity that must be capped, or "flat sizing" silently
+  trades (1h vs daily, per §4). Ambiguous regime readings arm nothing. Flat is a position,
+  and historically the most profitable one in this market. The Vola trade (§7) is the
+  exception: it is armed by *measurement* rather than regime page — any rung, whenever the
+  implied-vs-forecast gap clears costs and `|z|` is above its floor.
+- **Correlated exposure across books.** Hourly windows sit inside the daily window, and the
+  eight listed assets are highly correlated with each other. Total directional exposure —
+  not per-position size — is the quantity that must be capped, or "flat sizing" silently
   becomes a leveraged single bet expressed eight ways.
 - **Staleness cap (~8¢).** The v1.0.0 soak measured PnL by claimed edge as *monotonically
   decreasing*: the 4.5–7% band returned +7% ROI while claimed edges above 15% returned
@@ -250,7 +315,7 @@ what the measurement program must falsify.
 
 ---
 
-## 8. Killed hypotheses — do not re-litigate
+## 9. Killed hypotheses — do not re-litigate
 
 Full evidence in [FINDINGS.md](FINDINGS.md); summary here so nothing is accidentally
 rediscovered. All results are venue-true and fee-inclusive.
@@ -271,7 +336,7 @@ gamma-scalp path trade. None of these were ever instrumented in v1.0.0.
 
 ---
 
-## 9. News as a stand-down gate
+## 10. News as a stand-down gate
 
 Free sources exist (GDELT, crypto-outlet RSS, CryptoPanic's free tier, FRED for macro
 release calendars, exchange announcement feeds). **Their intended role here is a
@@ -284,7 +349,7 @@ none is asserted here as fact.
 
 ---
 
-## 10. Evidence bar and next step
+## 11. Evidence bar and next step
 
 Issue #170 sets the standard: `tools/replay_race.py` fills at real recorded best-ask,
 fee-true, validated against 12 live fills. Any claim promoted from this document must meet
@@ -296,15 +361,23 @@ that the cheapest question that could kill the design is asked first.
 - **M0 — Does `μ/σ` vary by vola regime?** The premise the entire book-switching rule rests
   on (§4). If the drift-to-noise ratio is roughly constant across regimes, no switching
   logic gets built and the policy collapses to "always trade the longest book". Measured on
-  exchange history at 4h and daily horizons, regimes labelled by the frozen percentile
+  exchange history at 1h and daily horizons, regimes labelled by the frozen percentile
   bands *and* by the HMM.
-- **M1 — Do the direction signals predict the sign of the next 4h / 24h return?** OFI,
+- **M0.5 — Is the market's implied σ beatable?** The Vola trade's premise (§7), in two
+  parts: (a) a QLIKE contest — the vola engine's σ̂ versus the market's mid-window
+  σ_implied, both scored as forecasts of realized remaining-window vola, per rung;
+  (b) fee-true PnL of trading the gap whenever it exceeds the cost stack. **This is the
+  one Phase A item that needs venue data** (mid-window market prices): the CLOB
+  price-history endpoint for recent windows, plus forward recording. Everything else in
+  Phase A runs on exchange data alone.
+- **M1 — Do the direction signals predict the sign of the next 1h / 24h return?** OFI,
   liquidation bursts, and funding/basis, individually and jointly. Walk-forward,
   Brier/AUC against coin-flip and against the σ-only prior. Note the horizon mismatch risk
-  stated in §4: OFI is expected to weaken badly at these horizons, and this is the test
-  that establishes whether anything survives it.
+  stated in §4: OFI weakens with horizon, and this is the test that establishes whether
+  anything survives at 1h.
 - **M2 — Does the joint model beat the σ-only prior on Brier out-of-sample**, by enough to
-  clear fee + half-spread at realistic asks (2.25¢ at mid prices)?
+  clear fee + half-spread at realistic asks (~2.75¢ at mid prices on the hourly book's
+  observed 2¢ spread)?
 - **M3 — Does the signal generalise across the eight listed assets**, or is it a BTC-only
   artifact? This is both a robustness test and the route to a workable sample size.
 
@@ -312,8 +385,11 @@ Sample-size accounting must be explicit: cross-asset and overlapping-window obse
 are correlated, so *effective* sample size is materially below the raw count, and the
 pre-registered thresholds must be set against the effective figure.
 
-Phase A requires **no Polymarket data**: M0–M3 are claims about crypto price behaviour,
-testable against free public exchange history. Only the final question — whether a
-surviving signal clears the venue's cost stack — needs the venue itself.
+A settlement alignment simplifies all of this on the target rungs: the 1h and daily
+markets settle on Binance candles (§4), so for M0–M3 the backtest data and the settlement
+data are the *same series* — no cross-source proxy assumption is involved. Only M0.5
+touches venue prices, and only the final question — does a surviving signal clear the
+venue's cost stack at its real asks — needs the venue's books.
 
-**Nothing proceeds to implementation until M0–M3 pass pre-registered thresholds.**
+**Nothing proceeds to implementation until M0–M3 (and M0.5 for the Vola trade) pass
+pre-registered thresholds.**

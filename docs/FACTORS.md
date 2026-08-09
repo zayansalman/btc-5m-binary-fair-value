@@ -44,6 +44,25 @@ z = 0.082 / 0.114 = 0.72. **Φ(0.72) ≈ 76%.**
 
 Anchor cases: z = 0 → 50%. z = 1 → 84%. z = −1 → 16%. z = 2 → 98%.
 
+**Settlement source varies by rung** (per the venue's market descriptions, 2026-08-09;
+re-verify exact rule text at build time): 5m/15m resolve on Chainlink prints; the **1h
+market resolves on the Binance BTC/USDT 1-hour candle**, and the **daily market on the
+Binance 1-minute candle at 12:00 ET** (noon-to-noon). S and K must always come from the
+rung's own settlement source. The returns-not-levels rule governs any cross-source
+comparison.
+
+### Implied vola — the Vola trade's factors (STRATEGY_DESIGN §7)
+
+| Factor | Description | Calculated with | Source | Why it is needed |
+|---|---|---|---|---|
+| **σ_implied** | The remaining-window vola the market's price asserts | `ln(S/K) ÷ (Φ⁻¹(price) · √τ)` — the pricing formula run backwards | Mid-window market price (CLOB mid or ask) | Turns the market's opinion about vola into a measurable number |
+| **Vola gap** | How far the market's vola opinion sits from the engine's forecast | `ln(σ_implied ÷ σ̂)`, z-scored against its own history | Derived | The Vola trade's entry signal; z-scoring separates "unusual gap" from "normal disagreement" |
+
+**Degeneracy warning:** the inversion is undefined at `price = 0.5` or `S = K`, and
+precision decays as either is approached — at window open these contracts carry no vola
+information at all. A frozen floor on `|z|` gates the factor; the tradeable region is
+therefore away from 50¢, which is also where the fee parabola is cheapest.
+
 ---
 
 ## 2. Regime classifier inputs — HMM

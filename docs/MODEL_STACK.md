@@ -82,7 +82,7 @@ K = 3, BOCPD hazard rate, and the percentile band edges.
 | Model | What it calculates | Mechanism | Provenance | Status |
 |---|---|---|---|---|
 | **N(d₂) digital** | `P(Up)` with no directional knowledge | `z = ln(S/K)/(σ̂√τ)`, `P = Φ(z)`, plus tie mass | Black–Scholes in-the-money term; digital options per Reiner & Rubinstein (1991) | **build** (~30 lines; `btc_bot/strategy.py::fair_up_probability` is this model) |
-| **Implied-σ inversion** | The σ the market believes | Same formula solved backwards from the observed price | — | **build** |
+| **Implied-σ inversion** | The σ the market believes | Same formula solved backwards from the observed price. Powers the Vola trade (STRATEGY_DESIGN §7). Degenerate at `z ≈ 0` — a 50¢ price carries no vola information — so it is gated by a frozen `|z|` floor | — | **build** |
 
 **Dropped terms, justified numerically rather than waved away.** Full `d₂` carries a rate
 term and a `−σ²τ/2` convexity term. Over a 300-second window at 5% annual rates the rate
