@@ -98,23 +98,44 @@ fee formula rather than an empirical claim.
 together.** The tilt a sustained drift produces over a window is `(μ/σ)·√τ`, while the fee
 `0.07·p·(1−p)` is charged once per entry regardless of window length.
 
-At BTC's typical ~2.5%/day vola and an assumed sustained 2%/day drift — the *same*
-forecasting skill applied at different window lengths:
+### The ladder that actually exists
 
-| Market | σ̂√τ (coverable ground) | Win rate from that drift | Edge over 50¢ | Cost (fee + spread ≈2.75¢) as % of edge |
+Verified against the venue's live catalogue (2026-08-09). The up/down binary family is
+listed at **four horizons only — 5m, 15m, 4h, and daily** (two daily windows, 2AM and 6AM
+ET). **There is no 1-hour market.** The same four-rung ladder is listed for eight assets:
+BTC, ETH, SOL, XRP, DOGE, BNB, HYPE, ZEC.
+
+Observed book state at the time of survey:
+
+| Horizon | Resting liquidity | Spread | Concurrent BTC markets |
+|---|---|---|---|
+| 5 min | ~$2,500 | 1¢ | ~18 |
+| 15 min | ~$4,300 | 1¢ | ~5 |
+| **4 hour** | ~$1,700 | 1¢ | 1 |
+| **Daily** | **~$12,900** | 1¢ | 2 |
+
+Spread is a uniform 1¢ across the ladder, so it does not offset the fee advantage of longer
+horizons — the fee is the entire differentiator. Note that the daily book is the deepest on
+the ladder by a factor of five.
+
+### The economics across the ladder
+
+At BTC's typical ~2.5%/day vola and an assumed sustained 2%/day drift — the *same*
+forecasting skill applied at each listed window length, using the observed 0.5¢ half-spread:
+
+| Market | σ̂√τ (coverable ground) | Win rate from that drift | Edge over 50¢ | Cost (fee 1.75¢ + half-spread 0.5¢) as % of edge |
 |---|---|---|---|---|
-| **5 min** | 0.15% | 51.9% | 1.9¢ | **145% — structurally underwater** |
-| **15 min** | 0.26% | 53.3% | 3.3¢ | 83% |
-| **1 hour** | 0.51% | 56.5% | 6.5¢ | 42% |
-| **4 hour** | 1.02% | 62.8% | 12.8¢ | 21% |
-| **1 day** | 2.50% | 78.8% | 28.8¢ | 10% |
+| **5 min** | 0.15% | 51.9% | 1.9¢ | **118% — structurally underwater** |
+| **15 min** | 0.26% | 53.3% | 3.3¢ | 68% |
+| **4 hour** | 1.02% | 62.8% | 12.8¢ | **18%** |
+| **1 day** | 2.50% | 78.8% | 28.8¢ | **8%** |
 
 **How to read this table correctly.** It does **not** say that longer horizons offer free
 money — an efficient market prices an obvious drift, so if the drift is visible the daily
 ask already sits at 78¢ and the edge is zero again. What the last column measures is **how
 much forecasting skill survives translation into profit**. At 5 minutes, the toll exceeds
 the entire tilt a strong drift can produce: even a perfect drift forecast cannot pay for
-itself. At an hour, the same skill keeps ~58% of what it earns.
+itself. At 4 hours, the same skill keeps ~82% of what it earns.
 
 This reproduces, from the fee formula alone, the conclusion the v1.0.0 research reached
 empirically and the sibling research folder reached from market-structure evidence: the
@@ -124,26 +145,50 @@ empirically and the sibling research folder reached from market-structure eviden
 
 | Constraint | Effect |
 |---|---|
-| **Signal horizon must match market horizon** | OFI predicts seconds-to-minutes: strongest at 5m, worthless at daily. Longer horizons require different (trend, macro, positioning) signals. |
-| **Verification time** | 288 windows/day at 5m; 24 at 1h; 1 at daily (~2.7 years for 1,000 live samples). Historical backtesting mitigates this, but ~730 daily windows in two years of history means only a *large* effect is provable. |
+| **Signal horizon must match market horizon** | OFI predicts seconds-to-minutes: strongest at 5m, weak at 4h, worthless at daily. Longer horizons need different (trend, positioning, macro) signals. |
+| **Verification time** | 288 windows/day at 5m, ~6 at 4h, 2 at daily — **per asset**. Across the eight listed assets that becomes ~48/day at 4h and ~16/day at daily, which makes both testable in months rather than years. Cross-asset samples are correlated, so effective sample size is lower than the raw count. |
 | **Competition** | Forecasting a day of BTC attracts far more skilled capital than forecasting five minutes. Cheaper toll, harder game. |
+| **Window overlap** | 4h and daily windows overlap in time. Holding both is *doubled exposure to one directional view*, not diversification — it must be handled in sizing, and ignoring it inflates effective sample size in testing. |
 
 ### Decision
 
 | Market | Role | Rationale |
 |---|---|---|
-| **1 hour** | **Primary — Accumulator** | Best point on the curve: fee burden falls to ~42%, flow and positioning signals retain predictive power at this horizon, and 24 windows/day permits live validation in weeks. |
-| **15 min** | Secondary — Accumulator | Fallback if hourly liquidity proves insufficient. |
+| **4 hour** | **Primary — Accumulator** | Fee burden falls to ~18%; positioning and trend signals still carry at this horizon; ~48 windows/day across the eight listed assets permits validation in weeks. |
+| **Daily** | **Co-primary — Accumulator** | Best economics on the ladder (~8%) *and* the deepest book (~$12.9k). Sample rate is workable across eight assets. Requires genuinely slower signals than 4h. |
 | **5 min** | **Scalper only** | Directional holding is dead here by the table above. The gamma play is untouched by this analysis — it does not hold to resolution and does not depend on drift (§6). |
-| **Daily / longer** | Rejected for now | On verification time and competition, *not* economics. Revisit if a slow, genuinely differentiated forecasting edge is ever identified. |
+| **15 min** | Not scheduled | At 68% cost burden it is dominated by 4h on economics and by 5m on sample rate. No role unless 4h/daily liquidity disappoints. |
+
+### Book switching by regime — the rule, and the condition it depends on
+
+Rearranging the tilt formula gives the horizon required to reach a target edge `T`:
+
+```
+τ = (T · σ / μ)²
+```
+
+**The required horizon scales with vola squared.** Double the vola and you need four times
+the window to produce the same edge. That is the derived form of "switch books by regime":
+calm regimes are tradeable on the shorter book, high-vola regimes require the longer one.
+
+**The condition this rests on must be tested before the switch is built.** The rule only
+pays if the drift-to-noise ratio `μ/σ` genuinely *varies* across regimes. If `μ/σ` is
+roughly constant, the `√τ` term dominates everything and the correct policy is simply to
+always trade the longest book — no switching logic, no added complexity. If `μ/σ` is
+materially higher in some regimes, the switch earns its place.
+
+`μ/σ` by regime is a directly measurable quantity, and measuring it is the **first**
+question in the Phase A program (§10). No switching machinery is built before that answer
+exists.
 
 ---
 
-## 5. Strategy 1 — the Accumulator (1h primary, low-vola regime)
+## 5. Strategy 1 — the Accumulator (4h / daily, book selected by regime)
 
-> When the market is calm and leaning, buy the leaning side window after window at flat
-> size, hold each to resolution, and let a modest win-rate advantage compound across many
-> windows.
+> When the market is leaning, buy the leaning side window after window at flat size, hold
+> each to resolution, and let a modest win-rate advantage compound across many windows.
+> The book traded — 4h or daily — is selected by the vola regime, per the `τ = (T·σ/μ)²`
+> rule in §4, *conditional on that rule's premise surviving measurement*.
 
 | Model | What it calculates | How the math works | Why this model |
 |---|---|---|---|
@@ -184,9 +229,14 @@ what the measurement program must falsify.
 
 ## 7. Shared chassis
 
-- **The regime layer is the switchboard.** Low-vola arms the Accumulator, high-vola arms
-  the Scalper, ambiguous readings arm nothing. Flat is a position, and historically the
-  most profitable one in this market.
+- **The regime layer is the switchboard.** It makes two decisions, not one: *which
+  strategy* is armed (Accumulator vs Scalper vs nothing), and *which book* the Accumulator
+  trades (4h vs daily, per §4). Ambiguous regime readings arm nothing. Flat is a position,
+  and historically the most profitable one in this market.
+- **Correlated exposure across books.** 4h and daily windows overlap in time, and the eight
+  listed assets are highly correlated with each other. Total directional exposure — not
+  per-position size — is the quantity that must be capped, or "flat sizing" silently
+  becomes a leveraged single bet expressed eight ways.
 - **Staleness cap (~8¢).** The v1.0.0 soak measured PnL by claimed edge as *monotonically
   decreasing*: the 4.5–7% band returned +7% ROI while claimed edges above 15% returned
   −36% to −57%. A screaming edge means the model is lagging a fast market, not that the
@@ -240,17 +290,30 @@ Issue #170 sets the standard: `tools/replay_race.py` fills at real recorded best
 fee-true, validated against 12 live fills. Any claim promoted from this document must meet
 that bar.
 
-**Next step is the Phase A measurement program**, specified but *not run*:
+**Next step is the Phase A measurement program**, specified but *not run*. It is ordered so
+that the cheapest question that could kill the design is asked first.
 
-- **M1** — Does OFI (10s–60s) predict the sign of the next 15–60 minute BTC return?
-  Walk-forward, Brier/AUC versus coin-flip and versus the σ-only prior.
-- **M2** — Do liquidation bursts predict continuation or reversion over the following
-  15–60 minutes?
-- **M3** — Does [OFI + liquidations + funding] beat the σ-only prior on Brier
-  out-of-sample, by enough to clear fee + spread at realistic asks?
+- **M0 — Does `μ/σ` vary by vola regime?** The premise the entire book-switching rule rests
+  on (§4). If the drift-to-noise ratio is roughly constant across regimes, no switching
+  logic gets built and the policy collapses to "always trade the longest book". Measured on
+  exchange history at 4h and daily horizons, regimes labelled by the frozen percentile
+  bands *and* by the HMM.
+- **M1 — Do the direction signals predict the sign of the next 4h / 24h return?** OFI,
+  liquidation bursts, and funding/basis, individually and jointly. Walk-forward,
+  Brier/AUC against coin-flip and against the σ-only prior. Note the horizon mismatch risk
+  stated in §4: OFI is expected to weaken badly at these horizons, and this is the test
+  that establishes whether anything survives it.
+- **M2 — Does the joint model beat the σ-only prior on Brier out-of-sample**, by enough to
+  clear fee + half-spread at realistic asks (2.25¢ at mid prices)?
+- **M3 — Does the signal generalise across the eight listed assets**, or is it a BTC-only
+  artifact? This is both a robustness test and the route to a workable sample size.
 
-Phase A requires **no Polymarket data**: M1–M3 are claims about BTC, testable against
-years of free public exchange history. Only the final question — whether a surviving
-signal clears the venue's cost stack — needs the venue itself.
+Sample-size accounting must be explicit: cross-asset and overlapping-window observations
+are correlated, so *effective* sample size is materially below the raw count, and the
+pre-registered thresholds must be set against the effective figure.
 
-**Nothing proceeds to implementation until M1–M3 pass pre-registered thresholds.**
+Phase A requires **no Polymarket data**: M0–M3 are claims about crypto price behaviour,
+testable against free public exchange history. Only the final question — whether a
+surviving signal clears the venue's cost stack — needs the venue itself.
+
+**Nothing proceeds to implementation until M0–M3 pass pre-registered thresholds.**
