@@ -77,3 +77,32 @@ recorded venue prices ([STRATEGY_DESIGN.md](../STRATEGY_DESIGN.md) §11). It doe
 authorize trading, sizing work, or any strategy build. A kill closes Strategy 1 at every
 rung this venue lists and is recorded in [CORRECTIONS.md](../CORRECTIONS.md)'s companion,
 the killed-hypotheses table.
+
+---
+
+## Amendments (dated, per the amendment rule above; thresholds untouched)
+
+**2026-08-12 — Purpose demotion.** The Accumulator is parked (operator decision; see
+STRATEGY_DESIGN header). M1's role changes from "decides whether Strategy 1 has any live
+rung" to **drift-nuisance calibration for the Sigma Gap**: its fitted tilt magnitudes
+feed the trend-filter design and quantify the drift contaminant in the σ-inversion. The
+kill condition, features, fit spec, scored window and stated prediction are unchanged.
+
+**2026-08-12 — Pause and control anomaly.** The scored run has not begun. During dev-month
+pipeline verification the positive controls (short-horizon flow→return ICs) came out
+negative where the literature says positive. Second review attributes this to the
+**trade-price bounce artifact**: forward returns anchored on last-trade prices, where the
+anchor trade is itself the final trade of the flow window. Remedy before any scored run:
+compute short-horizon control returns mid-to-mid from the Binance `bookTicker` archive,
+not from trade prints. This is a control-plumbing fix; the scored metric (settlement-based
+outcomes) is unaffected.
+
+**2026-08-12 — N_eff correction.** The in-code phantom-tilt guard used per-decision-time
+counts; decision times within one settlement window share an outcome, overstating N_eff
+by up to the windows-per-outcome factor (~17× at daily). N_eff = **distinct settlement
+windows**, with cluster-robust weighting in the fit. `tools/m1_ofi_decay.py` to be
+corrected before the scored run.
+
+**2026-08-12 — Scope note.** Program of record is now BTC/ETH; the roster extension to
+other assets (incl. HYPE's short archive) is deferred and will be its own dated amendment
+if revived.

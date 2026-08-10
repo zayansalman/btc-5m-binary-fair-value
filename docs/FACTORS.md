@@ -1,6 +1,8 @@
 # Factors — every input, how it is computed, and why it is present
 
-**Status: design document, nothing implemented.** Companion to
+**Status: design document; program of record is Sigma-Gap-only on BTC/ETH (see
+STRATEGY_DESIGN header). In-scope rungs (1h, daily) settle on Binance — S, K, σ̂ and RV
+are sourced from Binance for them; Chainlink rows below are 5m/15m-era legacy.** Companion to
 [STRATEGY_DESIGN.md](STRATEGY_DESIGN.md) (thesis, market selection, strategies) and
 [MODEL_STACK.md](MODEL_STACK.md) (the models these factors feed).
 
@@ -60,7 +62,7 @@ comparison.
 
 | Factor | Description | Calculated with | Source | Why it is needed |
 |---|---|---|---|---|
-| **σ_implied** | The remaining-window vola the market's price asserts | `ln(S/K) ÷ (Φ⁻¹(price) · √τ)` — the pricing formula run backwards | Mid-window market price (CLOB mid or ask) | Turns the market's opinion about vola into a measurable number |
+| **σ_implied** | The remaining-window vola the market's price asserts | `ln(S/K) ÷ (Φ⁻¹(price) · √τ)` — the pricing formula run backwards | Mid-window **executable price of the side we would trade** (frozen choice; never mid) | Turns the market's opinion about vola into a measurable number |
 | **Vola gap** | How far the market's vola opinion sits from the engine's forecast | `ln(σ_implied ÷ σ̂)`, z-scored against its own history | Derived | The Sigma Gap's entry signal; z-scoring separates "unusual gap" from "normal disagreement" |
 
 **Degeneracy warning:** the inversion is undefined at `price = 0.5` or `S = K`, and

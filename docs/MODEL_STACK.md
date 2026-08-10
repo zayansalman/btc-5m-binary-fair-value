@@ -1,6 +1,8 @@
 # Model stack — every model, what it calculates, and where it comes from
 
-**Status: design document, nothing implemented.** Companion to
+**Status: design document; only the M1 measurement pipeline and archive loader exist in
+code.** Program of record: Sigma-Gap-only on BTC/ETH (daily hedged, 1h unhedged) — see
+STRATEGY_DESIGN header. Companion to
 [STRATEGY_DESIGN.md](STRATEGY_DESIGN.md) (thesis, market selection, strategies) and
 [FACTORS.md](FACTORS.md) (inputs and how they are computed).
 
@@ -44,6 +46,14 @@ lagging σ̂ was ranked the most likely single cause of the v1.0.0 model's failu
   at which point it behaves like EWMA while being harder to maintain. It races anyway;
   QLIKE decides.
 - Selection is by out-of-sample QLIKE. No model ships on reputation.
+- **Forecast target, corrected (2026-08-12, S1):** the object the Sigma Gap needs is the
+  **integrated remaining-window variance per rung** — not one-step-ahead 1-minute
+  variance. The λ=0.93 EWMA (9.6-minute half-life) is a valid *component*, not the
+  product: per-rung forecasts come from a HAR/GARCH term structure fitted on
+  **deseasonalized** returns, recombined with a **frozen multiplicative diurnal + weekend
+  profile per asset** (≥1 year of history; the deterministic time-of-day σ error at 1h is
+  ~tens of percent against an 8–11% entry bar — larger than the signal). QLIKE is scored
+  against the realized remaining-window integral, per rung.
 
 ## 2. Regime classifier — decides which playbook page is active
 

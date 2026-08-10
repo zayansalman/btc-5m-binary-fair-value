@@ -151,8 +151,10 @@ independent of any backtest → only then test on samples*).
   (operator decision 2026-08-12): **Sigma-Gap-only** on the 1h and daily rungs — the
   Scalper is cut on arithmetic, the Accumulator parked (direction demoted to a nuisance
   parameter), and the Sigma Gap is blocked on identification until it beats Deribit IV
-  out-of-sample and survives the encompassing regression. Honest prior on finding a real
-  edge: ~8%.
+  out-of-sample and survives the encompassing regression. After the second adversarial
+  review (2026-08-12) the program of record is BTC/ETH only — daily hedged, 1h unhedged —
+  the "optionless long tail" thesis having been refuted by live Deribit listings and dead
+  long-tail books. Honest prior on finding a real edge: **~3%**.
 - **`docs/MODEL_STACK.md`** — every model in the stack: what it calculates, the mechanism,
   its published source, and whether it is reused, adapted or must be built.
 - **`docs/FACTORS.md`** — every input: description, how it is computed, from which source,

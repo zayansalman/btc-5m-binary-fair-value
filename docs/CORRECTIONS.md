@@ -162,3 +162,27 @@ uncontaminated — runs first.
   never"; the factor-hygiene checklist; the killed-hypotheses table.
 - The settlement-alignment insight, now verified: the 1h and daily rungs settle on Binance
   data, so backtest series and settlement series are identical.
+
+---
+
+## Second review round (2026-08-12) — additional corrections
+
+- **C7 — Asset misclassification (fatal to the trading-home thesis).** The design claimed
+  the trade's home is the "long tail without a liquid options market" (DOGE, BNB, HYPE,
+  ZEC; SOL/XRP unclassified). Verified live: Deribit lists USDC-linear options on SOL
+  (536), XRP (340) and HYPE (330); and the genuinely optionless assets (DOGE/BNB/ZEC)
+  have no usable Polymarket books at 1h/daily (DOGE daily ≈ $14 liquidity, 96¢ spread).
+  Thesis withdrawn; program re-homed to BTC/ETH. Root cause: classification asserted from
+  memory instead of a live query, and long-tail liquidity assumed instead of measured.
+- **C8 — Hedge cost omitted from the cost stack.** At 1h, hedge notional is 45–80× face;
+  perp round-trip alone is 1.6–2.9¢ (maker) to 4–7¢ (taker) per $1 face vs a 2.75¢ total
+  stack — the hedged 1h variant is dead on arithmetic. Daily survives (9–16× face,
+  0.3–1.5¢) and the hedge line is now a mandatory stack component.
+- **C9 — OR/AND divergence.** STRATEGY_DESIGN restated M1's frozen kill condition as an
+  OR; the pre-registration says AND (kill only if both rungs fail). Conservative in
+  direction (could only produce false total-kills) but wrong; the pre-registration
+  governs. Fixed.
+- **C10 — Deribit-gate recurrence of C4.** The "cheapest killer" was specced as a raw
+  QLIKE contest vs Deribit IV — pass-biased for the same VRP reason C4 killed the
+  market-QLIKE gate. Re-specced: VRP-debiased, term-matched benchmark; fail = kill,
+  pass = uninformative. Gate registry renamed (G1/M2′) with a never-reuse rule.

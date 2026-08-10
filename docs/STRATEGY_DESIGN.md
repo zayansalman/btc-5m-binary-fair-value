@@ -1,7 +1,17 @@
 # Strategy design — what we are trading, why, and on what evidence
 
-**Program scope (operator decision, 2026-08-11): the 1h and daily markets only.** The 5m
-and 15m rungs and the Scalper are out of scope entirely (§4, §6).
+**Program of record (2026-08-12, revised after second adversarial review):**
+**Sigma-Gap-only, on BTC and ETH — daily rung primary (hedged), 1h retained unhedged.**
+The 5m/15m rungs and the Scalper are out of scope entirely (§4, §6); the Accumulator is
+parked (§5). **The "optionless long tail" trading-home thesis is refuted and withdrawn**
+(verified live 2026-08-12): Deribit lists USDC-linear options on HYPE (330), SOL (536) and
+XRP (340) in addition to BTC/ETH — and the assets genuinely without a surface (DOGE, BNB,
+ZEC) have no usable Polymarket books at these rungs (DOGE daily: ~$14 liquidity, 96¢
+spread). Every rung with a real book faces surface-informed opponents. The surviving edge
+hypothesis is narrower and stated honestly in §7: out-forecast Deribit-anchored makers at
+regime breaks and via forward-looking event information they do not price. Honest prior
+after this revision: **~3%** (from ~8%). Earliest fundable verdict: **~2027-Q2**, and only
+if the venue recorder starts now — it is the critical path (§11).
 
 **Status: design document, nothing implemented.** This is step 2 of issue #170's process
 (*discuss → write it down and confirm it makes sense on paper → only then test on samples*).
@@ -61,6 +71,13 @@ July 2026 reconciliation (`docs/POSTMORTEM_2026-07.md`).
 
 ## 2. Ingredients — the observable inputs and what each one contributes
 
+> **Post-pivot status (2026-08-12):** this table is the design-phase survey, retained for
+> provenance. Surviving roles under the Sigma-Gap-only program: **vola** → the core;
+> **volume** → M1 nuisance calibration and trend-filter features only; **depth** → the
+> cost model (size-at-touch); **market lag** → dead (out of scope with the tick race);
+> **Kraken** → retired from the program (the hedge leg is the Binance perp; no Kraken
+> dependency remains).
+
 | Ingredient | Description |
 |---|---|
 | **Volatility (vola)** | Sets the fair anchor. Invertible: the binary's price implies a σ (run Φ backwards), so market-implied σ versus a realized-vola forecast is a direct, per-second *measurement* of vola mispricing rather than a guess about whether mispricing exists. |
@@ -72,6 +89,13 @@ July 2026 reconciliation (`docs/POSTMORTEM_2026-07.md`).
 ---
 
 ## 3. Signal families — the institutional direction toolkit, filtered
+
+> **Post-pivot status (2026-08-12):** this survey was written when direction was the
+> product. It is retained because it documents *why* direction was abandoned. No row below
+> is a live edge thesis; OFI and liquidations survive only as nuisance-calibration (M1)
+> and trend-filter inputs, funding as a veto feature, and news/macro as the §10 stand-down
+> gate — now joined by the §7a event-book layer, which upgrades it from RSS to priced
+> probabilities.
 
 Short-horizon directional alpha is, in practice, flow alpha. Volatility is sign-free by
 construction and never yields direction on its own; it sets the scale against which
@@ -322,17 +346,41 @@ program is the 1h and daily markets only.
 
 ## 7. The Sigma Gap — **the sole active strategy** (mid-window; blocked on identification)
 
-**Operator decision (2026-08-12): the program is Sigma-Gap-only.** Direction-as-edge is
-abandoned (§5 parked); direction survives only as a *nuisance* controlled three ways:
-the **delta hedge** removes it from PnL, the **encompassing regression** removes it from
-identification, and the **regime layer stands the strategy down in trend states** — the
-regimes where the inversion lies most. Execution is delta-hedged on the perp
-(`H = face·φ(z)/(σ̂√τ)`, Whalley–Wilmott band ∝ `(k·Γ²)^{1/3}`, frozen no-hedge zone where
-σ√τ collapses near the strike: exit, don't chase). Asset structure: **BTC/ETH are
-calibration assets** (Deribit exists there — that is where σ̂ is benchmarked, and where
-makers can import the surface), while the plausible **trading home is the long tail
-without a liquid options market** — DOGE, BNB, HYPE, ZEC first, SOL/XRP to be classified
-by checking current Deribit listings.
+**Operator decision (2026-08-12, revised same day): the program is Sigma-Gap-only, on
+BTC/ETH.** Direction-as-edge is abandoned (§5 parked); direction survives only as a
+*nuisance* controlled two ways in identification and one in risk: the **trend-state
+stand-down veto** and the **encompassing regression** control identification; the **delta
+hedge** controls PnL — **on the daily rung only**. The hedged 1h variant is dead on
+arithmetic: at 1h, `H = φ(z)/(σ̂√τ)` is 45–80× face, so the perp round trip alone costs
+1.6–2.9¢ (maker) to 4–7¢ (taker) per $1 of binary face against a 2.75¢ total cost stack —
+the hedge costs more than the trade. **1h trades unhedged** (veto + encompassing remain
+its drift controls) and exists chiefly because it is the only rung where the encompassing
+gate has statistical power in months rather than years. Hedge-cost line is now part of the
+cost stack: daily hedge = 9–16× face ≈ 0.3–1.5¢, plus simulation-calibrated rebalancing.
+
+**The kernel, written once (all pricing and inversion use exactly this):**
+`P = F_ν(z)` with `z = ln(S/K)/(σ̂√τ)` and **μ̂ = 0 in the kernel** — spike-at-zero
+shrinkage: injecting an estimated μ̂ adds 1.3–4.4¢ of estimation noise at daily (more than
+the whole cost stack) and double-counts the trend veto, which uses the same trailing
+information. Drift is controlled by veto + encompassing regression, not by correction.
+`F_ν` = standardized-t, ν fitted per rung from the Binance archive, frozen; **one** tail
+mechanism (no additional σ-mixture on top — that double-counts the tails). Inversion is
+against the **executable side we would trade** (never mid), through the same `F_ν`.
+Whalley–Wilmott does not transfer to digitals (gamma flips sign at the strike): the
+rebalancing band is a **simulation-calibrated fixed band** on the fitted kernel, and the
+no-hedge zone is frozen numerically (`|ln(S/K)| < a·σ̂√τ` AND `σ̂√τ < b`; a, b set in the
+pre-registration) — inside it, exit, never chase. Expected forced-exit cost (~0.3¢) is in
+the stack.
+
+**Asset structure (verified live, 2026-08-12):** surface-covered = BTC, ETH, SOL, XRP,
+HYPE (Deribit USDC-linear options confirmed: 536/340/330 for SOL/XRP/HYPE); genuinely
+optionless = DOGE, BNB, ZEC — **which have no usable books at these rungs** (DOGE daily
+~$14 liquidity at a 96¢ spread). The earlier claim that the trade's home is the optionless
+tail is withdrawn as refuted. Program home: **BTC/ETH daily + 1h** (real books: BTC daily
+~$260k volume/window at 1¢ spread). SOL/XRP daily are marginal candidates behind BTC/ETH.
+The surviving edge hypothesis, stated plainly: beat Deribit-anchored makers where their
+surface is *stale* — at regime breaks (BOCPD is built for exactly this moment) and around
+event risk they do not price continuously (§7a).
 
 > Mid-window, the market's price implies a volatility. When the vola engine's forecast σ̂
 > disagrees with that implied σ by more than the cost stack, buy the side the market has
@@ -427,6 +475,45 @@ problem above is fixed, no measurement can distinguish a vola edge from drift, t
 Jensen bias.
 
 ---
+
+## 7a. The event-vol layer — forward-looking σ̂ from Polymarket event books
+
+**Operator addition (2026-08-12), the final architecture piece.** The backward-looking
+vola engine is structurally blind to *scheduled and priced* future uncertainty — the night
+before an FOMC decision, a tariff ruling, or a geopolitical escalation, trailing RV says
+nothing. Polymarket's own event books (macro, regulatory, geopolitical) are live,
+probability-denominated measures of exactly that upcoming uncertainty. This layer feeds
+them into σ̂ as the **event-vol adjustment** — the same correction an options desk applies
+by hand around CPI/FOMC — making the Sigma Gap sharper precisely where formulaic binary
+makers are weakest. It adds **no new trade type**: better σ̂ → better gap measurement →
+the existing strategy.
+
+- **Historic study (buildable now):** the HuggingFace Polymarket trade archive
+  (Nov 2022–Apr 2026) × Binance spot history. Event study: large repricings in
+  macro/geo books → forward BTC/ETH **vola** (primary), returns (secondary, faces the
+  drift bar like every direction claim). The archive predates Fee V2 / CLOB V2 and is
+  therefore unusable for cost or microstructure claims — but event→spot causality does not
+  depend on venue rules, so it is the right instrument for this question.
+- **Discipline:** the book-selection universe is frozen *before* the study runs
+  (hundreds of books × thousands of repricings = a multiple-testing swamp); scored as one
+  pre-registered family under BH-FDR; books surviving the study become live σ̂ inputs,
+  the rest never enter the engine.
+- **Live inputs:** surviving books' prices via the CLOB/Gamma APIs, at the recorder's
+  cadence; plus the scheduled-macro calendar as the frozen stand-down complement (§10).
+
+## 7b. The trend filter — specification of record
+
+Baseline (ships by default, zero fitting): frozen thresholds on the trailing drift t-stat
+`|trailing return|/(σ̂·√lookback)` and funding-z, plus an RV percentile band. Challenger:
+**Hamilton-style HMM with per-state means** — features at the trading horizons (1h and 24h
+returns + log-RV; event-risk index from §7a once it exists) trained on Binance history and
+the Polymarket archive. The challenger ships only if it beats the frozen baseline on the
+pre-registered downstream metric — fewer contaminated entries at equal-or-better fee-true
+gap capture, temporal split so filter selection cannot contaminate the encompassing k, tie
+goes to the baseline. The veto asymmetry that licenses all of this: a detector far too
+weak to clear the fee bar as alpha is still valuable as a veto, because a wrong veto
+forfeits ~3¢ of opportunity while a wrong trade loses real money on a contaminated signal.
+BOCPD is unconditional (break alarm → σ̂ reset, stand-down, hedge re-evaluation).
 
 ## 8. Shared chassis
 
@@ -535,18 +622,29 @@ never a midpoint (on a 2¢ book the midpoint error is 1¢ — 36% of the whole c
 and Brier-first is not only correct but ~5–20× cheaper, needing roughly 3,000 observations
 for a t = 2 verdict against ~14,000 trades for the PnL test.
 
-### The critical path — re-ordered under the Sigma-Gap-only decision (2026-08-12)
+### The critical path — corrected (2026-08-12, second review)
 
-With the Accumulator parked, **the Deribit benchmark is now the cheapest killer and runs
-first**: if σ̂ cannot beat Deribit IV out-of-sample on BTC/ETH (QLIKE, walk-forward, free
-public data, no venue dependency), the sole active strategy dies immediately and the
-program closes. Second: the encompassing regression on recorded venue prices. The OFI
-decay curve below is **demoted from gate to nuisance-calibration** — it now measures how
-large the drift contaminant is (feeding the μ̂ correction and the trend-filter design),
-not whether a strategy unlocks. It remains pre-registered (#180) and cheap, and runs as
-specified.
+Gate identifiers are fresh (never reuse a dead one): **G1** = Deribit gate, **M2′** =
+encompassing regression. The gate registry below is the record; the older M-numbering in
+this section's history is void.
 
-### The OFI horizon-decay curve (demoted: nuisance calibration, was Accumulator gate)
+| Step | What | Blocking? | Elapsed |
+|---|---|---|---|
+| 1 | **Deploy the venue top-of-book recorder** (bid/ask/size ≥1 Hz, 1h + daily, every asset with a live book) | **BLOCKING — every week of delay slides the verdict a week** | this week |
+| 2 | Doc reconciliation + design-of-record commit | parallel | done/ongoing |
+| 3 | Pre-register **G1** (VRP-debiased, term-matched Deribit benchmark), **M2′** (encompassing: executability filters frozen — spread ≤ X¢, depth ≥ $Y; pooling rules; temporal split), and the trend filter (§7b) | parallel; must land before recorded data becomes scoreable | 2–4 wk |
+| 4 | Rebuild σ̂ per the S1 spec (integrated remaining-window variance target, deseasonalized, per-rung QLIKE) and run **G1** on BTC/ETH. **Kill-only gate:** losing to raw IV closes the program now; a pass is *not* evidence of edge (VRP sits on the gently-penalized side of QLIKE) | parallel with recording | 1–2 mo |
+| 5 | M1 bounce fix + rerun as nuisance calibration | non-blocking | when convenient |
+| 6 | **M2′ at 1h** on recorded quotes (~27–67 effective obs/day after eligibility filters) | **BLOCKING for capital** | ~4–12 mo of recording |
+| 7 | Daily capital only via a pre-registered pooled/hierarchical k with a written 1h→daily bridge assumption, after a 1h pass | — | +3–6 mo |
+
+**Earliest fundable verdict: ~2027-Q2, and only if the recorder starts now.** There is no
+path on which capital is justified sooner. The daily rung alone cannot produce a k-verdict
+in useful time (~5–20 years at 1–2¢ edge by this document's own §5 arithmetic) — that is
+*why* the unhedged 1h variant stays in the program: it is the only rung where
+identification has power.
+
+### The OFI horizon-decay curve — demoted to nuisance calibration (was the Accumulator gate)
 
 Everything the *parked* Accumulator needed reduces to one empirical question: does
 *any* flow signal retain enough predictive content at 1h or daily horizons to clear
@@ -560,24 +658,24 @@ Everything the *parked* Accumulator needed reduces to one empirical question: do
   `x` orthogonalised against `z` (§5) and β shrunk by a pre-registered ridge prior.
 - **Metric:** the fraction of windows where fitted `|βᵀx|` exceeds `cost/φ(0)` — 0.0689 at
   1h, 0.0564 at daily — plus per-fold sign consistency of β.
-- **Pre-registered kill:** if fewer than 1% of 1h windows clear 0.0689, or fewer than 5% of
-  daily windows clear 0.0564, the Accumulator has no live rung and Strategy 1 is dead at
-  every horizon this venue lists.
+- **Pre-registered kill (stated per the frozen pre-registration — it is an AND, not an
+  OR):** kill entirely only if BOTH fewer than 1% of 1h windows clear 0.0689 AND fewer
+  than 5% of daily windows clear 0.0564; either rung surviving individually keeps only
+  that rung. (An earlier revision of this file misstated this as an OR — conservative in
+  direction, but wrong; the pre-registration governs.)
 
 Cost: one weekend of compute on free public data, no capital at risk. **This is the test
 the earlier Phase A did not run.**
 
-### Remaining measurements, re-scoped
+### Gate and measurement registry (identifiers are never reused)
 
-- **M1 (Deribit gate, no venue data)** — can σ̂ beat Deribit implied vol out-of-sample? If
-  not, the Sigma Gap dies immediately (§7).
-- **M2 (identification)** — forecast-encompassing regression of the settled outcome on
-  `[p̂_ours, p_market]`; kill if the lower confidence bound on `k` ≤ 0. Replaces the QLIKE
-  gate, which cannot identify and is contaminated by the variance risk premium.
-- **M3 (generalisation)** — does anything surviving hold across the eight listed assets, or
-  is it a BTC-only artifact?
-- **M0 is withdrawn** — its premise (the switching rule) is withdrawn, and its comparative
-  form needs decades of data (§4).
+| ID | What | Status |
+|---|---|---|
+| **G1** | Deribit gate: σ̂ vs VRP-debiased, term-matched Deribit IV, walk-forward QLIKE on the realized remaining-window integral. **Fail = program closes. Pass = uninformative** (VRP sits on QLIKE's gently-penalized side) | to pre-register |
+| **M2′** | Encompassing regression on recorded venue quotes: logit of settled outcome on [p̂_ours, p_executable]; kill if lower CI on k ≤ 0. 1h first (power in months); daily only via pre-registered pooling | to pre-register |
+| **M1** | OFI horizon-decay (#180) — demoted to drift-nuisance calibration; paused on the bounce anomaly | amended, non-blocking |
+| **E1** | Event-vol study (§7a): frozen book universe, BH-FDR family, HF archive × Binance spot | to pre-register |
+| **M0** | Withdrawn — premise (switching rule) withdrawn; comparative form needs decades | dead, id retired |
 
 **Start the venue top-of-book recorder now** — ask, bid and *size* at ≥1 Hz across rungs
 and assets. It is free, needs no capital, and is the long pole: nothing about real
@@ -590,6 +688,12 @@ correlated, so *effective* sample size is materially below the raw count, and th
 are set against the effective figure. Any cell where the phantom tilt `φ(0)·√(k/N_eff)`
 exceeds half the cost stack is not fitted at all.
 
-**Honest prior: ~8% that this program finds a real, cost-clearing, market-benchmarked
-edge — against a >70% chance that a poorly-benchmarked version of it would report a pass.**
-That gap, not the market, is the principal risk this document exists to manage.
+**Honest prior (revised 2026-08-12): ~3% that this program finds a real, cost-clearing,
+market-benchmarked edge** — down from ~8% because the trading-home thesis was refuted:
+every rung with a real book faces surface-informed opponents, and the surviving hypothesis
+(beat Deribit-anchored makers at regime breaks and via event information, on BTC/ETH) is
+the thinnest-edge cell by this document's own classification. The ~1% floor that remains:
+the books are real and deep, retail sets mid-window prices, and the maker-staleness
+channel at regime breaks is untested rather than dead. The false-pass risk a
+poorly-benchmarked version carries (>70%) is unchanged — that gap, not the market, is the
+principal risk this document exists to manage.
