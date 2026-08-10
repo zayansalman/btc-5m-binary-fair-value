@@ -36,7 +36,12 @@ to time and vola.
 | **σ̂√τ** — coverable ground | How far spot could realistically still move before settlement | `σ̂ × √τ` | Derived | Square root because independent random steps add in variance, not standard deviation: 4× the time gives only 2× the spread |
 | **z** | The lead expressed in units of coverable ground | `ln(S/K) ÷ (σ̂√τ)` | Derived | The single number combining lead, vola and clock |
 | **Φ(z)** | Fair probability of Up, absent directional knowledge | Standard normal CDF | Mathematics | The share of the outcome distribution falling above the strike |
-| **Tie mass** | Correction for the venue crediting `close = open` to Up, given discrete (~2dp) prints | Normal density at the strike × one print-width, capped | Venue rules + print granularity | Structural: makes fair value strictly > 0.5 when spot equals the reference |
+| **Tie mass** | Correction for a venue rule crediting `close = open` to Up, given discrete prints | Normal density at the strike × one print-width, capped | Venue rules + print granularity | Structural: makes fair value strictly > 0.5 when spot equals the reference. **Per-rung — see below** |
+
+**Tie conventions differ by rung** (verified 2026-08-10): 5m / 15m / 1h credit ties to Up,
+so the correction applies. **The daily rung resolves ties 50-50**, which is what a fair coin
+already pays — the correction vanishes there rather than favouring Up. It is not
+transferable across rungs.
 
 **Worked example.** S = $61,050, K = $61,000, σ̂ = 8.5×10⁻⁵/sec, τ = 180s.
 Lead = +0.082%. Coverable ground = 8.5×10⁻⁵ × √180 = 0.114%.
@@ -60,8 +65,20 @@ comparison.
 
 **Degeneracy warning:** the inversion is undefined at `price = 0.5` or `S = K`, and
 precision decays as either is approached — at window open these contracts carry no vola
-information at all. A frozen floor on `|z|` gates the factor; the tradeable region is
-therefore away from 50¢, which is also where the fee parabola is cheapest.
+information at all. A frozen floor on `|z|` gates the factor.
+
+**Identification warning (see [CORRECTIONS.md](CORRECTIONS.md) C5):** σ_implied computed by
+inverting Φ is **not** a clean read of the market's vola. It absorbs drift (~5¢ at z≈0.7 on
+the hourly rung), tail shape (~3.8¢ under a standardized t₅, peaking at z≈0.67–0.73), and
+Jensen bias from plug-in pricing (+0.6¢ to +1.4¢, fixed sign). Each is comparable to the
+entire target edge. The factor is not usable as a trading signal until priced off an
+empirically fitted kernel and a σ̂ mixture, and until the encompassing regression has
+established how much of the gap is actually capturable.
+
+**No fee escape hatch.** An earlier version of this file claimed the tradeable region away
+from 50¢ is also where the fee parabola is cheapest. True in cents, false risk-adjusted:
+the half-spread does not scale with `p(1−p)`, so `cost/√(p(1−p))` is 0.0550 at p=0.50,
+0.0530 at 0.80, and *rises* to 0.0706 at 0.97.
 
 ---
 

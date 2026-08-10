@@ -203,13 +203,40 @@ probability, none of those is the right primary ruler.
 
 ## Build list — the complete set of things that do not yet exist
 
-1. N(d₂) digital pricing, its delta/gamma, and implied-σ inversion
-2. Event-level order-flow imbalance from raw trade streams
-3. Brier / log-loss / reliability / isotonic calibration kit
-4. Exchange historical and live loaders (trades, funding, open interest, liquidations)
-5. A cost simulator matching the venue's fee structure on a probability-space book
+1. N(d₂) digital pricing and implied-σ inversion — **priced off an empirically fitted
+   kernel (standardized-t, ν per rung) or the empirical CDF, not Φ**, and as a mixture over
+   σ̂'s predictive distribution rather than a plug-in point estimate (see
+   [CORRECTIONS.md](CORRECTIONS.md) C5)
+2. Event-level order-flow imbalance from raw trade streams (**aggTrades, not 1m klines** —
+   aggregating to a minute destroys the sub-minute burst structure and reduces the signal to
+   trailing signed-volume momentum)
+3. Brier / log-loss / reliability / isotonic calibration kit — scored **against the
+   fee-adjusted executable ask with size**, with Φ(z) as a diagnostic only
+4. Exchange historical loaders (klines, aggTrades, funding, premium index, open-interest
+   metrics). Note: **liquidation snapshots are not in the bulk archive** — 404 at every
+   path and date tested — so liquidation history is forward-recordable only
+5. **Venue top-of-book recorder** (ask, bid and *size*, ≥1 Hz, all rungs and assets) —
+   previously absent from this list. It is the long pole: recorded time cannot be
+   backfilled, and no real executable cost is knowable without it
+6. A cost simulator matching the venue's fee structure on a probability-space book, as a
+   **size-dependent function** measured from recorded L2 — not a constant half-spread
+7. Forecast-encompassing regression (outcome on `[p̂_ours, p_market]`) — the identification
+   test that replaces the QLIKE gate
+8. Deribit implied-vol comparison — the free, uncontaminated first gate on whether σ̂ has
+   any skill at all
 
 Everything else in this document already exists with a walk-forward harness attached.
+
+## Estimator note (supersedes the two-stage fit)
+
+`Φ(z + βᵀx)` is a **probit with `z` as a fixed offset**. Fit it directly by probit/logit
+MLE on the binary outcome with a ridge prior whose scale is set from the maximum credible
+per-trade Sharpe, and gate on `P(edge > cost | data)` from the posterior — never on a point
+estimate. The previously specified two-stage fit on σ̂-standardized returns discards that
+structure, places a noisy x-correlated quantity in the target's denominator, and yields
+anti-conservative standard errors. **`x` must be orthogonalised against `z` before fitting**
+— `K` is the window's open, so `ln(S/K)` *is* the return that this window's order flow
+caused.
 
 ---
 

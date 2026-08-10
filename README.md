@@ -142,9 +142,14 @@ the resolution process in #170 (*discuss → write it down and confirm it makes 
 independent of any backtest → only then test on samples*).
 
 - **`docs/STRATEGY_DESIGN.md`** — thesis, ingredients, signal families, the horizon
-  analysis that moves the directional target off 5-minute markets (to the venue's 1h and
-  daily books), and the three strategies (Accumulator, Scalper, Vola trade) with their
-  model rosters.
+  analysis, and the three candidate strategies with their model rosters. **All three are
+  currently blocked or cut** — see the corrections below.
+- **`docs/CORRECTIONS.md`** — an adversarial review on 2026-08-10 found four errors serious
+  enough to invert the design's central decision: a ranking table that was a tautology, a
+  gamma argument cancelled by its own arithmetic, a switching formula missing a Jacobian,
+  and a promotion gate benchmarked against a null that cannot fail. The 1h Accumulator and
+  the Scalper are cut on arithmetic; the Vola trade is blocked on identification. Honest
+  prior on finding a real edge: ~8%.
 - **`docs/MODEL_STACK.md`** — every model in the stack: what it calculates, the mechanism,
   its published source, and whether it is reused, adapted or must be built.
 - **`docs/FACTORS.md`** — every input: description, how it is computed, from which source,
