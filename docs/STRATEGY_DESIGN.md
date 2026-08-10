@@ -1,5 +1,8 @@
 # Strategy design — what we are trading, why, and on what evidence
 
+**Program scope (operator decision, 2026-08-11): the 1h and daily markets only.** The 5m
+and 15m rungs and the Scalper are out of scope entirely (§4, §6).
+
 **Status: design document, nothing implemented.** This is step 2 of issue #170's process
 (*discuss → write it down and confirm it makes sense on paper → only then test on samples*).
 No claim in this document has been tested by the measurement program it specifies. Where a
@@ -180,12 +183,15 @@ empirically and the sibling research folder reached from market-structure eviden
 
 ### Decision
 
+**Program scope (operator decision, 2026-08-11): the 1h and daily markets only.** The 5m
+and 15m rungs are out of scope entirely — no trading, no measurement, no recording.
+
 | Market | Role | Rationale |
 |---|---|---|
-| **1 day** | **Sole Accumulator candidate — not yet built** | The only rung with an achievable bar (Sharpe 1.08) and the deepest book (~$36.7k). Blocked until a factor with a demonstrated multi-day predictive half-life exists; none is currently specified. |
-| **1 hour** | **Cut** | Required Sharpe 6.46. Also 22% more expensive per trade than the daily rung (2.75¢ vs 2.25¢, because the hourly book is 2¢ wide), which the earlier ranking hid. |
-| **15 min** | Cut | Required Sharpe 10.6. |
-| **5 min** | Cut for directional; Scalper demoted to measurement-only (§6) | Required Sharpe 18.3. |
+| **1 day** | **Sole Accumulator candidate — not yet built.** Vola-trade rung. | The only rung with an achievable directional bar (Sharpe 1.08) and the deepest book (~$36.7k). Accumulator blocked until a factor with a demonstrated multi-day predictive half-life exists; none is currently specified. |
+| **1 hour** | **In scope for the Vola trade and for M1's pre-registered test. Directional accumulation stays dead-by-arithmetic** (required Sharpe 6.46) unless M1 clears its frozen 1h bar — which the stated prediction says it will not. | The vola bar at 1h is `\|dσ/σ\| ≈ 8%` at z≈1 — a real bar, unlike the directional one. Also 22% more expensive per trade than daily (2.75¢ vs 2.25¢; 2¢-wide book). |
+| **15 min** | **Out of scope** (was: cut, required Sharpe 10.6) | Operator decision above. |
+| **5 min** | **Out of scope** (was: cut, required Sharpe 18.3; Scalper cut §6) | Operator decision above. |
 
 ### Settlement audit (2026-08-10) — verified
 
@@ -305,10 +311,9 @@ lost*.
   strategy advertised 26–44¢ of claimed ticket mispricing as its opportunity. **The shared
   chassis' own risk gate forbids essentially every trade this strategy existed to take.**
 
-If revived at all, it is a pure measurement with a frozen kill written first: record the 5m
-book and Binance spot at 100ms for 30 days; kill if the ticket reprices at or inside our
-loop latency, or if latency-lagged out-of-sample IC on 60-second forward spot is below
-0.125.
+**Operator decision (2026-08-11): cut with no revival clause.** The 5m and 15m markets are
+out of the program's scope entirely — no trading, no measurement, no recording. The
+program is the 1h and daily markets only.
 
 ---
 

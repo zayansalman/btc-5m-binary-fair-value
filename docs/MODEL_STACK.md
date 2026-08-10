@@ -59,9 +59,9 @@ Three distinct questions, no single model answers all three.
 events in its transition matrix. BOCPD is fast by construction — it is built to detect
 resets. The Accumulator needs `E[duration]` to justify holding across many windows; that
 number exists nowhere else in the stack. BOCPD's alarm does three things at once: flatten
-the Accumulator, arm the Scalper, and **reset the vola engine's memory** — the direct fix
-for the stale-σ̂ failure mode, since EWMA otherwise averages across a regime break for
-minutes afterward.
+the Accumulator, trigger a hedge re-evaluation (or exit) on any open Vola-trade position,
+and **reset the vola engine's memory** — the direct fix for the stale-σ̂ failure mode,
+since EWMA otherwise averages across a regime break for minutes afterward.
 
 **Markov-switching AR is rejected on engineering grounds, not statistical ones.** The
 statsmodels implementation has no online update; out-of-sample inference requires a refit
@@ -132,29 +132,18 @@ demonstrates tilt existed.
 legibility mandate: if the black box cannot beat the explainable model out-of-sample on
 Brier, the explainable model ships.
 
-## 5. Path layer — Scalper only
+## 5. Path layer — NOT BUILT (Scalper cut; 5m/15m out of scope)
 
-| Model | What it calculates | Mechanism | Provenance | Status |
-|---|---|---|---|---|
-| **Digital delta / gamma** | Ticket cents per dollar of spot | Derivative of Φ(z) — the density at the strike; grows as 1/(σ̂√τ) | Standard digital greeks | **build** (alongside §3) |
-| **OFI burst z-score** | Whether flow is abnormal now | Current short-window imbalance vs its own trailing range | — | **build** (trivial) |
-| **Ornstein–Uhlenbeck fit** | Reversion speed θ, fair level μ, **half-life** | Exact-discretization AR(1) on the displacement series | Vasicek / OU tradition | **reuse** — `src/stat_arb/ornstein_uhlenbeck.py` |
-| **Hysteresis entry/exit bands** | Entry and exit thresholds without churn | z-score state machine; lookback derived from the fitted half-life rather than guessed | — | **reuse** — `src/stat_arb/mean_reversion.py` |
-| **Tradeability filter** | Whether a displacement reverts fast enough to be worth trading | Reject if half-life exceeds the remaining window | Avellaneda & Lee (2010) s-score | **reuse pattern** — `src/stat_arb/pca_stat_arb.py` |
+The Scalper was cut on arithmetic (STRATEGY_DESIGN §6: required conditional move is
+`RT/φ(0)` = 0.125σ of the remaining window, invariant to τ and σ), and the operator
+decision of 2026-08-11 removes the 5m/15m rungs from program scope entirely. None of the
+path-layer models (burst z-score, Kyle-λ entry chain, OU exit bands) get built.
 
-**The Scalper's full entry chain**, each link a measured quantity:
-
-```
-burst z-score          →   λ × flow          →   Δ × (λ × flow)      >?   4.5–5.5¢
-(abnormal flow now)        (expected $ move)     (expected ¢ move)        (round-trip cost)
-```
-
-**Caveats.** Linear price impact is an approximation — impact is concave at large size
-(square-root law) — but linear is the correct regime at our clip sizes. λ is unstable
-across regimes and must be estimated rolling and per-regime. Gamma is a warning label as
-much as an opportunity: in the high-delta zone exposure is unstable, so time-stops are
-tight and positions exit before the final ~30 seconds, where strike-pinning plus tie mass
-make holding a pure gamble.
+**Retained from this section:** digital **delta/gamma** — still required, but by the Vola
+trade's hedging layer, not by any scalper: delta sizes the hedge (`H = face·φ(z)/(σ̂√τ)`)
+and gamma drives the Whalley–Wilmott rebalancing band (`H_band ∝ (k·Γ²)^{1/3}`) with a
+frozen no-hedge zone where σ√τ collapses near the strike (exit the binary instead).
+Builds alongside §3's pricing module.
 
 ## 6. Cross-venue checks — validating the data proxy
 
