@@ -147,9 +147,12 @@ independent of any backtest → only then test on samples*).
 - **`docs/CORRECTIONS.md`** — an adversarial review on 2026-08-10 found four errors serious
   enough to invert the design's central decision: a ranking table that was a tautology, a
   gamma argument cancelled by its own arithmetic, a switching formula missing a Jacobian,
-  and a promotion gate benchmarked against a null that cannot fail. The 1h Accumulator and
-  the Scalper are cut on arithmetic; the Vola trade is blocked on identification. Honest
-  prior on finding a real edge: ~8%.
+  and a promotion gate benchmarked against a null that cannot fail. Current program
+  (operator decision 2026-08-12): **Sigma-Gap-only** on the 1h and daily rungs — the
+  Scalper is cut on arithmetic, the Accumulator parked (direction demoted to a nuisance
+  parameter), and the Sigma Gap is blocked on identification until it beats Deribit IV
+  out-of-sample and survives the encompassing regression. Honest prior on finding a real
+  edge: ~8%.
 - **`docs/MODEL_STACK.md`** — every model in the stack: what it calculates, the mechanism,
   its published source, and whether it is reused, adapted or must be built.
 - **`docs/FACTORS.md`** — every input: description, how it is computed, from which source,

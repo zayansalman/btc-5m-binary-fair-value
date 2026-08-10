@@ -146,12 +146,13 @@ Env knobs: `BTC_TRADE_*` are canonical; `BTC_LIVE_*` are deprecated read-aliases
 | `btc_bot/shadow/signals.py` | WIRED | 2 | Candidate strategies for the shadow forward-tester. |
 | `btc_bot/shadow/types.py` | WIRED | 4 | Shared data contracts for the shadow forward-tester. |
 | `btc_bot/strategy.py` | WIRED | 6 | Shared BTC 5-minute binary strategy math. |
-| `config.py` | WIRED | 25 | Configuration for the local BTC 5-minute binary fair-value strategy lab. |
+| `config.py` | WIRED | 27 | Configuration for the local BTC 5-minute binary fair-value strategy lab. |
 | `dashboard.py` | WIRED | 1 | Local Gradio dashboard for BTC 5-minute paper trading. |
 | `db.py` | WIRED | 13 | SQLite storage for the BTC 5-minute binary fair-value strategy lab. |
 | `logging_setup.py` | WIRED | 9 | Structured JSON logging with structlog. Module + trade_id context. |
 | `main.py` | cli | 0 | Entrypoint for the BTC 5-minute paper trading system. |
 | `tools/backtest_btc_strategy.py` | cli | 0 | Run the BTC strategy backtest and parameter optimizer. |
+| `tools/binance_archive.py` | cli | 0 | Binance bulk-archive loader for the Phase A measurement program (#180). |
 | `tools/chainlink_lead_lag.py` | cli | 0 | Chainlink-vs-Binance BTC lead-lag analysis (issue #57). |
 | `tools/clear_auto_pause.py` | cli | 0 | Clear the adaptive auto-pause and resume entries (#36). |
 | `tools/demo_snapshot.py` | cli | 0 | Print a BTC paper trading snapshot. |
@@ -161,6 +162,7 @@ Env knobs: `BTC_TRADE_*` are canonical; `BTC_LIVE_*` are deprecated read-aliases
 | `tools/live_detect_wallet.py` | cli | 0 | Detect the Polymarket funder wallet + signature type from a signer key (#34). |
 | `tools/live_preflight.py` | cli | 0 | Live-launch preflight: verify the .env wallet config end to end (issue #32). |
 | `tools/live_setup.py` | cli | 0 | One-time live-trading onboarding (issues #32, #33). |
+| `tools/m1_ofi_decay.py` | cli | 0 | M1 — the OFI horizon-decay curve (#180). |
 | `tools/offline_replay.py` | cli | 0 | Offline replay of the BTC 5-m fair-value strategy on HF Polymarket data. |
 | `tools/race_status.py` | cli | 0 | One-shot fee-true race standings + deploy-bar tracker (issue #150). |
 | `tools/reconcile_live_ledger.py` | cli | 0 | Reconcile the live paper-ledger against the REAL Polymarket account (issue #102). |

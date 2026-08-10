@@ -59,7 +59,7 @@ Three distinct questions, no single model answers all three.
 events in its transition matrix. BOCPD is fast by construction — it is built to detect
 resets. The Accumulator needs `E[duration]` to justify holding across many windows; that
 number exists nowhere else in the stack. BOCPD's alarm does three things at once: flatten
-the Accumulator, trigger a hedge re-evaluation (or exit) on any open Vola-trade position,
+the Accumulator, trigger a hedge re-evaluation (or exit) on any open Sigma-Gap position,
 and **reset the vola engine's memory** — the direct fix for the stale-σ̂ failure mode,
 since EWMA otherwise averages across a regime break for minutes afterward.
 
@@ -82,7 +82,7 @@ K = 3, BOCPD hazard rate, and the percentile band edges.
 | Model | What it calculates | Mechanism | Provenance | Status |
 |---|---|---|---|---|
 | **N(d₂) digital** | `P(Up)` with no directional knowledge | `z = ln(S/K)/(σ̂√τ)`, `P = Φ(z)`, plus tie mass | Black–Scholes in-the-money term; digital options per Reiner & Rubinstein (1991) | **build** (~30 lines; `btc_bot/strategy.py::fair_up_probability` is this model) |
-| **Implied-σ inversion** | The σ the market believes | Same formula solved backwards from the observed price. Powers the Vola trade (STRATEGY_DESIGN §7). Degenerate at `z ≈ 0` — a 50¢ price carries no vola information — so it is gated by a frozen `|z|` floor | — | **build** |
+| **Implied-σ inversion** | The σ the market believes | Same formula solved backwards from the observed price. Powers the Sigma Gap (STRATEGY_DESIGN §7). Degenerate at `z ≈ 0` — a 50¢ price carries no vola information — so it is gated by a frozen `|z|` floor | — | **build** |
 
 **Dropped terms, justified numerically rather than waved away.** Full `d₂` carries a rate
 term and a `−σ²τ/2` convexity term. Over a 300-second window at 5% annual rates the rate

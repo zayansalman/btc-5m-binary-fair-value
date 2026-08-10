@@ -118,7 +118,7 @@ the midpoint error is 1¢, 36% of the entire cost stack.
 ## C5 — Strategy 1 and Strategy 3 were mutually inconsistent
 
 **What was published.** §5 (Accumulator) exists because μ ≠ 0 at the traded horizon. §7
-(Vola trade) inverts the price to σ_implied under an assumption that μ = 0. Run together
+(Sigma Gap, formerly "Vola trade") inverts the price to σ_implied under an assumption that μ = 0. Run together
 they take opposite sides of the same residual.
 
 **How large.** §7's worked example — spot 0.25% above strike at 30 minutes remaining, a 5¢

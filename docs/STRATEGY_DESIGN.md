@@ -188,8 +188,8 @@ and 15m rungs are out of scope entirely — no trading, no measurement, no recor
 
 | Market | Role | Rationale |
 |---|---|---|
-| **1 day** | **Sole Accumulator candidate — not yet built.** Vola-trade rung. | The only rung with an achievable directional bar (Sharpe 1.08) and the deepest book (~$36.7k). Accumulator blocked until a factor with a demonstrated multi-day predictive half-life exists; none is currently specified. |
-| **1 hour** | **In scope for the Vola trade and for M1's pre-registered test. Directional accumulation stays dead-by-arithmetic** (required Sharpe 6.46) unless M1 clears its frozen 1h bar — which the stated prediction says it will not. | The vola bar at 1h is `\|dσ/σ\| ≈ 8%` at z≈1 — a real bar, unlike the directional one. Also 22% more expensive per trade than daily (2.75¢ vs 2.25¢; 2¢-wide book). |
+| **1 day** | **Sole Accumulator candidate — not yet built.** Sigma-Gap rung. | The only rung with an achievable directional bar (Sharpe 1.08) and the deepest book (~$36.7k). Accumulator blocked until a factor with a demonstrated multi-day predictive half-life exists; none is currently specified. |
+| **1 hour** | **In scope for the Sigma Gap and for M1's pre-registered test. Directional accumulation stays dead-by-arithmetic** (required Sharpe 6.46) unless M1 clears its frozen 1h bar — which the stated prediction says it will not. | The vola bar at 1h is `\|dσ/σ\| ≈ 8%` at z≈1 — a real bar, unlike the directional one. Also 22% more expensive per trade than daily (2.75¢ vs 2.25¢; 2¢-wide book). |
 | **15 min** | **Out of scope** (was: cut, required Sharpe 10.6) | Operator decision above. |
 | **5 min** | **Out of scope** (was: cut, required Sharpe 18.3; Scalper cut §6) | Operator decision above. |
 
@@ -237,16 +237,19 @@ regime layer is retained only for σ̂ conditioning and the BOCPD stand-down ala
 
 ---
 
-## 5. Strategy 1 — the Accumulator (daily rung only; **blocked, not scheduled**)
+## 5. Strategy 1 — the Accumulator — **PARKED (operator decision, 2026-08-12)**
 
 > When the market is leaning, buy the leaning side window after window at flat size, hold
 > each to resolution, and let a modest win-rate advantage compound across many windows.
 
-**Status: blocked.** §4 leaves the daily rung as the only viable venue (required Sharpe
-1.08) and simultaneously establishes that no factor in this design predicts at daily
-horizons. The strategy is not built until that gap is closed by a factor with a
-demonstrated multi-day predictive half-life. Two further constraints are recorded here so
-they are not rediscovered later:
+**Status: parked, not a live thesis.** The program is now Sigma-Gap-only (§7). Direction
+is demoted from *edge source* to *nuisance parameter*: μ̂ survives in the pricing core so
+the σ-inversion is not fooled by trend, and M1's pre-registered decay curve survives as
+the *measurement of how large that nuisance is* — no longer as this strategy's unlock.
+This section is retained as the record of why direction-as-edge was set aside: §4 leaves
+the daily rung as the only arithmetically viable venue (required Sharpe 1.08) while no
+factor in this design predicts at daily horizons, and the two constraints below make the
+gap unattractive to close. If M1 ever surprises, the design is here.
 
 - **Confirmation is impossible on this rung.** With one window per day across eight highly
   correlated assets, effective sample size is ~1.2–1.7 independent bets per day. At 1¢ of
@@ -317,7 +320,19 @@ program is the 1h and daily markets only.
 
 ---
 
-## 7. Strategy 3 — the Vola trade (mid-window) — **blocked on identification**
+## 7. The Sigma Gap — **the sole active strategy** (mid-window; blocked on identification)
+
+**Operator decision (2026-08-12): the program is Sigma-Gap-only.** Direction-as-edge is
+abandoned (§5 parked); direction survives only as a *nuisance* controlled three ways:
+the **delta hedge** removes it from PnL, the **encompassing regression** removes it from
+identification, and the **regime layer stands the strategy down in trend states** — the
+regimes where the inversion lies most. Execution is delta-hedged on the perp
+(`H = face·φ(z)/(σ̂√τ)`, Whalley–Wilmott band ∝ `(k·Γ²)^{1/3}`, frozen no-hedge zone where
+σ√τ collapses near the strike: exit, don't chase). Asset structure: **BTC/ETH are
+calibration assets** (Deribit exists there — that is where σ̂ is benchmarked, and where
+makers can import the surface), while the plausible **trading home is the long tail
+without a liquid options market** — DOGE, BNB, HYPE, ZEC first, SOL/XRP to be classified
+by checking current Deribit listings.
 
 > Mid-window, the market's price implies a volatility. When the vola engine's forecast σ̂
 > disagrees with that implied σ by more than the cost stack, buy the side the market has
@@ -420,7 +435,7 @@ Jensen bias.
   Ambiguous readings arm nothing. Flat is a position, and historically the most profitable
   one in this market.
 - **No strategy is currently scheduled.** The Accumulator is blocked on a missing daily
-  factor (§5); the Scalper is cut (§6); the Vola trade is blocked on identification (§7).
+  factor (§5); the Scalper is cut (§6); the Sigma Gap is blocked on identification (§7).
   This is the honest state of the design, not an oversight.
 - **Correlated exposure.** The eight listed assets are highly correlated. Total directional
   exposure — not per-position size — is the quantity that must be capped, or "flat sizing"
@@ -520,9 +535,20 @@ never a midpoint (on a 2¢ book the midpoint error is 1¢ — 36% of the whole c
 and Brier-first is not only correct but ~5–20× cheaper, needing roughly 3,000 observations
 for a t = 2 verdict against ~14,000 trades for the PnL test.
 
-### The cheapest test that kills the design fastest — run this first
+### The critical path — re-ordered under the Sigma-Gap-only decision (2026-08-12)
 
-**The OFI horizon-decay curve.** Everything above reduces to one empirical question: does
+With the Accumulator parked, **the Deribit benchmark is now the cheapest killer and runs
+first**: if σ̂ cannot beat Deribit IV out-of-sample on BTC/ETH (QLIKE, walk-forward, free
+public data, no venue dependency), the sole active strategy dies immediately and the
+program closes. Second: the encompassing regression on recorded venue prices. The OFI
+decay curve below is **demoted from gate to nuisance-calibration** — it now measures how
+large the drift contaminant is (feeding the μ̂ correction and the trend-filter design),
+not whether a strategy unlocks. It remains pre-registered (#180) and cheap, and runs as
+specified.
+
+### The OFI horizon-decay curve (demoted: nuisance calibration, was Accumulator gate)
+
+Everything the *parked* Accumulator needed reduces to one empirical question: does
 *any* flow signal retain enough predictive content at 1h or daily horizons to clear
 `cost/φ(0)`?
 
@@ -544,7 +570,7 @@ the earlier Phase A did not run.**
 ### Remaining measurements, re-scoped
 
 - **M1 (Deribit gate, no venue data)** — can σ̂ beat Deribit implied vol out-of-sample? If
-  not, the Vola trade dies immediately (§7).
+  not, the Sigma Gap dies immediately (§7).
 - **M2 (identification)** — forecast-encompassing regression of the settled outcome on
   `[p̂_ours, p_market]`; kill if the lower confidence bound on `k` ≤ 0. Replaces the QLIKE
   gate, which cannot identify and is contaminated by the variance risk premium.
