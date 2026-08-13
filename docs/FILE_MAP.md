@@ -95,3 +95,4 @@ _Status: `WIRED` = has non-test importers; `DEAD?` = no importers found (investi
 | `tools/regime_attribution.py` | cli | 0 | Regime-attribution instrument for the shadow forward-tester (issue #120). |
 | `tools/replay_race.py` | cli | 0 | Tick-replay backtest for the shadow roster over the FULL quote history (#144). |
 | `tools/shadow_performance.py` | cli | 1 | Per-model performance comparison for the shadow forward-tester. |
+| `tools/venue_recorder.py` | cli | 0 | Venue recorder — the research program's one blocking build item (C17). |
