@@ -387,6 +387,24 @@ event risk they do not price continuously (§7a).
 > mispriced — the favorite if implied vola is too high, the underdog if too low. No
 > directional view is required.
 
+### The signal, in plain terms — why it is called the Sigma Gap
+
+Every trading signal, stripped to its bones, is one sentence: *the market's estimate of X
+differs from my estimate of X by more than it costs to bet on the difference.* The only
+question is what X is. Mid-window, with drift pinned to zero, this instrument's price
+encodes exactly **one free parameter** — the market's opinion of remaining volatility. So
+the only thing one can disagree with this market about is σ, and the signal is literally
+the gap between two numbers: σ_implied (the market's vola forecast, extracted by running
+the pricing kernel backwards) and σ̂ (ours). The gap is not a framing on top of the
+signal; **it is the signal**, named for its content the way "order-flow imbalance" or
+"basis" are.
+
+Worked shape (illustrative): daily ticket at 71¢ with spot 1.1% above strike → the price
+implies ~2.6%/day of remaining turbulence; the engine forecasts 1.9%. If the engine is
+right, the calmer world favours the side already ahead — the favorite is underpriced. Buy
+it, hedge the direction away, and what remains is a pure bet that our turbulence forecast
+beats the market's.
+
 **The mechanism.** At window open, spot equals the strike, `z = 0`, and fair value is 50¢
 *regardless of vola* — these contracts carry no vola information at open, and betting there
 is a pure direction bet on the one quantity that is barely forecastable. Once spot has
@@ -500,6 +518,20 @@ the existing strategy.
   the rest never enter the engine.
 - **Live inputs:** surviving books' prices via the CLOB/Gamma APIs, at the recorder's
   cadence; plus the scheduled-macro calendar as the frozen stand-down complement (§10).
+
+**The LLM's one job — the librarian, not the ticker.** The event-book pipeline has two
+halves with different tools:
+
+| Job | Tool | Why |
+|---|---|---|
+| *Which books matter*: scan the catalog, classify relevance (Fed-cut book → BTC-vola-relevant; unrelated politics → not), parse resolution rules, build the tagged roster — and the same retrospectively over the HF archive for E1 | **LLM, offline** | Reading and classifying text is what an LLM is for. Output is a frozen roster, refreshed periodically |
+| *What the books are saying now*: the live input to σ̂ and the trend filter | **No LLM — the price itself** | An event book's price already **is** digested news: people with money at stake compressed the headlines into a probability. The live signal is numeric — price level, repricing speed Δp, time-to-resolution. An LLM re-reading headlines would be a slower, worse copy of what the price encodes |
+
+Two disciplines keep the LLM from becoming a leak: classification runs **once, with a
+frozen prompt and model version, before E1 is scored** (re-classifying after seeing
+results is curve-fitting with extra steps), and the roster gets a human review pass —
+it is dozens of books, and the pass catches hallucinated relevance. No LLM sits in any
+latency path.
 
 ## 7b. The trend filter — specification of record
 

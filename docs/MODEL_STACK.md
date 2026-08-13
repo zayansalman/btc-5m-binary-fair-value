@@ -239,6 +239,24 @@ caused.
 
 ---
 
+## The vola pipeline — composition of record
+
+How the pieces chain, each consuming the previous one's output, each doing one job:
+
+| Step | Component | Consumes | Produces | One-line job |
+|---|---|---|---|---|
+| 0 | Diurnal + weekend profile (frozen, per asset) | the clock | deseasonalized returns | remove the deterministic time-of-day σ shape before anything is estimated |
+| 1 | EWMA | deseasonalized returns | σ̂ *now* | the now-cast: where vola is this instant (`σ̂²ₜ = λσ̂²ₜ₋₁ + (1−λ)r²ₜ₋₁`) |
+| 2 | HAR term structure | σ̂ now + multi-horizon RV | **Σ̂ = √∫σ̂²(u)du** over the remaining window, re-seasonalized for the hours it covers | the forecast target the Sigma Gap actually needs — integrated remaining-window vola per rung |
+| 3 | BOCPD / trend filter (HMM challenger) | returns, funding | memory resets / trade **vetoes** | trust switches, never forecast adjusters: BOCPD wipes EWMA's memory at breaks; the veto blocks trading in trend states |
+| 3½ | Event-vol layer (§7a) | event-book prices (LLM-classified roster, offline) | forward bump to Σ̂ | the only forward-looking σ input — priced future risk no trailing estimator can see |
+| 4 | Black–Scholes digital kernel `F_ν` | Σ̂ forwards; market price backwards | fair `P = F_ν(ln(S/K)/Σ̂)` / `σ_implied` | the dictionary between vola-space and price-space; **the signal is the mistranslation** `g = ln(σ_implied/σ̂)` |
+| 5 | Deribit IV (G1) | — | the bar Σ̂ must clear | the referee, not an input: lose to debiased, term-matched IV out-of-sample → program closes. A pass is survival, not proof |
+
+Mnemonic: **EWMA the nose, HAR the arm, HMM the conscience, Black–Scholes the translator,
+Deribit the examiner** — the trade is the translator noticing the two dictionaries
+disagree.
+
 ## Cross-cutting warning about the library's own numbers
 
 `src/synthetic.py` draws its order-book imbalance term and its price innovation
