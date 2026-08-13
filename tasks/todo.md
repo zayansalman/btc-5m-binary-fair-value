@@ -1,3 +1,133 @@
+# Third adversarial review — Sigma-Gap design (2026-08-13)
+
+Requested: "review the strategy we have ideated." Ran a 5-lens multi-agent review
+(quant-math, econometrics, internal consistency, microstructure, strategy-econ) over
+`docs/STRATEGY_DESIGN.md` + companions, then adversarially verified the top 8
+critical/major findings against refutation. 47 raw findings → 4 confirmed, 4 partially
+refuted (residual survives), 14 minor. Full findings are in this session's transcript;
+not yet written up as dated `CORRECTIONS.md` entries (C11+) or applied to the docs —
+this is a save-point, not a completed fix pass.
+
+## Confirmed (survived adversarial verification)
+
+- [ ] **M1's daily kill-leg is vacuous.** Under the null (β=0), the frozen ridge prior
+      + N_eff≈743 daily windows gives a null fitted-tilt RMS (~0.051) that clears the
+      5% survival bar (0.0564) ~19–27% of the time — the AND-kill has ~5% power against
+      its own null. The phantom-tilt guard separately forecloses a daily "pass" for the
+      entire frozen span (needs ~10,055 eff. windows ≈ 25y of BTC+ETH). §11 lines
+      693–697 (AND-kill) contradicts lines 720–721 ("cell not fitted at all"). Fix
+      while the scored run is still paused (bounce-artifact amendment window is open):
+      recalibrate the daily threshold to a null quantile (~10–12%), or let 1h alone
+      carry the kill. 1h leg is correctly calibrated.
+- [ ] **C8's daily hedge line prices perp fees only.** Missing: funding carry (0.3–0.5¢/day
+      normal, 3–5¢ stressed — coinciding with the regime breaks the thesis targets),
+      margin collateral (~1.8–3.2× face, unmodeled return-on-capital drag), cross-venus
+      variation-margin path (perp losses realize in cash on Binance while the binary gain
+      is locked on Polymarket to noon ET, no cross-margining), and 0.5–1.6¢ basis noise
+      vs the spot-candle settlement.
+- [ ] **M2′ (the sole capital gate) is not identified as specified.** Quote-staleness
+      noise (recorded quote vs. S-at-decision-time) produces k̂ > 0 under the exact null
+      M2′ exists to reject, concentrated in burst/regime-break states — precisely where
+      the strategy trades (null-world k bias ~0.36 vs tested k=0.5). Fix before the
+      step-3 prereg freeze: capture S at quote receipt + timestamp-align (recorder spec
+      change, due this week), pre-register an EIV correction, add M1's fitted drift
+      tilt as a third regressor, score k by gap bucket with promotion on the traded tail.
+- [ ] **"27–67 effective obs/day" / "4–12 months to M2′ verdict" is arithmetically
+      impossible for the program of record.** BTC/ETH at 1h raw = 48/day; correlation-
+      adjusted ceiling ≈29–31/day. 67 requires the withdrawn 8-asset scope. σ_g (gap
+      dispersion) appears in no document; realistic verdict timeline is 6–25 months,
+      not 4–12. Header's "earliest ~2027-Q2" is inconsistent with its own 4-month lower
+      bound. Freeze N_eff/eligibility/σ_g in the M2′ prereg and publish the pessimistic
+      date.
+
+## The number the design never computes
+
+- [ ] **The prize.** No document multiplies edge × clip × frequency into an annual PnL
+      ceiling. From the doc's own inputs (touch-limited clips, 8¢ staleness cap, k=0.5
+      attenuation, 10–20% gate eligibility): gross ceiling ≈$5–55k/yr, central case
+      $1–3k/yr; at the doc's own ~3% prior, EV ≈ a few hundred dollars against
+      150–300+ operator-hours over 18 months. `docs/FINDINGS.md` §6 ran this exact
+      capacity argument to kill the 5m program ("prize too small for any professional
+      to defend") — the successor design was never subjected to it. State explicitly
+      whether this is a business or a research/skill-building program; the critical
+      path is currently resourced like the former.
+
+## Thesis/chassis tension (flagged, not adversarially verified)
+
+- [ ] The surviving edge ("beat Deribit-anchored makers at regime breaks") requires a
+      quote to still be stale when a retail-latency taker arrives — but the chassis
+      stands down on the BOCPD break alarm, wipes σ̂'s memory at exactly that moment,
+      and the 8¢ staleness cap forbids acting on break-sized gaps. v1.0.0's own data
+      (claimed edges >15% → −36% to −57% ROI) says apparent staleness at fast moments
+      was adverse selection, not opportunity, on this venue. **Staleness duration**
+      (Deribit reprice → Polymarket requote lag, vs. sniper latency, vs. BOCPD
+      detection lag) is the load-bearing unmeasured quantity — nearly free to measure
+      from the planned recorder + a Deribit feed; should be a named kill-capable gate
+      next to G1.
+
+## Time-critical (recorder ships this week)
+
+- [ ] **Recorder spec contradiction:** MODEL_STACK build item 5 = top-of-book only;
+      item 6 requires the cost model "measured from recorded L2." Item 6 is
+      unsatisfiable from item 5's output, and recorded time can't be backfilled.
+      Marginal cost of L2 + trade tape is storage (same API call). Fix before this
+      week's deploy: full-book snapshots + trade tape ≥1 Hz, plus capture S at quote
+      receipt (needed for the M2′ EIV fix above).
+- [ ] Recorder scope is self-contradictory: §4/§6 say "no recording" for 5m/15m; §11
+      step 1 says "1h + daily"; §11's closing line + MODEL_STACK item 5 say "all rungs
+      and assets." Pick one. Also: §11 claims the recorder is "absent from MODEL_STACK's
+      build list" — it's already item 5; stale cross-reference.
+
+## Doc drift — second-review fixes not propagated to companions/planning docs
+
+- [ ] §5 ("μ̂ survives in the pricing core") contradicts §7's kernel-of-record (μ̂=0) —
+      same document, same day (2026-08-12).
+- [ ] §7's numbered design-changes list still contains the **refuted** "plausible home
+      is SOL/XRP/DOGE/BNB/HYPE/ZEC" corollary, 20 lines below the section's own
+      withdrawal of that thesis (and misclassifies HYPE, which has 330 Deribit options).
+- [ ] `MODEL_STACK.md` still specifies: the refuted "self-disarming" direction-layer
+      claim, the superseded two-stage (non-probit) fitting target, E[duration] as a
+      load-bearing Accumulator input (dropped in §4/§9), and the Whalley–Wilmott
+      rebalancing band (§7 explicitly rejects W–W for digitals — gamma flips sign at
+      the strike).
+- [ ] §4's decision table still sells the Accumulator ("Sole Accumulator candidate")
+      against §5 "parked" and M1's demotion; §9 "1h direction — Dead, do not
+      re-litigate" conflicts with M1's frozen per-rung survival clause — no stated rule
+      for which instrument governs if M1's 1h leg surprises.
+- [ ] `ROADMAP.md`, `RESEARCH_LOOP.md`, and this file's own top-level task list still
+      describe the dead 5m program; issue **#176** (Kraken hedging) is still open
+      against §2's "no Kraken dependency remains." The blocking recorder task is
+      tracked in no issue.
+- [ ] Minor: §7's flagship worked example doesn't reproduce from its stated inputs
+      (71¢ at 1.1% lead → 2.0%/day implied at τ=1d, not the stated 2.6% — needs an
+      unstated τ≈14h); §9's live-loss row fails its own arithmetic (6.27−23.51=−17.24,
+      stated as −19.35, conflating June-era with lifetime); §1 still describes
+      Chainlink settlement / ties-credit-Up, both wrong for the in-scope 1h/daily
+      rungs; the daily (primary) rung has no stated all-in entry bar (~17–27%
+      post-attenuation once C8's hedge line + k=0.5 are applied, vs. the quoted 8%
+      which is the 1h unhedged figure); 1¢ tick quantization (±2–4% of σ) is absent
+      from a contaminant table that tracks 0.6¢ terms; E1 lacks an
+      incremental-to-Deribit-IV criterion.
+
+## What held under attack (verifiers refuted these — no action needed)
+
+Required-Sharpe table is correctly scoped to sustained-drift signals (rhetoric in
+§4/§9 just needs an "unconditional" qualifier — no math changes); the ≈8% bar is the
+correct fee-true figure at the 84¢ optimum (just never shows its derivation); the
+−σ²τ/2 convexity term is legitimately covered by the μ̂=0 pin (only MODEL_STACK's
+5m-era numeric dismissal needs rescaling); the missing cost/k entry threshold is
+already implicitly blocked by §7's "blocked on identification" status. Scalper,
+book-switching, and E[duration]-licenses-accumulation kills all stand.
+
+## Next step (not started)
+
+Write confirmed + partial findings up as dated `CORRECTIONS.md` entries (C11+), apply
+the doc-drift fixes to `MODEL_STACK.md`/`FACTORS.md`/`ROADMAP.md`/`RESEARCH_LOOP.md`,
+and get an operator decision on the prize question before any further build work on
+the recorder or the M2′/M1 pre-registrations.
+
+---
+
 # Reopen: 9 issues filed, discuss-first process (#169–#177) (2026-08-04)
 
 Project was ARCHIVED 2026-07-10 (v1.0.0, negative result — see `docs/FINDINGS.md`,

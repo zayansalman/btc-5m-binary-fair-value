@@ -186,3 +186,63 @@ uncontaminated — runs first.
   QLIKE contest vs Deribit IV — pass-biased for the same VRP reason C4 killed the
   market-QLIKE gate. Re-specced: VRP-debiased, term-matched benchmark; fail = kill,
   pass = uninformative. Gate registry renamed (G1/M2′) with a never-reuse rule.
+
+---
+
+# Third review round (2026-08-13)
+
+Five-lens review, top findings put to verifiers instructed to refute. What survived, and
+only the part that changes what gets built:
+
+- **C11 — The prize was never computed.** No document multiplies edge × clip × frequency.
+  From the design's own inputs: gross ceiling ≈$5–55k/yr, central $1–3k/yr; at the doc's own
+  ~3% prior, EV is a few hundred dollars. Order-of-magnitude only — the inputs are what the
+  recorder is being built to measure. [FINDINGS.md](FINDINGS.md) §6 is routinely misquoted
+  as killing the 5m program on prize size; it does not. It says a small absolute prize is
+  *why* such pockets survive for retail, and the 5m program died on burden of proof.
+  **Decision D1: this is a research program. Resource it like one.** Recorded data is the
+  deliverable; no live path until a gate says otherwise.
+- **C12 — M1's daily kill-leg was vacuous.** Under the null the daily leg clears its own bar
+  19–27% of the time, so the AND-kill fired against its own null ~5% of the time; and the
+  phantom-tilt guard needs N_eff > 1,601 at daily (3.9 yrs) against 743 available (1.8 yrs),
+  so the cell was unreportable either way. The 1h leg clears the same guard by >10× (17,800
+  available vs 1,073 needed). **Decision D2: the 1h leg alone carries the kill.** No
+  threshold moved. Dated amendment in `docs/preregistrations/M1_ofi_decay.md` — that file
+  governs, not this one.
+- **C13 — M2′ is not identified as specified.** `S` is taken at decision time; the recorded
+  quote carries an unknown lag. That EIV bias produces k̂ > 0 under the exact null M2′ exists
+  to reject (~0.36 against a tested 0.5), concentrated in burst states — where we trade.
+  **Fix is in the recorder: capture `S` at quote receipt, timestamped.** Cannot be
+  retrofitted to data recorded without it.
+- **C14 — The hedge line priced perp fees only.** Add funding carry (0.3–0.5¢/day normal,
+  3–5¢ stressed — and the stressed regime *is* the trade), margin collateral ~1.8–3.2× face,
+  the cross-venue variation-margin path (perp losses cash out on Binance while the binary
+  stays locked to noon ET), and 0.5–1.6¢ basis noise. The quoted ~8% bar is 1h, unhedged,
+  pre-attenuation. Daily's all-in bar is roughly 2× that; derivation belongs in the M2′
+  pre-registration, not in prose.
+- **C15 — Staleness duration is unmeasured and load-bearing.** The edge needs a maker's quote
+  to *still* be stale when a retail taker arrives, but the chassis stands down on the BOCPD
+  alarm and the 8¢ cap forbids break-sized gaps. v1.0.0 measured claimed edges >15% at −36%
+  to −57% ROI — adverse selection, not staleness. Nearly free to measure from the recorder
+  plus a Deribit feed. Flagged, not verified.
+- **C16 — Sample-size arithmetic.** "27–67 obs/day" is impossible: BTC/ETH at 1h is 48 raw,
+  ~29–31 correlation-adjusted; 67 needed the withdrawn 8-asset scope. Verdict window 6–25
+  months, not 4–12.
+- **C17 — The recorder spec was unsatisfiable.** Build item 5 records top-of-book; item 6
+  requires a cost model "measured from recorded L2". Scope stated three different ways. **The
+  recorder is the only blocking build item and recorded time cannot be backfilled.** Spec of
+  record: full-book L2 + trade tape ≥1 Hz + `S` timestamped at quote receipt, 1h and daily,
+  BTC/ETH.
+- **C18 — Wrong facts, fixed in place.** §1 says Chainlink settlement and ties-credit-Up;
+  both in-scope rungs settle on Binance candles and daily ties resolve 50-50. §7's worked
+  example (71¢ at a 1.1% lead) implies 1.98%/day at τ=1d, not the stated 2.6% — that needs
+  an unstated τ≈13.9h. §9's live-loss row: 6.27 − 23.51 = −17.24, not −19.35. §5's "μ̂
+  survives in the pricing core" contradicts §7's μ̂ = 0 kernel. §7's SOL/XRP/DOGE/BNB/HYPE/ZEC
+  corollary is refuted (C7) and still present. MODEL_STACK still carries four superseded
+  specs: "self-disarming" direction layer, the two-stage fit, `E[duration]`, Whalley–Wilmott.
+  1¢ tick quantization (±2–4% of σ) is in no contaminant table.
+
+**Refuted by the verifiers — no action:** the Required-Sharpe table (correctly scoped to
+sustained-drift signals; only the prose needs an "unconditional" qualifier), the ≈8% bar
+itself, the −σ²τ/2 term's coverage by the μ̂ = 0 pin, and the Scalper / book-switching /
+`E[duration]` kills.
