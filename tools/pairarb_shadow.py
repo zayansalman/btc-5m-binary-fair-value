@@ -43,7 +43,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from btc_bot.pairarb.fills import settle_window, simulate_fill
+from btc_bot.pairarb import ledger
+from btc_bot.pairarb.fills import settle_window, simulate_fill, vwap
 from btc_bot.pairarb.quoter import DEFAULT_MIN_EDGE, plan_quote
 from btc_bot.pairarb.types import BookSide, PairOutcome, QuotePlan, RestingOrder
 
@@ -83,7 +84,18 @@ class TrackedWindow:
     down_order: RestingOrder | None = None
     outcome: PairOutcome | None = None
     note: str = ""
+    # Banked executions as (price, size). A quote re-posted as the book moves
+    # fills at several prices, so a single entry price cannot settle the leg.
+    up_execs: list[tuple[float, float]] = field(default_factory=list)
+    down_execs: list[tuple[float, float]] = field(default_factory=list)
+    exec_rows: list[dict[str, Any]] = field(default_factory=list)
+    requotes: int = 0
     _tape: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+    def banked(self, outcome: str) -> float:
+        """Shares already banked on one leg across all previous quotes."""
+        execs = self.up_execs if outcome == "Up" else self.down_execs
+        return sum(size for _, size in execs)
 
     @property
     def end_ts(self) -> int:
@@ -175,17 +187,62 @@ async def discover_window(
     )
 
 
-async def place_shadow_quote(
-    client: httpx.AsyncClient, w: TrackedWindow, size: float, min_edge: float
+def _bank(w: TrackedWindow, order: RestingOrder | None) -> None:
+    """Move an order's filled shares into the window's execution record."""
+    if order is None or order.filled <= 0:
+        return
+    execs = w.up_execs if order.outcome == "Up" else w.down_execs
+    execs.append((order.price, order.filled))
+    w.exec_rows.append(
+        {
+            "outcome": order.outcome,
+            "price": order.price,
+            "size": order.filled,
+            "depth_ahead": order.depth_ahead,
+            "posted_ts": order.posted_ts,
+            "filled_ts": int(time.time()),
+        }
+    )
+
+
+async def maintain_quotes(
+    client: httpx.AsyncClient,
+    w: TrackedWindow,
+    size: float,
+    min_edge: float,
+    max_shares: float,
 ) -> None:
-    """Decide and record where we would have rested on both legs."""
+    """Post, hold, or re-post our two resting bids against the current book.
+
+    A real maker re-quotes as the book moves; a bid left at its opening price
+    is stranded far from the market within seconds on a 5-minute window. So each
+    cycle we re-read both books and:
+
+    * **hold** the existing order when our price is still the best bid — moving
+      would forfeit queue position we have already earned, and standing still
+      does not, so holding is both realistic and conservative;
+    * **re-post** at the new best bid when the book has moved away, banking
+      whatever filled and re-joining the **back** of the new queue
+      (``depth_ahead`` resets — a cancel/replace never keeps priority);
+    * **stand aside** when the two best bids no longer sum below 1.00.
+
+    Inventory is capped per leg by ``max_shares``: a real maker does not
+    accumulate unbounded one-sided risk, and without a cap a persistently
+    one-sided window would report a stranded position no operator would hold.
+    """
     up = await fetch_side(client, w.up_token, "Up")
     down = await fetch_side(client, w.down_token, "Down")
     if up is None or down is None:
         w.note = "no book"
         return
+
     plan = plan_quote(w.slug, up, down, size=size, min_edge=min_edge)
     if plan is None:
+        # Pull both quotes. Bank anything filled so it still settles.
+        _bank(w, w.up_order)
+        _bank(w, w.down_order)
+        w.up_order = None
+        w.down_order = None
         bid_sum = (
             f"{up.best_bid + down.best_bid:.3f}"
             if up.best_bid is not None and down.best_bid is not None
@@ -193,11 +250,33 @@ async def place_shadow_quote(
         )
         w.note = f"stood aside (bid sum {bid_sum})"
         return
-    now = int(time.time())
+
     w.plan = plan
-    w.up_order = RestingOrder("Up", plan.up_price, size, plan.up_depth_ahead, now)
-    w.down_order = RestingOrder("Down", plan.down_price, size, plan.down_depth_ahead, now)
-    w.note = f"quoted {plan.up_price:.3f}/{plan.down_price:.3f}"
+    now = int(time.time())
+    moved = False
+    for outcome, price, depth in (
+        ("Up", plan.up_price, plan.up_depth_ahead),
+        ("Down", plan.down_price, plan.down_depth_ahead),
+    ):
+        current = w.up_order if outcome == "Up" else w.down_order
+        if current is not None and abs(current.price - price) < 1e-9:
+            continue  # still at the best bid — keep our place in the queue
+        _bank(w, current)
+        moved = moved or current is not None
+        remaining = max(0.0, max_shares - w.banked(outcome))
+        order = (
+            RestingOrder(outcome, price, min(size, remaining), depth, now)
+            if remaining > 0
+            else None
+        )
+        if outcome == "Up":
+            w.up_order = order
+        else:
+            w.down_order = order
+
+    if moved:
+        w.requotes += 1
+    w.note = f"quoting {plan.up_price:.3f}/{plan.down_price:.3f} (rq {w.requotes})"
 
 
 async def advance_fills(client: httpx.AsyncClient, w: TrackedWindow) -> None:
@@ -226,14 +305,21 @@ async def try_settle(client: httpx.AsyncClient, w: TrackedWindow) -> bool:
     idx_up = 0 if outcomes and outcomes[0] == "up" else 1
     resolved_up = prices[idx_up] >= 0.99
 
-    up_f = w.up_order.filled if w.up_order else 0.0
-    dn_f = w.down_order.filled if w.down_order else 0.0
+    # Bank whatever the still-resting orders filled, then settle on the
+    # volume-weighted price of every execution on each leg.
+    _bank(w, w.up_order)
+    _bank(w, w.down_order)
+    w.up_order = None
+    w.down_order = None
+    up_px, up_f = vwap(w.up_execs)
+    dn_px, dn_f = vwap(w.down_execs)
+
     w.outcome = settle_window(
         window_slug=w.slug,
         up_filled=up_f,
         down_filled=dn_f,
-        up_price=w.plan.up_price if w.plan else 0.0,
-        down_price=w.plan.down_price if w.plan else 0.0,
+        up_price=up_px,
+        down_price=dn_px,
         resolved_up=resolved_up,
     )
     return True
@@ -253,11 +339,9 @@ def render(tracked: dict[str, TrackedWindow], settled: list[PairOutcome]) -> str
         depth = (
             f"{w.plan.up_depth_ahead:.0f}/{w.plan.down_depth_ahead:.0f}" if w.plan else "-"
         )
-        fills = (
-            f"{w.up_order.filled:.1f}/{w.down_order.filled:.1f}"
-            if w.up_order and w.down_order
-            else "-"
-        )
+        up_live = w.up_order.filled if w.up_order else 0.0
+        dn_live = w.down_order.filled if w.down_order else 0.0
+        fills = f"{w.banked('Up') + up_live:.1f}/{w.banked('Down') + dn_live:.1f}"
         left = w.end_ts - int(time.time())
         status = f"{left:+d}s  {w.note}"
         lines.append(f"{w.slug:<30} {quote:<14} {depth:<13} {fills:<13} {status}")
@@ -284,11 +368,26 @@ def render(tracked: dict[str, TrackedWindow], settled: list[PairOutcome]) -> str
     return "\n".join(lines)
 
 
-async def run(assets: list[str], size: float, min_edge: float, once: bool) -> int:
+async def run(
+    assets: list[str],
+    size: float,
+    min_edge: float,
+    max_shares: float,
+    once: bool,
+    db_path: Path = ledger.DEFAULT_DB,
+) -> int:
     tracked: dict[str, TrackedWindow] = {}
     settled: list[PairOutcome] = []
+    await ledger.init(db_path)
+    prior = await ledger.summary(db_path)
+    if prior.get("windows"):
+        print(
+            f"resuming — {prior['windows']} windows already recorded, "
+            f"running PnL ${prior['pnl']:+.2f}"
+        )
     print(
-        f"pairarb shadow | assets={','.join(assets)} size={size} min_edge={min_edge}"
+        f"pairarb shadow | assets={','.join(assets)} size={size} "
+        f"min_edge={min_edge} max_shares={max_shares}"
         f"\nSHADOW ONLY — no orders are placed.\n"
     )
     async with httpx.AsyncClient(headers={"User-Agent": "pairarb-shadow/0.1"}) as client:
@@ -301,23 +400,56 @@ async def run(assets: list[str], size: float, min_edge: float, once: bool) -> in
                     slug = window_slug(asset, start)
                     if slug in tracked:
                         continue
+                    if await ledger.already_settled(slug, db_path):
+                        continue
                     w = await discover_window(client, asset, start)
                     if w is None:
                         continue
                     tracked[slug] = w
-                    await place_shadow_quote(client, w, size, min_edge)
 
             for w in list(tracked.values()):
                 if w.settled:
                     continue
                 if now < w.end_ts:
+                    # Advance fills against the standing quote BEFORE re-quoting,
+                    # so a fill that happened at the old price is banked at that
+                    # price rather than silently re-priced.
                     await advance_fills(client, w)
+                    await maintain_quotes(client, w, size, min_edge, max_shares)
                 elif now >= w.end_ts + SETTLE_DELAY:
                     await advance_fills(client, w)
                     if await try_settle(client, w):
                         settled.append(w.outcome)  # type: ignore[arg-type]
                         o = w.outcome
                         assert o is not None
+                        fresh = await ledger.record_window(
+                            {
+                                "window_slug": o.window_slug,
+                                "asset": w.asset,
+                                "start_ts": w.start_ts,
+                                "settled_at": int(time.time()),
+                                "up_filled": o.up_filled,
+                                "down_filled": o.down_filled,
+                                "up_vwap": o.up_price,
+                                "down_vwap": o.down_price,
+                                "resolved_up": int(o.resolved_up),
+                                "pairs": o.pairs,
+                                "stranded": o.stranded,
+                                "pnl": o.pnl,
+                                "requotes": w.requotes,
+                                "quoted_up": w.plan.up_price if w.plan else None,
+                                "quoted_down": w.plan.down_price if w.plan else None,
+                                "up_depth_ahead": w.plan.up_depth_ahead if w.plan else None,
+                                "down_depth_ahead": (
+                                    w.plan.down_depth_ahead if w.plan else None
+                                ),
+                            },
+                            db_path,
+                        )
+                        if fresh:
+                            await ledger.record_execs(
+                                o.window_slug, w.asset, w.exec_rows, db_path
+                            )
                         print(
                             f"  SETTLED {o.window_slug:<28} "
                             f"{'Up' if o.resolved_up else 'Down':<5} "
@@ -348,11 +480,22 @@ def main() -> int:
         default=DEFAULT_MIN_EDGE,
         help="minimum dollars per completed pair before quoting",
     )
+    p.add_argument(
+        "--max-shares",
+        type=float,
+        default=50.0,
+        help="inventory cap per leg per window",
+    )
+    p.add_argument(
+        "--db", default=str(ledger.DEFAULT_DB), help="shadow ledger SQLite path"
+    )
     p.add_argument("--once", action="store_true", help="single cycle then exit")
     a = p.parse_args()
     assets = [x.strip().lower() for x in a.assets.split(",") if x.strip()]
     try:
-        return asyncio.run(run(assets, a.size, a.min_edge, a.once))
+        return asyncio.run(
+            run(assets, a.size, a.min_edge, a.max_shares, a.once, Path(a.db))
+        )
     except KeyboardInterrupt:
         print("\nstopped.")
         return 0

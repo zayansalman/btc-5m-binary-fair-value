@@ -104,6 +104,25 @@ def simulate_fill(
     )
 
 
+def vwap(executions: Iterable[tuple[float, float]]) -> tuple[float, float]:
+    """Volume-weighted average price and total size over ``(price, size)`` fills.
+
+    A quote that is re-posted as the book moves fills at several prices, so a
+    single entry price is not enough to settle it. Returns ``(0.0, 0.0)`` for an
+    empty or zero-size run rather than dividing by zero.
+    """
+    total_size = 0.0
+    total_cost = 0.0
+    for price, size in executions:
+        if size <= 0:
+            continue
+        total_size += size
+        total_cost += price * size
+    if total_size <= _EPS:
+        return 0.0, 0.0
+    return total_cost / total_size, total_size
+
+
 def settle_window(
     window_slug: str,
     up_filled: float,

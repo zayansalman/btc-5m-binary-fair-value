@@ -194,3 +194,34 @@ def test_plan_carries_queue_depth_for_both_legs():
     assert plan is not None
     assert plan.up_depth_ahead == 313.0
     assert plan.down_depth_ahead == 224.0
+
+
+# --------------------------------------------------------------------------- #
+# VWAP — a re-quoted leg fills at several prices
+# --------------------------------------------------------------------------- #
+
+
+def test_vwap_weights_by_size_not_count():
+    from btc_bot.pairarb.fills import vwap
+
+    price, size = vwap([(0.40, 1.0), (0.50, 9.0)])
+    assert size == 10.0
+    assert abs(price - 0.49) < 1e-9
+
+
+def test_vwap_of_no_executions_is_zero_not_a_crash():
+    from btc_bot.pairarb.fills import vwap
+
+    assert vwap([]) == (0.0, 0.0)
+    assert vwap([(0.50, 0.0)]) == (0.0, 0.0)
+
+
+def test_requoted_leg_settles_on_its_blended_cost():
+    """Filled 5 @ 0.45 then 5 @ 0.55 -> blended 0.50 against a 0.49 hedge."""
+    from btc_bot.pairarb.fills import vwap
+
+    up_px, up_sz = vwap([(0.45, 5.0), (0.55, 5.0)])
+    out = settle_window("w", up_sz, 10.0, up_px, 0.49, resolved_up=True)
+    assert abs(up_px - 0.50) < 1e-9
+    assert out.pairs == 10.0
+    assert abs(out.pnl - 10.0 * (1.0 - 0.99)) < 1e-9
