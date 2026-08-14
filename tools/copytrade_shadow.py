@@ -139,7 +139,8 @@ def report(db_path: Path) -> None:
 
 async def run(
     target: str, scale: float, max_shares: float, min_shares: float,
-    skip_small: bool, once: bool, db_path: Path,
+    skip_small: bool, max_their: float | None, assets: list[str],
+    once: bool, db_path: Path,
 ) -> int:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(db_path)
@@ -150,7 +151,8 @@ async def run(
     }
     token_cache: dict[str, str] = {}
     print(f"copy shadow | target={target} scale={scale} "
-          f"size={min_shares}-{max_shares}sh skip_small={skip_small}")
+          f"size={min_shares}-{max_shares}sh skip_small={skip_small} "
+          f"max_their={max_their}")
     print("SHADOW ONLY — no orders are placed.\n")
 
     async with httpx.AsyncClient(headers={"User-Agent": "copy-shadow/0.1"}) as client:
@@ -163,6 +165,9 @@ async def run(
             for t in acts if isinstance(acts, list) else []:
                 if t.get("type") != "TRADE":
                     continue
+                slug_t = str(t.get("slug") or "")
+                if assets and not any(slug_t.startswith(a + "-") for a in assets):
+                    continue
                 k = _key(t)
                 if k in seen:
                     continue
@@ -171,6 +176,7 @@ async def run(
                 fill = price_the_copy(
                     t, asks, scale=scale, max_shares=max_shares,
                     min_shares=min_shares, skip_below_min=skip_small,
+                    max_their_size=max_their,
                 )
                 seen.add(k)
                 if fill is None:
@@ -236,6 +242,13 @@ def main() -> int:
         help="venue floor is 5 shares; orders below it are unplaceable",
     )
     p.add_argument(
+        "--max-their-size", type=float, default=None,
+        help="skip their trades above this many shares (UNVALIDATED filter)",
+    )
+    p.add_argument(
+        "--assets", default="", help="comma-separated asset filter, e.g. doge",
+    )
+    p.add_argument(
         "--skip-small", action="store_true",
         help="decline their sub-5-share trades instead of oversizing them",
     )
@@ -250,7 +263,9 @@ def main() -> int:
         return asyncio.run(
             run(
                 a.target.lower(), a.scale, a.max_shares, a.min_shares,
-                a.skip_small, a.once, Path(a.db),
+                a.skip_small, a.max_their_size,
+                [x.strip().lower() for x in a.assets.split(',') if x.strip()],
+                a.once, Path(a.db),
             )
         )
     except KeyboardInterrupt:
