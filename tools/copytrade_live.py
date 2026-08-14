@@ -51,6 +51,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from btc_bot.pairarb.feed import FeedUnavailable, open_feed
 from btc_bot.pairarb.mirror import MIN_ORDER_SHARES, price_the_copy
 
 CLOB = "https://clob.polymarket.com"
@@ -113,6 +114,17 @@ def assert_copy_live_allowed(live_flag: bool) -> None:
     except ImportError:
         problems.append("py_clob_client_v2 is not installed")
 
+    if not os.getenv("POLYGON_RPC_WSS", "").strip():
+        # Refusing rather than degrading. The data-api feed is ~20s stale and
+        # median slippage there is 9.56c against a ~1c/share edge, so a live
+        # copier on it is structurally negative. This is a correctness gate,
+        # not a performance preference.
+        problems.append(
+            "POLYGON_RPC_WSS is not set — live copying on the ~20s-stale "
+            "data-api feed loses by construction (9.56c median slippage vs "
+            "2.82c at 0-2s); get a free Polygon WSS endpoint first"
+        )
+
     if problems:
         raise CopyBootRefused(
             "LIVE COPY REFUSED: " + " and ".join(problems)
@@ -136,13 +148,18 @@ def preflight(bankroll: float, assets: list[str]) -> int:
             ("py_clob_client_v2 installed", False, "pip install py-clob-client-v2")
         )
     for var, need in (
+        ("POLYGON_RPC_WSS", "wss://polygon-mainnet.g.alchemy.com/v2/KEY (free)"),
         ("POLYMARKET_PRIVATE_KEY", "your signer key (never shown)"),
         ("POLYMARKET_FUNDER", "proxy wallet address"),
         ("BTC_LIVE_CONFIRM", COPY_CONFIRM_PHRASE),
         ("COPY_LIVE_CONFIRM", COPY_CONFIRM_PHRASE),
     ):
         val = os.getenv(var, "")
-        ok = bool(val) if "KEY" in var or "FUNDER" in var else val == COPY_CONFIRM_PHRASE
+        ok = (
+            bool(val)
+            if ("KEY" in var or "FUNDER" in var or "WSS" in var)
+            else val == COPY_CONFIRM_PHRASE
+        )
         checks.append((var, ok, f"set to {need}" if not ok else ""))
 
     for name, ok, fix in checks:
