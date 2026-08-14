@@ -211,6 +211,7 @@ async def maintain_quotes(
     size: float,
     min_edge: float,
     max_shares: float,
+    requote_secs: int,
 ) -> None:
     """Post, hold, or re-post our two resting bids against the current book.
 
@@ -259,8 +260,18 @@ async def maintain_quotes(
         ("Down", plan.down_price, plan.down_depth_ahead),
     ):
         current = w.up_order if outcome == "Up" else w.down_order
-        if current is not None and abs(current.price - price) < 1e-9:
-            continue  # still at the best bid — keep our place in the queue
+        if current is not None:
+            if abs(current.price - price) < 1e-9:
+                continue  # still at the best bid — keep our place in the queue
+            if now - current.posted_ts < requote_secs:
+                # Deliberately do NOT chase. Cancel/replace forfeits queue
+                # position, so an order that moves on every 1-tick tick never
+                # accumulates enough through-volume to fill — it resets its own
+                # clock forever. Holding a bid the market has walked away from
+                # is what a real maker does, and the fills it eventually gets
+                # when price comes back ARE the adverse selection we are here
+                # to measure. Suppressing them would flatter the result.
+                continue
         _bank(w, current)
         moved = moved or current is not None
         remaining = max(0.0, max_shares - w.banked(outcome))
@@ -373,6 +384,7 @@ async def run(
     size: float,
     min_edge: float,
     max_shares: float,
+    requote_secs: int,
     once: bool,
     db_path: Path = ledger.DEFAULT_DB,
 ) -> int:
@@ -387,7 +399,7 @@ async def run(
         )
     print(
         f"pairarb shadow | assets={','.join(assets)} size={size} "
-        f"min_edge={min_edge} max_shares={max_shares}"
+        f"min_edge={min_edge} max_shares={max_shares} requote={requote_secs}s"
         f"\nSHADOW ONLY — no orders are placed.\n"
     )
     async with httpx.AsyncClient(headers={"User-Agent": "pairarb-shadow/0.1"}) as client:
@@ -415,7 +427,7 @@ async def run(
                     # so a fill that happened at the old price is banked at that
                     # price rather than silently re-priced.
                     await advance_fills(client, w)
-                    await maintain_quotes(client, w, size, min_edge, max_shares)
+                    await maintain_quotes(client, w, size, min_edge, max_shares, requote_secs)
                 elif now >= w.end_ts + SETTLE_DELAY:
                     await advance_fills(client, w)
                     if await try_settle(client, w):
@@ -487,6 +499,13 @@ def main() -> int:
         help="inventory cap per leg per window",
     )
     p.add_argument(
+        "--requote-secs",
+        type=int,
+        default=60,
+        help="minimum seconds an order must rest before it may be moved; "
+             "chasing every tick forfeits queue position and never fills",
+    )
+    p.add_argument(
         "--db", default=str(ledger.DEFAULT_DB), help="shadow ledger SQLite path"
     )
     p.add_argument("--once", action="store_true", help="single cycle then exit")
@@ -494,7 +513,10 @@ def main() -> int:
     assets = [x.strip().lower() for x in a.assets.split(",") if x.strip()]
     try:
         return asyncio.run(
-            run(assets, a.size, a.min_edge, a.max_shares, a.once, Path(a.db))
+            run(
+                assets, a.size, a.min_edge, a.max_shares,
+                a.requote_secs, a.once, Path(a.db),
+            )
         )
     except KeyboardInterrupt:
         print("\nstopped.")
