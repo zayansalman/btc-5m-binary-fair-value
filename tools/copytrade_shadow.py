@@ -30,7 +30,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from btc_bot.pairarb.mirror import CopyFill, price_the_copy
+from btc_bot.pairarb.mirror import MIN_ORDER_SHARES, CopyFill, price_the_copy
 
 GAMMA = "https://gamma-api.polymarket.com"
 CLOB = "https://clob.polymarket.com"
@@ -138,7 +138,8 @@ def report(db_path: Path) -> None:
 
 
 async def run(
-    target: str, scale: float, max_shares: float, once: bool, db_path: Path
+    target: str, scale: float, max_shares: float, min_shares: float,
+    skip_small: bool, once: bool, db_path: Path,
 ) -> int:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(db_path)
@@ -148,7 +149,8 @@ async def run(
         r[0] for r in con.execute("SELECT tx_key FROM copy_fills")
     }
     token_cache: dict[str, str] = {}
-    print(f"copy shadow | target={target} scale={scale} max_shares={max_shares}")
+    print(f"copy shadow | target={target} scale={scale} "
+          f"size={min_shares}-{max_shares}sh skip_small={skip_small}")
     print("SHADOW ONLY — no orders are placed.\n")
 
     async with httpx.AsyncClient(headers={"User-Agent": "copy-shadow/0.1"}) as client:
@@ -166,7 +168,10 @@ async def run(
                     continue
                 asset = str(t.get("asset") or "")
                 asks = await fetch_asks(client, asset) if asset else []
-                fill = price_the_copy(t, asks, scale=scale, max_shares=max_shares)
+                fill = price_the_copy(
+                    t, asks, scale=scale, max_shares=max_shares,
+                    min_shares=min_shares, skip_below_min=skip_small,
+                )
                 seen.add(k)
                 if fill is None:
                     continue
@@ -226,6 +231,14 @@ def main() -> int:
     )
     p.add_argument("--scale", type=float, default=1.0, help="fraction of their size")
     p.add_argument("--max-shares", type=float, default=50.0)
+    p.add_argument(
+        "--min-shares", type=float, default=MIN_ORDER_SHARES,
+        help="venue floor is 5 shares; orders below it are unplaceable",
+    )
+    p.add_argument(
+        "--skip-small", action="store_true",
+        help="decline their sub-5-share trades instead of oversizing them",
+    )
     p.add_argument("--db", default=str(DEFAULT_DB))
     p.add_argument("--once", action="store_true")
     p.add_argument("--report", action="store_true", help="print ledger and exit")
@@ -235,7 +248,10 @@ def main() -> int:
         return 0
     try:
         return asyncio.run(
-            run(a.target.lower(), a.scale, a.max_shares, a.once, Path(a.db))
+            run(
+                a.target.lower(), a.scale, a.max_shares, a.min_shares,
+                a.skip_small, a.once, Path(a.db),
+            )
         )
     except KeyboardInterrupt:
         print("\nstopped.")

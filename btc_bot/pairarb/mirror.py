@@ -25,6 +25,13 @@ from typing import Any
 
 from btc_bot.shadow.fees import taker_fee_per_share
 
+# Polymarket rejects orders below 5 shares (venue-confirmed: gamma
+# ``orderMinSize`` = 5, CLOB ``min_order_size`` = 5). Note ``rewardsMinSize``
+# is 50, so a copier at the floor earns no maker rebate — irrelevant here
+# since a copy always crosses, but it is why the resting-quote strategy loses
+# its subsidy at small capital.
+MIN_ORDER_SHARES = 5.0
+
 
 @dataclass(frozen=True)
 class CopyFill:
@@ -79,6 +86,8 @@ def price_the_copy(
     scale: float = 1.0,
     max_shares: float = 50.0,
     fee_rate: float = 0.07,
+    min_shares: float = MIN_ORDER_SHARES,
+    skip_below_min: bool = False,
 ) -> CopyFill | None:
     """Price a copy of ``trade`` against the book we would actually face.
 
@@ -87,7 +96,16 @@ def price_the_copy(
     and by displayed depth — a copier cannot fill on liquidity that is not
     there, and pretending otherwise is how copy backtests invent profit.
 
-    Returns ``None`` when the target's trade is unusable or the book is empty.
+    **The venue's 5-share floor cuts both ways at small capital.** On the 87% of
+    the target's trades that are 5 shares or larger, the floor is harmless and
+    we simply take less than they did. On the 13% below it, we cannot match
+    their size and are forced to take *more* — amplifying whatever their
+    smallest trades are. ``skip_below_min`` declines those instead, which is the
+    honest choice if their small clips turn out to be probes or hedge scraps
+    rather than conviction.
+
+    Returns ``None`` when the trade is unusable, the book is empty, or the
+    target's size is below the floor and ``skip_below_min`` is set.
     """
     try:
         their_price = float(trade["price"])
@@ -100,8 +118,13 @@ def price_the_copy(
         return None
     if not asks:
         return None
+    if skip_below_min and their_size < min_shares:
+        return None
 
-    want = min(their_size * scale, max_shares)
+    # Clamp to the venue floor: an order below it is unplaceable, not merely
+    # small (lessons.md #85 — a sub-minimum cap silently blocked 100% of
+    # entries for a full session).
+    want = max(min_shares, min(their_size * scale, max_shares))
     taken = 0.0
     cost = 0.0
     for price, size in sorted(asks):
@@ -110,7 +133,10 @@ def price_the_copy(
         n = min(size, want - taken)
         taken += n
         cost += n * price
-    if taken <= 0:
+    if taken < min_shares - 1e-9:
+        # Displayed depth could not even cover the venue minimum, so this order
+        # could not have been placed at all. Recording it as a small fill would
+        # invent liquidity that was not there.
         return None
 
     our_price = cost / taken
