@@ -9,7 +9,7 @@ attribution — so a future change that loosens them fails loudly.
 from __future__ import annotations
 
 from btc_bot.pairarb.fills import hits_resting_bid, settle_window, simulate_fill
-from btc_bot.pairarb.quoter import MIN_ORDER_SHARES, plan_quote
+from btc_bot.pairarb.quoter import MIN_ORDER_SHARES, plan_quote, quote_price
 from btc_bot.pairarb.types import BookSide, RestingOrder
 
 
@@ -146,13 +146,13 @@ def test_stranded_down_leg_wins_when_market_resolves_down():
 # --------------------------------------------------------------------------- #
 
 
-def _side(outcome, bid, depth=100.0, ask=None):
+def _side(outcome, bid, depth=100.0, ask=None, ladder=None):
+    bids = ladder if ladder is not None else ([(bid, depth)] if bid is not None else [])
     return BookSide(
         token_id=f"tok-{outcome}",
         outcome=outcome,
-        best_bid=bid,
+        bids=tuple(bids),
         best_ask=ask,
-        depth_at_bid=depth,
     )
 
 
@@ -225,3 +225,47 @@ def test_requoted_leg_settles_on_its_blended_cost():
     assert abs(up_px - 0.50) < 1e-9
     assert out.pairs == 10.0
     assert abs(out.pnl - 10.0 * (1.0 - 0.99)) < 1e-9
+
+
+# --------------------------------------------------------------------------- #
+# Resting BELOW the touch — the strategy the reference accounts actually run
+# --------------------------------------------------------------------------- #
+
+
+def test_depth_ahead_counts_every_level_at_or_above_our_price():
+    """A seller sweeps the highest bids first, so all of them are ahead of us."""
+    side = _side("Up", None, ladder=[(0.50, 10.0), (0.49, 20.0), (0.48, 40.0)])
+    assert side.depth_ahead_of(0.50) == 10.0
+    assert side.depth_ahead_of(0.49) == 30.0
+    assert side.depth_ahead_of(0.48) == 70.0
+
+
+def test_offset_rests_below_the_touch_and_widens_the_edge():
+    """Touch sums to 0.99 (1c). Resting 5c below each leg makes it 11c."""
+    up = _side("Up", 0.50)
+    down = _side("Down", 0.49)
+    at_touch = plan_quote("w", up, down, size=10.0, offset=0.0)
+    deep = plan_quote("w", up, down, size=10.0, offset=0.05)
+    assert at_touch is not None and deep is not None
+    assert abs(at_touch.edge_per_pair - 0.01) < 1e-9
+    assert abs(deep.edge_per_pair - 0.11) < 1e-9
+    assert abs(deep.up_price - 0.45) < 1e-9
+    assert abs(deep.down_price - 0.44) < 1e-9
+
+
+def test_offset_quote_reports_the_deeper_queue():
+    up = _side("Up", None, ladder=[(0.50, 10.0), (0.45, 25.0)])
+    down = _side("Down", None, ladder=[(0.49, 8.0), (0.44, 12.0)])
+    plan = plan_quote("w", up, down, size=10.0, offset=0.05)
+    assert plan is not None
+    assert plan.up_depth_ahead == 35.0
+    assert plan.down_depth_ahead == 20.0
+
+
+def test_never_rests_below_the_floor_price():
+    """A 1c bid shows huge edge but fills only once the outcome is decided."""
+    from btc_bot.pairarb.quoter import MIN_QUOTE_PRICE
+
+    assert quote_price(_side("Up", 0.05), offset=0.04) is None
+    assert quote_price(_side("Up", 0.10), offset=0.05) == 0.05
+    assert MIN_QUOTE_PRICE > 0

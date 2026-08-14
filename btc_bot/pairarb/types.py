@@ -28,22 +28,43 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class BookSide:
-    """Top-of-book for one leg, plus the size resting at our intended price.
+    """One leg's bid ladder, plus best ask for reference.
+
+    The full ladder is carried, not just the touch, because the strategy rests
+    **below** the market rather than joining it. Sizing the queue ahead of a
+    deep bid needs every level between that bid and the touch.
 
     Attributes:
         token_id: CLOB token id for this outcome.
         outcome: ``'Up'`` or ``'Down'``.
-        best_bid: Best bid price, or ``None`` when the bid side is empty.
+        bids: Full bid ladder as ``(price, size)``, highest price first.
         best_ask: Best ask price, or ``None`` when the ask side is empty.
-        depth_at_bid: Size resting at ``best_bid``. This becomes the queue we
-            must clear before a hypothetical join-the-bid order fills.
     """
 
     token_id: str
     outcome: str
-    best_bid: float | None
+    bids: tuple[tuple[float, float], ...]
     best_ask: float | None
-    depth_at_bid: float
+
+    @property
+    def best_bid(self) -> float | None:
+        """Highest resting bid, or ``None`` when the bid side is empty."""
+        return self.bids[0][0] if self.bids else None
+
+    @property
+    def depth_at_bid(self) -> float:
+        """Size resting at the touch."""
+        return self.bids[0][1] if self.bids else 0.0
+
+    def depth_ahead_of(self, price: float) -> float:
+        """Size that would fill before ours if we rested at ``price``.
+
+        A seller sweeping the book hits the **highest** bids first, so every
+        share resting at or above our price has priority over us — not just the
+        shares at our own level. Counting only our own level would understate
+        the queue and manufacture fills we would not get.
+        """
+        return sum(size for p, size in self.bids if p >= price - 1e-9)
 
 
 @dataclass(frozen=True)

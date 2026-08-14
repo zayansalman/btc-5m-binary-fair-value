@@ -137,9 +137,8 @@ async def fetch_side(
     return BookSide(
         token_id=token_id,
         outcome=outcome,
-        best_bid=bids[0][0] if bids else None,
+        bids=tuple(bids),
         best_ask=asks[0][0] if asks else None,
-        depth_at_bid=bids[0][1] if bids else 0.0,
     )
 
 
@@ -212,6 +211,7 @@ async def maintain_quotes(
     min_edge: float,
     max_shares: float,
     requote_secs: int,
+    offset: float,
 ) -> None:
     """Post, hold, or re-post our two resting bids against the current book.
 
@@ -237,7 +237,9 @@ async def maintain_quotes(
         w.note = "no book"
         return
 
-    plan = plan_quote(w.slug, up, down, size=size, min_edge=min_edge)
+    plan = plan_quote(
+        w.slug, up, down, size=size, min_edge=min_edge, offset=offset
+    )
     if plan is None:
         # Pull both quotes. Bank anything filled so it still settles.
         _bank(w, w.up_order)
@@ -385,6 +387,7 @@ async def run(
     min_edge: float,
     max_shares: float,
     requote_secs: int,
+    offset: float,
     once: bool,
     db_path: Path = ledger.DEFAULT_DB,
 ) -> int:
@@ -399,7 +402,8 @@ async def run(
         )
     print(
         f"pairarb shadow | assets={','.join(assets)} size={size} "
-        f"min_edge={min_edge} max_shares={max_shares} requote={requote_secs}s"
+        f"min_edge={min_edge} max_shares={max_shares} "
+        f"offset={offset} requote={requote_secs}s"
         f"\nSHADOW ONLY — no orders are placed.\n"
     )
     async with httpx.AsyncClient(headers={"User-Agent": "pairarb-shadow/0.1"}) as client:
@@ -427,7 +431,9 @@ async def run(
                     # so a fill that happened at the old price is banked at that
                     # price rather than silently re-priced.
                     await advance_fills(client, w)
-                    await maintain_quotes(client, w, size, min_edge, max_shares, requote_secs)
+                    await maintain_quotes(
+                        client, w, size, min_edge, max_shares, requote_secs, offset
+                    )
                 elif now >= w.end_ts + SETTLE_DELAY:
                     await advance_fills(client, w)
                     if await try_settle(client, w):
@@ -499,9 +505,15 @@ def main() -> int:
         help="inventory cap per leg per window",
     )
     p.add_argument(
+        "--offset",
+        type=float,
+        default=0.05,
+        help="dollars below the touch to rest each leg; 0 joins the touch",
+    )
+    p.add_argument(
         "--requote-secs",
         type=int,
-        default=60,
+        default=99999,
         help="minimum seconds an order must rest before it may be moved; "
              "chasing every tick forfeits queue position and never fills",
     )
@@ -515,7 +527,7 @@ def main() -> int:
         return asyncio.run(
             run(
                 assets, a.size, a.min_edge, a.max_shares,
-                a.requote_secs, a.once, Path(a.db),
+                a.requote_secs, a.offset, a.once, Path(a.db),
             )
         )
     except KeyboardInterrupt:

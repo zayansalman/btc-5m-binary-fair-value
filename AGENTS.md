@@ -41,6 +41,9 @@ off unless the operator explicitly arms every gate.
 In scope:
 
 - Discover current BTC 5-minute Up/Down Polymarket markets.
+- **Research-only** two-sided maker quoting across the venue's 5-minute Up/Down
+  crypto family (btc/eth/sol/xrp/doge/bnb) — `btc_bot/pairarb/`, shadow only,
+  places no orders (#182). The live trading loop stays BTC-only.
 - Use a settlement-aligned BTC reference feed for signal and paper fills.
 - Show the Chainlink Data Streams reference in the dashboard.
 - Compute a fair Up probability and edge versus market price.
@@ -59,7 +62,10 @@ In scope:
 Out of scope:
 
 - Flipping the live gate or placing live orders on behalf of the operator.
-- Any non-BTC market.
+- Any non-BTC market **on the live trading path**. Non-BTC 5-minute Up/Down is
+  in scope for `btc_bot/pairarb/` research only (#182): the account this
+  reproduces runs 72% of its flow outside BTC, and the thin alt books are where
+  the maker edge is. Widened 2026-08-14 with operator approval.
 - Any timeframe other than 5-minute Up/Down.
 - Remote deployment / exposing the dashboard beyond localhost by default.
 
