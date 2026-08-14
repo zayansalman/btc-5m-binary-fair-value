@@ -89,6 +89,7 @@ def price_the_copy(
     min_shares: float = MIN_ORDER_SHARES,
     skip_below_min: bool = False,
     max_their_size: float | None = None,
+    max_slippage: float | None = None,
 ) -> CopyFill | None:
     """Price a copy of ``trade`` against the book we would actually face.
 
@@ -148,6 +149,17 @@ def price_the_copy(
         return None
 
     our_price = cost / taken
+    if max_slippage is not None:
+        # Decline when the price has already run past the target's fill.
+        #
+        # CAUTION, measured 2026-08-14: tightening this guard makes the TARGET's
+        # PnL on the surviving subset monotonically WORSE (+$6 -> -$52 across 124
+        # fills; -$6 -> -$76 across 44). High slippage is the evidence the target
+        # was RIGHT — price ran because their call was correct — so the guard
+        # preferentially discards their winners and our win rate falls from 45%
+        # to 16%. This is a real trade-off, not a free safety.
+        if (our_price + taker_fee_per_share(our_price, fee_rate)) - their_price > max_slippage:
+            return None
     return CopyFill(
         window_slug=str(trade.get("slug") or ""),
         condition_id=str(trade.get("conditionId") or ""),

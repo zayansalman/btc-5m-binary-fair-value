@@ -139,8 +139,8 @@ def report(db_path: Path) -> None:
 
 async def run(
     target: str, scale: float, max_shares: float, min_shares: float,
-    skip_small: bool, max_their: float | None, assets: list[str],
-    once: bool, db_path: Path,
+    skip_small: bool, max_their: float | None, max_slip: float | None,
+    assets: list[str], once: bool, db_path: Path,
 ) -> int:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(db_path)
@@ -177,6 +177,7 @@ async def run(
                     t, asks, scale=scale, max_shares=max_shares,
                     min_shares=min_shares, skip_below_min=skip_small,
                     max_their_size=max_their,
+                    max_slippage=max_slip,
                 )
                 seen.add(k)
                 if fill is None:
@@ -242,6 +243,11 @@ def main() -> int:
         help="venue floor is 5 shares; orders below it are unplaceable",
     )
     p.add_argument(
+        "--max-slippage", type=float, default=None,
+        help="skip a copy if price ran this far past their fill; NOTE this "
+             "preferentially discards their winning trades (see mirror.py)",
+    )
+    p.add_argument(
         "--max-their-size", type=float, default=None,
         help="skip their trades above this many shares (UNVALIDATED filter)",
     )
@@ -263,7 +269,7 @@ def main() -> int:
         return asyncio.run(
             run(
                 a.target.lower(), a.scale, a.max_shares, a.min_shares,
-                a.skip_small, a.max_their_size,
+                a.skip_small, a.max_their_size, a.max_slippage,
                 [x.strip().lower() for x in a.assets.split(',') if x.strip()],
                 a.once, Path(a.db),
             )
