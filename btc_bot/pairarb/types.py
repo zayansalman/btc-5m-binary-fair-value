@@ -66,6 +66,19 @@ class BookSide:
         """
         return sum(size for p, size in self.bids if p >= price - 1e-9)
 
+    def depth_above(self, price: float) -> float:
+        """Size resting at prices strictly better than ``price``.
+
+        Separated from our own level because the two evolve differently once we
+        are resting. Orders above us can be **cancelled** — and usually are, as
+        makers pull bids when price moves — which advances us in the queue
+        without a single share trading. Re-reading this each cycle credits that,
+        where a queue fixed at post time would not and would understate fills.
+        Orders at our own level that were there first keep their priority for
+        as long as we rest, so that part stays frozen.
+        """
+        return sum(size for p, size in self.bids if p > price + 1e-9)
+
 
 @dataclass(frozen=True)
 class QuotePlan:
