@@ -1,3 +1,162 @@
+# Where we are (status check, 2026-08-17)
+
+Prior turn wrote a review save-point to this file and it did not survive — the
+working tree shows no trace of it, and `git reflog` around that time shows two
+branch checkouts (`feature/180-m1-ofi-decay` → `develop` → `feature/182-pairarb-shadow`)
+between then and now, which resets `tasks/todo.md` to whatever each target branch
+had. This is exactly the `lessons.md` entry "Commit incrementally — uncommitted work
+can be silently discarded" (2026-06-17, #89) reproducing itself. This update is being
+committed immediately for that reason.
+
+## 1. Sigma-Gap design (`docs/STRATEGY_DESIGN.md`) — fix already exists, unmerged
+
+The adversarial review run two turns ago (5-lens multi-agent pass + verification)
+found: M1's daily kill-leg is statistically vacuous, the M2′ capital gate has an
+unmitigated EIV false-pass channel, the daily hedge line prices perp fees only
+(funding/margin/basis omitted), the "27–67 obs/day" power claim is arithmetically
+impossible for BTC/ETH, and — the load-bearing one — **no document computes the
+annual PnL ceiling**, which from the design's own inputs is ~$5–55k/yr gross,
+~$1–3k/yr central case.
+
+**That work already happened.** `git log` / `git branch -a` show a commit
+`docs: third review — D1 (research program) and D2 (M1 1h-only kill)` (6ef702e,
+2026-08-13, co-authored by a prior Claude session) on branch
+`feature/180-m1-ofi-decay` — 13 commits ahead of `develop`, 2 behind, **no PR**,
+issue #180 still open. It logs `CORRECTIONS.md` **C11–C18**, and the findings match
+this session's independent review almost exactly, including the same $5–55k/yr /
+$1–3k central prize figures and the identical two-ground refutation of the M1 daily
+leg (null clears its own bar 19–27% of the time; phantom-tilt guard needs N_eff>1,601
+vs 743 available). **D1**: treat the program as research, not a funded business.
+**D2**: amend the frozen M1 pre-registration — drop the daily leg from the kill
+condition, 1h alone carries it (numeric thresholds unchanged; the run is still
+paused, so amending before scoring is legitimate under its own rules).
+
+**This branch was never merged**, and when `feature/182-pairarb-shadow` was cut from
+`develop` afterward, only the venue-recorder commit was cherry-picked forward
+(`a5ba16d` → `f809c64`) — the docs fixes (`619b35b`, `6ef702e`) were left behind.
+`docs/STRATEGY_DESIGN.md` on the current branch is therefore still at
+second-review state; the C11–C18 findings this session re-derived are real on this
+branch, and the fix for them exists, just not here.
+
+- [ ] Decide: merge/rebase `feature/180-m1-ofi-decay`'s doc commits into `develop`
+      (cherry-pick `619b35b` + `6ef702e`), or explicitly abandon that branch if the
+      program direction has moved on to #182 instead.
+- [ ] If kept, open the PR for #180 that never got opened.
+
+## 2. Copytrade + pairarb build — issue #182 (active line of work)
+
+No commit has touched `docs/STRATEGY_DESIGN.md`'s program since 2026-08-12 on any
+branch that fed into this one — #182 is a separate, concrete investigation: is
+Polymarket account `@mayormamdani` ($213→$42,704 since 2026-06-09) copy-tradeable?
+Issue #182 is **OPEN**. Plan: `tasks/2026-08-14-pair-arb-shadow-plan.md`.
+
+### What shipped (11 commits, +3,629/−1 lines, `f809c64..bf9a68a`, all 2026-08-14)
+
+- **#181 first** (`f809c64`): venue recorder — full-depth L2 + trade tape + aligned
+  reference, fixing a zombie-window discovery bug (stale Dec-2025 markets sorted
+  before Aug-2026 ones under `endDate` ascending; fixed by constructing the 5m slug
+  from the clock instead of discovering it).
+- **Investigation → two strategies, not one.** Measured `@mayormamdani`'s tape (5,072
+  trades, 9.3h): 100% BUY, both legs held in 79% of windows, median combined leg cost
+  $0.989 for a $1.00 payout. Live books ruled out a taker arb (best-ask sum 1.0100,
+  crosses at 1.0449 after fees). His own fee record is cleanly bimodal — 40.3% maker
+  (fee≈0), 35.3% taker (fee≈0.07, p95=0.0666 independently validating
+  `btc_bot/shadow/fees.py`). **He's a market maker, not a directional bettor** — not
+  copy-tradeable in the naive sense, but his strategy is reproducible natively.
+- **`btc_bot/pairarb/`** (new package, shadow only, no execution ever) — two-sided
+  resting-bid quoting on 5m Up/Down: initial shadow tester → re-quoting/VWAP
+  settlement/durable ledger → hold quotes instead of chasing every tick → rest below
+  the touch, not at it. Back-of-queue maker fill sim over recorded L2 + trade tape
+  (conservative by construction — no assumed priority, no self-impact credit).
+- **`copytrade`** (mirrors the target directly, separate from pairarb) — sized from
+  an early small-sample read (`tasks/lessons.md`, 8 real fills: target +$24.79, copy
+  +$22.81, **92% captured**, 1.56¢/share slippage) into: a live mirror shadow priced
+  against the book we'd actually face → the venue's 5-share minimum modeled → asset
+  filter + size ceiling + a **gated** live executor → slippage guard + read-only
+  dashboard.
+- **Feed latency fix** (last 2 commits): the data-api activity feed is ~20s stale
+  (median), and slippage tracks lag almost linearly (2.82¢ at 0–2s vs. 9.56¢ at
+  11–30s) — at a ~1¢/share edge, staleness inverts the trade, not just slows it.
+  Added a Polygon `OrderFilled`-log transport (~2s, block time, carries maker/taker
+  identity + fee). The stale transport now requires explicit opt-in
+  (`allow_api_fallback=True`); `open_feed()` raises `FeedUnavailable` by default, and
+  the live executor refuses to boot without `POLYGON_RPC_WSS` — same refusal class
+  as the key/confirm/client gates. Operator: "if anything has a 20 second delay in
+  this project get rid of it." **Every shadow number collected before this commit
+  was on the stale feed — a lower bound, not an estimate of a 2s copier.**
+
+### Current running state (checked live, 2026-08-17)
+
+Three background processes, running continuously since Friday (~69h):
+
+| PID | Process | DB | Rows |
+|---|---|---|---|
+| 13259 | `copytrade_shadow.py --assets doge --max-shares 5 --min-shares 5 --max-their-size 50` | `data/copytrade_doge.db` | 3,026 fills |
+| 9268 | `copytrade_shadow.py --max-shares 5 --min-shares 5` (all assets) | `data/copytrade_min.db` | 11,628 fills |
+| 14035 | `copytrade_dashboard.py --port 7861` | (reads both) | — |
+
+**`pairarb_shadow.py` is NOT running.** `data/pairarb_shadow.db` has 25
+`pair_windows` and **0 `pair_execs`** — the maker-quoting strategy (the one the
+investigation concluded was the *real*, reproducible edge) has not accumulated
+meaningful shadow data. The copytrade side — the one the investigation's own numbers
+said should be structurally worse — is what's actually been running at scale.
+
+### ⚠ Live shadow result contradicts the sample that justified the live executor
+
+Queried both running copytrade DBs directly. On settled fills only (most rows are
+still-open positions pending window resolution):
+
+| Config | Settled fills | Our total PnL | Target's total PnL (same fills) | Avg our PnL/fill | Avg their PnL/fill |
+|---|---|---|---|---|---|
+| `copytrade_min` (all assets) | 1,756 / 11,628 | **−$174.47** | +$24.36 | **−$0.099** | +$0.014 |
+| `copytrade_doge` | 1,194 / 3,026 | **−$228.67** | +$83.52 | **−$0.192** | +$0.070 |
+
+Win rate matches exactly between us and them on every fill (as it must — same
+outcome token, same resolution), so this isn't a directional-luck artifact; it's
+entry-price slippage compounding against us on both winners and losers. This is the
+opposite sign from the 8-fill sample in `tasks/lessons.md` that read "92% captured"
+and was the evidentiary basis for building the asset filter, size ceiling, and gated
+live executor afterward — and it's a much larger sample (1,194–1,756 settled vs. 8).
+**This is the exact pattern the project's own lessons repeatedly warn about**
+(screen-population-trap / small-sample trap). Two things need checking before
+either conclusion is trusted: (1) the 8-fill sample may simply have been favorable
+noise, and 69h at scale is the more trustworthy read; (2) this run predates the
+onchain-feed fix in the two most recent commits, so per that commit's own framing,
+**this −$174/−$229 result may itself be a lower bound collected on the handicapped
+feed**, not a clean read of the current code path. Neither is resolved yet.
+
+- [ ] Do not arm `COPY_LIVE_CONFIRM` / run `copytrade_live.py --live` until this is
+      reconciled.
+- [ ] Restart the two shadow processes on the onchain-feed code path and let a fresh
+      sample accumulate before re-reading the capture rate.
+- [ ] Decompose the −$174/−$229 by asset, side, and lag bucket before concluding
+      either way — per `lessons.md`'s own repeated instruction not to trust an
+      aggregate.
+- [ ] Investigate why `pairarb_shadow.py` isn't running while `copytrade_shadow.py`
+      is, given the investigation's own numbers favor pairarb.
+
+### Hygiene noticed while checking this
+
+- [ ] `AGENTS.md`, `docs/CODE_MAP.md`, `docs/FILE_MAP.md` have **uncommitted**
+      `tools/gen_docs.py` regeneration (adds `pairarb/` rows, bumps test count to
+      828, flags `btc_bot/pairarb/feed.py` as dead code). Commit or regenerate again
+      next session so `AGENTS.md`'s snapshot isn't stale on read.
+- [ ] That dead-code flag on `feed.py` is a **false positive** — it's imported and
+      load-bearing in `tools/copytrade_live.py` (the live executor's refusal gate
+      depends on `open_feed`/`FeedUnavailable`). `gen_docs.py`'s importer scan
+      appears not to look inside `tools/`.
+- [ ] Local test env: `pytest` collects 801/803 passing; 3 modules fail to *collect*
+      (not fail) on missing optional local deps — `polars`, `py_clob_client_v2`,
+      `h2`. Likely a `pip install -r requirements.txt` refresh, not a regression;
+      confirm against CI before treating as one.
+
+## Next step (not started)
+
+Get an operator decision on #1 (merge/abandon the stranded #180 fix branch) and #2's
+shadow-PnL reconciliation before any further build work on either program.
+
+---
+
 # Reopen: 9 issues filed, discuss-first process (#169–#177) (2026-08-04)
 
 Project was ARCHIVED 2026-07-10 (v1.0.0, negative result — see `docs/FINDINGS.md`,
