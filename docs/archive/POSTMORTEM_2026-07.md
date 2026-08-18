@@ -1,5 +1,11 @@
 # Postmortem — July 2026: why the project lost money, and what is true now
 
+> **Historical record, June–July 2026 research phase — superseded by the
+> 2026-08-04 reopen, kept for reference.** The forensic numbers below (bot-era
+> venue-true PnL, fee accounting) are still accurate as a record of that
+> period; the restart protocol they prescribe has been superseded by the
+> reopen. See `tasks/todo.md` for current status.
+
 **Status:** definitive as of the 2026-07-02 forensic pass (frozen ledger snapshot + Polymarket
 Data API ground truth). Supersedes all earlier PnL figures. Issues: #132–#138.
 

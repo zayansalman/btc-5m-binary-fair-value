@@ -39,7 +39,7 @@ f45 signals + replay grid (#149), race_status CLI (#150), honest feed labels (#1
 silent-stop alerts (#138), vol/basis regime columns (#122), f45 roster arm (#155),
 tick-cadence stall detection (#157), maker/taker placement telemetry — 23% maker share
 (#137), deploy-bar min-n guard, forecast_journal pilot tool (#162). Plus decision docs:
-docs/PIVOT_2026-07.md and the full audit trail in tasks/race_log.md.
+docs/archive/PIVOT_2026-07.md and the full audit trail in tasks/race_log.md.
 
 ## v0.4.27 — Tick-replay backtest + v8 pre-registered (2026-07-02)
 
@@ -61,7 +61,7 @@ Operator mandate: bin the losers, build better candidates (#142, PR #143).
 
 ## v0.4.25 — Postmortem: boot heal, fee-true books, ledger reconciled (2026-07-02)
 
-Forensic postmortem of the 06-25 outage and the full trade history (docs/POSTMORTEM_2026-07.md, #132–#138). Venue truth: bot-era PnL **−$17.24** = +$6.27 gross signal − $23.51 taker fees; the books had shown −$8.01/−$3.10 (fee-blind).
+Forensic postmortem of the 06-25 outage and the full trade history (docs/archive/POSTMORTEM_2026-07.md, #132–#138). Venue truth: bot-era PnL **−$17.24** = +$6.27 gross signal − $23.51 taker fees; the books had shown −$8.01/−$3.10 (fee-blind).
 
 - **#132** — boot reconciliation no longer hard-refuses on CLOB-pruned entry orders (the outage): resolved-window rows close as `RECONCILED_STALE_RESOLVED`; unresolved rows adopt the journal's placement match; refusal reserved for genuinely unknowable live risk.
 - **#133** — fee-true booking: the venue's taker fee (`0.07·p·(1−p)`/share, USDC, on the placement-crossed portion) is captured at entry and booked at settlement/exit; ledger row = journal = daily-halt to the cent; fee math shared with the shadow ledger.

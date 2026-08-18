@@ -1,5 +1,10 @@
 # Timeline — thirty days from first tick to final verdict
 
+> **Historical record, June–July 2026 research phase — superseded by the
+> 2026-08-04 reopen, kept for reference.** "Final verdict" and "project closed"
+> below describe the state of the BTC-only signal-race program on 2026-07-10,
+> not the current project. See `tasks/todo.md` for current status.
+
 The short version: build (June) → live losses traced to a booking bug → venue-true
 re-accounting → pre-registered restart → an ablation race that kept killing its own
 leaders → one week of agent-operated iteration → a selection-free negative → clean close.

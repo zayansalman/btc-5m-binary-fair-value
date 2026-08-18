@@ -106,7 +106,7 @@ def _v0_control(
 
 # Ordered so the control is logged first. Each candidate is callable as
 # fn(view, params); cushion variants carry their own defaulted thresholds.
-# Roster surgery 2026-07-02 (#142, docs/POSTMORTEM_2026-07.md): v3/v4/v5/v6
+# Roster surgery 2026-07-02 (#142, docs/archive/POSTMORTEM_2026-07.md): v3/v4/v5/v6
 # retired on the frozen-race evidence (v3 favorite-soak trap, v4 IS→OOS rank
 # flip, v5 redundant with v2, v6 worst everywhere). Historical shadow rows for
 # retired models remain in the ledger; only new logging stops.

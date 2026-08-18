@@ -1,5 +1,11 @@
 # Findings — what 30 days of venue-true measurement established
 
+> **Historical record, June–July 2026 research phase — superseded by the
+> 2026-08-04 reopen, kept for reference.** These findings are about the
+> unfiltered BTC-only signal family tested through 2026-07-10; they are not a
+> current verdict on the project or on later work (#182 pairarb/copytrade).
+> See `tasks/todo.md` for current status.
+
 Every number below is net of the Polymarket taker fee (`0.07·p·(1−p)`/share) and
 reproducible from the shipped ledger (`tools/race_status.py`, `tools/replay_race.py`,
 `tools/regime_attribution.py`).

@@ -25,7 +25,7 @@ verbatim rather than reimplemented:
   Requires ``view.up_bid`` / ``view.down_bid`` populated (replay-harness only;
   returns None when bid is absent, so safe in all other paths).
 
-Retired 2026-07-02 (#142; see docs/POSTMORTEM_2026-07.md): late_convergence_v3,
+Retired 2026-07-02 (#142; see docs/archive/POSTMORTEM_2026-07.md): late_convergence_v3,
 down_skeptic_v4, cushion_drift_v5, down_skeptic_drift_v6.
 """
 from __future__ import annotations
@@ -114,7 +114,7 @@ def cushion_fresh_v7(
     """``cushion_favorite_v2``, restricted to FRESH windows and CAPPED claims.
 
     Two one-parameter gates on top of v2, frozen a-priori from the 2026-07
-    postmortem recon (docs/POSTMORTEM_2026-07.md; the resumed shadow race is
+    postmortem recon (docs/archive/POSTMORTEM_2026-07.md; the resumed shadow race is
     their out-of-sample test):
 
     * **Freshness** (``max_age_seconds``): all of the concept family's

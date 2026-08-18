@@ -41,9 +41,13 @@ off unless the operator explicitly arms every gate.
 In scope:
 
 - Discover current BTC 5-minute Up/Down Polymarket markets.
-- **Research-only** two-sided maker quoting across the venue's 5-minute Up/Down
-  crypto family (btc/eth/sol/xrp/doge/bnb) — `btc_bot/pairarb/`, shadow only,
-  places no orders (#182). The live trading loop stays BTC-only.
+- **Research/shadow-only exploration is open by default** — any market, any
+  timeframe, any venue instrument may be investigated, backtested, or shadow-run
+  as long as it places no real orders. No fresh operator carve-out is needed to
+  start a new research direction; the market/timeframe restriction below binds
+  the **live trading path** only. Example: two-sided maker quoting across the
+  venue's 5-minute Up/Down crypto family (btc/eth/sol/xrp/doge/bnb) —
+  `btc_bot/pairarb/`, shadow only, places no orders (#182, widened 2026-08-14).
 - Use a settlement-aligned BTC reference feed for signal and paper fills.
 - Show the Chainlink Data Streams reference in the dashboard.
 - Compute a fair Up probability and edge versus market price.
@@ -62,16 +66,16 @@ In scope:
 Out of scope:
 
 - Flipping the live gate or placing live orders on behalf of the operator.
-- Any non-BTC market **on the live trading path**. Non-BTC 5-minute Up/Down is
-  in scope for `btc_bot/pairarb/` research only (#182): the account this
-  reproduces runs 72% of its flow outside BTC, and the thin alt books are where
-  the maker edge is. Widened 2026-08-14 with operator approval.
-- Any timeframe other than 5-minute Up/Down.
+- Any market other than BTC 5-minute Up/Down, **on the live trading path**
+  (real capital). Non-BTC markets and other timeframes are in scope for
+  research/shadow work — see the research/shadow-only line above.
 - Remote deployment / exposing the dashboard beyond localhost by default.
 
 ## Absolute Rules
 
-- BTC 5-minute Up/Down markets only.
+- **Live trading (real capital) is BTC 5-minute Up/Down only.** Research and
+  shadow-only work on other markets/timeframes is in scope by default — see
+  Scope Fence above.
 - One open BTC paper position at a time.
 - **Live trading is BUILT and multi-gated** (`btc_5m_exec/execution/live.py:LiveExecutor`).
   It runs only with `BTC_BOT_MODE=live` **AND** `BTC_LIVE_CONFIRM=YES_I_UNDERSTAND`
