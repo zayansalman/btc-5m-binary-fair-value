@@ -20,7 +20,14 @@ share edge it inverts the trade. It survives here only as an explicitly-selected
 fallback that announces itself, never as a silent default.
 
 ``ONCHAIN`` subscribes to Polygon ``OrderFilled`` logs and delivers fills at
-block time (~2s) with maker/taker identity and the fee field.
+block time (~2s) with maker/taker identity and the fee field. It needs a
+``POLYGON_RPC_WSS`` endpoint (a free key from e.g. alchemy.com).
+
+For a key-free option, :func:`http_poll_fills` polls ``eth_getLogs`` against a
+public Polygon RPC every ``poll_seconds``. Public endpoints rate-limit hard, so
+this is not as fast as the WSS push, but it reads the same on-chain event and is
+still an order of magnitude closer to block time than the ~20s-stale API poll —
+worth reaching for before ever falling back to the API transport.
 
 That ~2s is a floor, not a tuning target: a fill becomes attributable only once
 settled, so a copier always races the confirmation of something the target has
@@ -126,6 +133,95 @@ async def onchain_fills(
             raise
         except Exception:  # noqa: BLE001 — reconnect rather than die silently
             await asyncio.sleep(2)
+
+
+# Free, read-only Polygon RPCs — no key needed. Order is a latency/rate-limit
+# preference, not a correctness one; a dead endpoint is skipped, not fatal.
+PUBLIC_HTTP_RPCS = (
+    "https://polygon-bor-rpc.publicnode.com",
+    "https://polygon.llamarpc.com",
+    "https://polygon.drpc.org",
+    "https://rpc.ankr.com/polygon",
+)
+
+
+async def _rpc(client: Any, url: str, method: str, params: Any) -> Any:
+    r = await client.post(
+        url,
+        json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
+        timeout=15.0,
+    )
+    r.raise_for_status()
+    return r.json().get("result")
+
+
+async def _pick_public_rpc(client: Any) -> str | None:
+    """First public RPC that answers ``eth_blockNumber``, or ``None``."""
+    for url in PUBLIC_HTTP_RPCS:
+        try:
+            if await _rpc(client, url, "eth_blockNumber", []):
+                return url
+        except Exception:  # noqa: BLE001
+            continue
+    return None
+
+
+async def http_poll_fills(
+    target: str, poll_seconds: float = 2.0, roles: tuple[bool, ...] = (True, False)
+) -> AsyncIterator[FeedFill]:
+    """Yield the target's fills via ``eth_getLogs`` polling — no RPC key needed.
+
+    Same decoded event as :func:`onchain_fills`, delivered by HTTP polling
+    instead of a push subscription. Latency is ``poll_seconds`` plus block time,
+    not block time alone, but it is reading the chain directly rather than
+    waiting on the data-api's batched ingestion — the dominant cost this feed
+    module exists to avoid.
+
+    Raises :class:`FeedUnavailable` if no public endpoint answers at all: at
+    that point neither this nor :func:`onchain_fills` can run, and the caller's
+    only real option is the explicit, stale API fallback.
+    """
+    import httpx
+
+    async with httpx.AsyncClient(headers={"User-Agent": "copy-feed-http/0.1"}) as client:
+        rpc = await _pick_public_rpc(client)
+        if rpc is None:
+            raise FeedUnavailable(
+                "no reachable public Polygon RPC for HTTP polling "
+                "(all of PUBLIC_HTTP_RPCS failed eth_blockNumber)"
+            )
+        last = int(await _rpc(client, rpc, "eth_blockNumber", []) or "0x0", 16)
+        while True:
+            try:
+                head = int(await _rpc(client, rpc, "eth_blockNumber", []) or "0x0", 16)
+                if head > last:
+                    for as_maker in roles:
+                        params = dict(subscription_params(target, as_maker))
+                        params["fromBlock"] = hex(last + 1)
+                        params["toBlock"] = hex(head)
+                        logs = await _rpc(client, rpc, "eth_getLogs", [params]) or []
+                        for log in logs:
+                            fill = decode_order_filled(log)
+                            if fill is None or not fill.shares:
+                                continue
+                            mine_is_maker = fill.maker.lower() == target.lower()
+                            yield FeedFill(
+                                token_id=fill.token_id,
+                                price=fill.price,
+                                shares=fill.shares,
+                                # Same rationale as onchain_fills: this excludes
+                                # block time, which is the real floor.
+                                observed_lag=0.0,
+                                source="rpc_poll",
+                                is_maker=mine_is_maker and fill.is_maker_fill,
+                                tx_hash=fill.tx_hash,
+                            )
+                    last = head
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 — try another endpoint, don't die
+                rpc = await _pick_public_rpc(client) or rpc
+            await asyncio.sleep(poll_seconds)
 
 
 async def api_fills(

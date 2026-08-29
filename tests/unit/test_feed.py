@@ -10,7 +10,15 @@ from __future__ import annotations
 
 import pytest
 
-from btc_bot.pairarb.feed import FeedFill, FeedUnavailable, open_feed
+from btc_bot.pairarb.feed import (
+    PUBLIC_HTTP_RPCS,
+    FeedFill,
+    FeedUnavailable,
+    _pick_public_rpc,
+    _rpc,
+    http_poll_fills,
+    open_feed,
+)
 
 
 def test_refuses_to_open_a_stale_feed_by_default(monkeypatch):
@@ -47,3 +55,71 @@ def test_onchain_fill_can_report_maker_status():
         source="onchain", is_maker=True,
     )
     assert f.is_maker is True
+
+
+class _FakeRpcResponse:
+    def __init__(self, result=None, ok=True):
+        self._result = result
+        self._ok = ok
+
+    def raise_for_status(self):
+        if not self._ok:
+            raise RuntimeError("http error")
+
+    def json(self):
+        return {"result": self._result}
+
+
+class _FakeRpcClient:
+    """Answers eth_blockNumber for a fixed set of URLs, fails everyone else."""
+
+    def __init__(self, live_urls: dict[str, str]):
+        self._live = live_urls
+        self.posted: list[str] = []
+
+    async def post(self, url, json, timeout):  # noqa: A002 - matches httpx's signature
+        self.posted.append(url)
+        if url not in self._live:
+            raise RuntimeError(f"unreachable: {url}")
+        return _FakeRpcResponse(result=self._live[url])
+
+
+@pytest.mark.asyncio
+async def test_rpc_returns_the_result_field():
+    client = _FakeRpcClient({"https://good": "0x2a"})
+    result = await _rpc(client, "https://good", "eth_blockNumber", [])
+    assert result == "0x2a"
+
+
+@pytest.mark.asyncio
+async def test_rpc_raises_on_http_error():
+    class _FailingClient:
+        async def post(self, url, json, timeout):
+            return _FakeRpcResponse(ok=False)
+
+    with pytest.raises(RuntimeError):
+        await _rpc(_FailingClient(), "https://x", "eth_blockNumber", [])
+
+
+@pytest.mark.asyncio
+async def test_pick_public_rpc_skips_dead_endpoints():
+    """Every endpoint but the last is unreachable — must still find it."""
+    last = PUBLIC_HTTP_RPCS[-1]
+    client = _FakeRpcClient({last: "0x1"})
+    picked = await _pick_public_rpc(client)
+    assert picked == last
+    # Tried the dead ones before succeeding, in declared order.
+    assert client.posted[: len(PUBLIC_HTTP_RPCS) - 1] == list(PUBLIC_HTTP_RPCS[:-1])
+
+
+@pytest.mark.asyncio
+async def test_pick_public_rpc_returns_none_when_all_unreachable():
+    client = _FakeRpcClient({})
+    assert await _pick_public_rpc(client) is None
+
+
+def test_http_poll_fills_returns_an_async_generator():
+    """Construction alone must not perform I/O (lazy, like the other transports)."""
+    gen = http_poll_fills("0xabc")
+    assert gen is not None
+    gen.aclose()

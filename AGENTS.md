@@ -131,6 +131,6 @@ Optional snapshot:
 <!-- BEGIN GENERATED:summary -->
 - **Trees:** `btc_bot/` = live loop + signal math; `btc_5m_exec/` = execution/connectors/dashboard/backtest; top-level `config.py`/`db.py`/`logging_setup.py` = foundation. Both ACTIVE, bidirectionally coupled.
 - **Entry:** `python main.py` → FastAPI `btc_5m_exec/ops/dashboard/app.py`; loop starts on operator ▶ Start → `btc_bot/controller.py:request_start`.
-- **Tests:** 828.
+- **Tests:** 822.
 - **Built-but-dead (do not edit expecting runtime effect):** `btc_5m_exec/backtest/conditional.py`, `btc_5m_exec/backtest/harness.py`, `btc_5m_exec/connectors/base.py`, `btc_5m_exec/connectors/binance.py`, `btc_5m_exec/connectors/chainlink.py`, `btc_5m_exec/connectors/polymarket.py`, `btc_5m_exec/ops/controller.py`, `btc_5m_exec/ops/dashboard/panels/_shared.py`, `btc_5m_exec/storage/replay.py`, `btc_5m_exec/strategy/signal.py`, `btc_bot/chronos_signal.py`.
 <!-- END GENERATED:summary -->

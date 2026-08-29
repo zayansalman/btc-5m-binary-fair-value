@@ -1,3 +1,84 @@
+# Update — fast feed wired into copytrade_shadow, gen_docs count_tests bug fixed (2026-08-29)
+
+Continuing the concluded priority order from `tasks/2026-08-17-strategy-discussion.md`
+tick 2 (fix-the-gate > get-pairarb-data > re-test-copytrade-cleanly >
+merge-and-shelve-#180). Built item 1's shadow-safe half and unblocked item 3.
+
+## Built: a key-free fast feed, wired into `copytrade_shadow.py` only
+
+Left `copytrade_live.py` untouched — its trade-detection loop is live-money-
+adjacent and any change there needs operator review, not a loop tick. Scoped
+this to the shadow tool, which has no money at stake.
+
+- **`btc_bot/pairarb/feed.py`**: added `http_poll_fills()` — polls
+  `eth_getLogs` against a public Polygon RPC (`PUBLIC_HTTP_RPCS`, no API key)
+  every ~2s. Same decoded `OrderFilled` event as the WSS transport, at
+  poll-interval-plus-block-time latency instead of push — still an order of
+  magnitude closer to block time than the ~20s-stale data-api. This does NOT
+  change `open_feed()`'s existing WSS/api-fallback contract or its pinned
+  refusal tests — it's a separate, explicitly-opted-into function, so a
+  caller must choose it deliberately.
+- **`btc_bot/pairarb/market_index.py`** (new): `TokenIndex` — the on-chain
+  feed only carries a token_id, not a slug/outcome/conditionId. Resolves
+  outcome tokens to market metadata by fetching each tracked asset's current
+  + previous 5m window from Gamma (clock-derived slug, the #181 scheme). 12
+  tests.
+- **`btc_bot/pairarb/mirror.py`**: added `trade_dict_from_fast_fill()`, the
+  adapter seam between a fast-feed fill + a `TokenIndex` resolution and
+  `price_the_copy()`'s existing dict-shaped input. 2 tests.
+- **`tools/copytrade_shadow.py`**: new `--feed {api,rpc}` flag (default
+  `api`, unchanged behavior). `run_rpc()` sources fills from
+  `http_poll_fills()` instead of polling `data-api/activity`, reuses the same
+  ledger/settlement code via an extracted `_settle_due()` helper.
+  **Network-smoke-tested against the real target before trusting it**:
+  `--feed rpc --once` picked up 3 real fills in 30s, correctly resolved to
+  `btc-updown-5m-1787982300`/Up, priced against the live book, written to the
+  ledger. No orders placed (shadow only, unchanged).
+
+## Started: a clean copytrade shadow run (fixes BOTH open bugs at once)
+
+`data/copytrade_rpc.db`, PID 80736, `--feed rpc --assets btc,eth,sol,xrp,doge,bnb`
+— fast feed AND proportional sizing (no `--max-shares 5 --min-shares 5`
+override). This is the first run that is actually comparable to the 8-fill
+"92% captured" sample. **Did not touch PIDs 9268/13259** — no kill required,
+this runs alongside them to a separate DB. Let it accumulate before reading it.
+
+## Fixed in passing: `tools/gen_docs.py`'s `count_tests()` silently returned 0
+
+Found while re-running `gen_docs.py` per project convention before committing.
+`count_tests()` returned 0 whenever ANY test module failed to *collect* —
+which is always true right now (3 modules fail on missing optional local
+deps: polars/py_clob_client_v2/h2, a pre-existing environment gap, not a
+regression). It was about to commit `AGENTS.md`/`docs/CODE_MAP.md` and
+`docs/FILE_MAP.md` with "**Tests:** 0.", replacing the stale-but-plausible
+"828." with an actively false number. Root cause: `subprocess.run(...,
+"--collect-only", ...)` without `--continue-on-collection-errors`, plus a
+blanket `if out.returncode != 0: return 0` that discarded the real count
+whenever unrelated modules errored. Fixed: added the flag, removed the
+returncode gate, kept the trailing-summary-line parser as the actual source
+of truth (already safely returns 0 for a genuinely empty/malformed run).
+Verified: `test_gen_docs.py::test_test_count_is_positive_int` now passes;
+`AGENTS.md` correctly reads "**Tests:** 822." (down from the stale 828 because
+the 3-module collection gap predates this session — not something this fix
+caused). `tests/unit/test_live_wiring.py::test_kill_switch_skips_new_entries_in_tick`
+remains a pre-existing failure (missing `h2`), confirmed via `git stash`
+against baseline before touching anything — unrelated to this session's work.
+
+## Still open, unchanged from tick 2's priority list
+
+- [ ] Wire the same fast feed into `copytrade_live.py`'s actual `run()` loop
+      (or make `assert_copy_live_allowed()` stop implying it already does) —
+      deliberately deferred this tick; live-money code path, needs operator
+      review before an agent touches it.
+- [ ] Let `pairarb_shadow.py` (PID 78172) and the new `copytrade_rpc.db` run
+      (PID 80736) accumulate before reading either.
+- [ ] Restart PIDs 9268/13259 (the original mis-sized shadow configs) — still
+      blocked on operator go-ahead to kill them; superseded in practice by the
+      new PID 80736 run, so this is now optional cleanup, not a blocker.
+- [ ] #180 merge-and-shelve — unchanged, not touched this tick.
+
+---
+
 # Update — copy-tradeability decomposition + two new findings (2026-08-17, later)
 
 Operator asked to decompose the −$174.47/−$228.67 aggregate loss (see section 2

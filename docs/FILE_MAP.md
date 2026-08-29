@@ -62,9 +62,10 @@ _Status: `WIRED` = has non-test importers; `DEAD?` = no importers found (investi
 | `btc_bot/controller.py` | WIRED | 2 | Start/stop controller for the BTC 5-minute trader (paper default, live opt-in). |
 | `btc_bot/history.py` | WIRED | 3 | Load the user's exported Polymarket history for BTC sizing context. |
 | `btc_bot/pairarb/__init__.py` | pkg | 1 | Two-sided maker quoting on 5-minute Up/Down markets — shadow only (#182). |
-| `btc_bot/pairarb/feed.py` | WIRED | 1 | Fill feed for the copier — one interface, two transports (#182). |
+| `btc_bot/pairarb/feed.py` | WIRED | 2 | Fill feed for the copier — one interface, two transports (#182). |
 | `btc_bot/pairarb/fills.py` | WIRED | 1 | Back-of-queue maker fill simulation and window settlement (#182). |
 | `btc_bot/pairarb/ledger.py` | WIRED | 1 | Persistence for the two-sided pair shadow tester (#182). |
+| `btc_bot/pairarb/market_index.py` | WIRED | 1 | Outcome-token -> market metadata resolver for the 5m Up/Down family (#182). |
 | `btc_bot/pairarb/mirror.py` | WIRED | 2 | Copy-trade mirror — what following a target wallet would actually cost (#182). |
 | `btc_bot/pairarb/onchain.py` | WIRED | 2 | On-chain fill detection via Polygon ``OrderFilled`` logs (#182). |
 | `btc_bot/pairarb/quoter.py` | WIRED | 1 | Two-sided quote placement for the 5m Up/Down pair strategy (#182). |

@@ -181,14 +181,21 @@ def annotate_importers(root: Path, mods, test_dirs=("tests",)) -> None:
 def count_tests(root: Path) -> int:
     try:
         out = subprocess.run(
-            [sys.executable, "-m", "pytest", "tests/", "--collect-only", "-q"],
+            [sys.executable, "-m", "pytest", "tests/", "--collect-only", "-q",
+             "--continue-on-collection-errors"],
             cwd=root, capture_output=True, text=True, timeout=120,
         )
     except subprocess.TimeoutExpired:
         return 0  # fail soft — a hung collection must not break doc generation
-    if out.returncode != 0:
-        return 0
+    # Exit code is nonzero whenever ANY module fails to collect (e.g. missing
+    # optional local deps like polars/py_clob_client_v2/h2), even though
+    # --continue-on-collection-errors still collects and reports everything
+    # else. Discarding the whole count on that made this silently report 0
+    # real tests instead of ~800 — do not gate on returncode here; the
+    # trailing-line parser below already returns 0 for a genuinely empty or
+    # malformed run.
     # pytest prints a trailing summary line like "488 tests collected in 1.2s"
+    # (or "822 tests collected, 3 errors in 0.5s" with errors present).
     for line in reversed(out.stdout.splitlines()):
         line = line.strip()
         if "test" in line and line.split() and line.split()[0].isdigit():
