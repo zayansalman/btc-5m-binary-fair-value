@@ -96,3 +96,87 @@ strategic one.
       annual ceiling here, given $7 median clips and a 5-share venue floor?
 - [ ] Firm up the #180 merge-and-shelve call — check for merge conflicts against
       current `develop` before recommending it as "cheap."
+
+---
+
+## Tick 2 (2026-08-17, later) — CONCLUDED
+
+Between tick 1 and this tick, a parallel session (the operator, working directly)
+did real verification work and landed it in `tasks/todo.md` (now committed as
+`e4bfbdb` — it was sitting uncommitted when this tick started; preserved it rather
+than risk losing it again). That work supersedes and sharpens tick 1's reads in
+three ways, checked directly against the code and running processes this tick:
+
+**Correction to tick 1: pairarb does not need the recorder.** I assumed (from the
+original plan doc) that `pairarb_shadow.py` reads `rec_books`/`rec_trades` written
+by a separate `venue_recorder.py` process, and recommended starting the recorder.
+**Wrong** — checked the shipped code (`tools/pairarb_shadow.py`'s own docstring +
+its CLOB/Data-API calls): it polls the venue directly, self-contained, no recorder
+dependency. The as-shipped architecture diverged from the original plan doc and
+tick 1 was reading the stale version. The operator has already started it (PID
+78172, all 6 assets) — correctly, just not for the reason I gave. It has 31
+`pair_windows` / 0 `pair_execs` so far (just started; too early to read).
+
+**Sharper than tick 1: the copytrade loss decomposes to two independent,
+compounding invalidations, not one.** Tick 1 found the lag/staleness confound
+(real, confirmed: 100% of shadow data is pre-onchain-fix). The operator's pass
+found a **second, separate** one: both shadow configs are hard-pinned to a
+constant 5-share size (`--max-shares 5 --min-shares 5`), while the 8-fill "92%
+captured" sample that justified building the live executor used proportional
+sizing. **The two numbers were never comparable in the first place** — the sign
+flip could be substantially a methodology artifact, independent of whatever the
+lag confound contributes. Two bugs, not one, both pointing the same direction:
+no verdict on copytrade is currently possible, in either direction.
+
+**More serious than tick 1 anticipated: the feed fix from `bf9a68a`/`1fc0b85`
+never actually got wired in.** `copytrade_live.py` imports `open_feed`/
+`FeedUnavailable` but never calls them; `assert_copy_live_allowed()`'s
+`POLYGON_RPC_WSS` check is string-presence only, and the real `run()` trade-
+detection loop is hardcoded to the same ~20s-stale Data API poll regardless. This
+is not a shadow-data-quality issue — it's a **live-money safety gate that doesn't
+gate what its own docstring says it gates**. If the operator sets
+`POLYGON_RPC_WSS` (satisfying the boot check) and arms every other gate,
+`--live` would still trade on the stale feed. This needs fixing (or its claim
+downgrading) independent of any strategy decision — it's a correctness bug in
+the refusal logic itself, not a shadow-test finding.
+
+### Concluded strategy
+
+**#180 (Sigma-Gap): merge-and-shelve, don't actively pursue.** Unchanged from
+tick 1 — the fix is already written and independently re-verified twice now
+(this review, and the prior session that wrote it). Land `619b35b` + `6ef702e`
+into `develop` (check for conflicts first) to close #180 honestly and stop the
+branch rotting. Do not resume recorder/pre-registration build work on it — its
+own economics (2027-Q2 earliest verdict, ~$1–3k/yr central prize) don't compete
+with #182 for attention.
+
+**#182 copytrade: no verdict yet, and don't try to force one before three fixes
+land, in this order:**
+1. **Fix the fake gate first, regardless of what else happens.** Either wire
+   `open_feed()` into `copytrade_live.py`'s actual `run()` loop (needs the
+   token_id→market resolver noted in the operator's finding) or change
+   `assert_copy_live_allowed()`'s check and docstring to stop claiming a
+   protection it doesn't provide. This is a correctness/safety fix, not a
+   strategy question — ship it before anyone even considers arming live,
+   independent of whether copytrade turns out to have an edge at all.
+2. **Re-run the shadow test with proportional sizing** (drop
+   `--max-shares 5 --min-shares 5`) so the next read is comparable to the
+   original 8-fill sample. This needs the operator to restart PIDs 9268/13259
+   (blocked on explicit go-ahead, per the auto-mode classifier and this
+   session's own boundary — an agent doesn't kill running processes without
+   being asked to, in a live-trading-adjacent repo).
+3. **Only after (1) and (2)**, let a fresh sample accumulate on the *actual*
+   fast-feed, proportionally-sized code path, and re-read the capture rate
+   before any live-arming decision. Until then `COPY_LIVE_CONFIRM` stays off.
+
+**#182 pairarb: the strategy the evidence favors, now correctly running, too
+early to read.** No action needed beyond letting PID 78172 accumulate
+`pair_execs` — check back once it has produced some (the back-of-queue fill
+model is conservative by design, so this may take longer than copytrade did to
+produce a first read).
+
+**Overall priority ordering, closing this loop:** fix-the-gate > get-pairarb-
+data > re-test-copytrade-cleanly > merge-and-shelve-#180. Nothing left in this
+loop is resolvable by more discussion — every remaining item is either blocked
+on operator action (process restarts, the gate fix, the #180 merge) or blocked
+on time (letting pairarb accumulate data). Stopping the loop here.
