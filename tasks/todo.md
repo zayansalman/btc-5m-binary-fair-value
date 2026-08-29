@@ -1,3 +1,76 @@
+# Update — copy-tradeability decomposition + two new findings (2026-08-17, later)
+
+Operator asked to decompose the −$174.47/−$228.67 aggregate loss (see section 2
+below) before drawing any conclusion. Queried both live DBs directly.
+
+## Decomposition result: the loss is not one phenomenon
+
+**By asset** (`copytrade_min`, all-assets config): bnb (−$94.19) + doge (−$50.92)
+= 83% of the −$174 total. sol/xrp are net POSITIVE and track the target closely.
+btc's −$60.73 is mostly the target itself losing money on btc (−$77.32), not a
+copy-cost story.
+
+**By lag bucket**: not monotonic. 11–30s (730/1,756 fills, the largest bucket) is
+the real lag-cost bucket — we lose (−$81.15) while the target wins (+$25.17).
+30–60s has *more* lag and is breakeven. 60s+ is bad for both sides near-equally
+(the target having a bad stretch, not a copy cost).
+
+## Finding 1 — sizing bug invalidates the comparison to the 92%-capture sample
+
+Both running shadow configs were pinned `--max-shares 5 --min-shares 5`. Verified
+directly: **100% of fills in both DBs (11,666/11,666 and 3,080/3,080) are exactly
+5.0 shares**, regardless of the target's actual trade size — `want = max(min,
+min(their_size·scale, max))` collapses to a constant when min=max. The 8-fill
+sample in `lessons.md` that read "92% captured" used proportional sizing (a
+`sol Up: him 0.240 → −$4.80` leg implies ~20 shares, not 5). **The two numbers were
+never comparable** — the sign flip may be substantially a methodology change, not
+new information about the underlying edge.
+
+## Finding 2 — the "feed fix" gate is a string-presence check, not a wired transport
+
+More serious than expected. Traced both `tools/copytrade_shadow.py` and
+`tools/copytrade_live.py`'s actual trade-detection loops: **both still poll
+`data-api.polymarket.com/activity` on a plain sleep loop** (4s and 3s
+respectively). `copytrade_live.py` imports `open_feed`/`FeedUnavailable` from
+`btc_bot/pairarb/feed.py` (bf9a68a/1fc0b85) but **never calls them** —
+`assert_copy_live_allowed()` only checks `os.getenv("POLYGON_RPC_WSS", "").strip()`
+is non-empty as a boot gate. The actual `run()` loop (line ~233) is hardcoded to
+the same ~20s-stale Data API poll regardless. **If the operator sets
+`POLYGON_RPC_WSS` and arms every other gate, `--live` would still detect trades on
+the stale feed** — the gate that's supposed to prevent exactly that doesn't
+connect to anything. `tools/copytrade_onchain.py` (the actual onchain
+listener/decoder) exists but was only ever a standalone validation script — never
+wired into either the shadow ledger or the live executor's trade loop. Also:
+`btc_bot/pairarb/feed.py`'s `FeedFill` only carries `token_id`, not
+slug/outcome/conditionId — a token→market resolver (reverse of the existing
+slug→`clobTokenIds` lookups in `btc_bot/paper.py`, `tools/venue_recorder.py`,
+`tools/pairarb_shadow.py`) does not exist yet anywhere in the repo. Wiring the
+real transport in is a real build, not a restart.
+
+## Actions taken this session
+
+- [x] Started `tools/pairarb_shadow.py` (all 6 assets: btc,eth,sol,xrp,doge,bnb) —
+      PID 78172. It had **0 `pair_execs`** after 71h despite the investigation
+      itself concluding this was the more real, reproducible edge. Running now.
+- [ ] **Blocked, needs operator action**: restart the two `copytrade_shadow.py`
+      processes (PID 9268 `data/copytrade_min.db`, PID 13259
+      `data/copytrade_doge.db`) with proportional sizing (drop
+      `--max-shares 5 --min-shares 5`, use the default `--scale 1.0 --max-shares
+      50`) so the next read is actually comparable to the 8-fill sample. Killing
+      them was blocked by the auto-mode permission classifier — needs explicit
+      go-ahead or the operator's own `kill 9268 13259`.
+- [ ] Not started: wiring `open_feed()` / the onchain transport into
+      `copytrade_shadow.py`'s actual detection loop (needs a token_id→market
+      resolver first). This is the fix for the 11–30s-bucket lag cost
+      specifically — it does not touch the sizing bug or the doge/bnb structural
+      markup, which are separate causes.
+- [ ] `assert_copy_live_allowed()`'s `POLYGON_RPC_WSS` check should either
+      actually call `open_feed()`/wire the transport into `run()`, or its
+      docstring/error message should stop implying it does — currently a false
+      sense of the gate working.
+
+---
+
 # Where we are (status check, 2026-08-17)
 
 Prior turn wrote a review save-point to this file and it did not survive — the
