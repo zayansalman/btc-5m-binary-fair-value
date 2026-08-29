@@ -1,3 +1,54 @@
+# Branch close-out — pivot off all 5-minute markets (2026-08-29)
+
+Operator decision this session, after re-litigating "is this viable" from scratch
+(prompted by a cloud-GPU/LLM-training question that turned out to be the wrong
+question): **stop all 5-minute-market work.** Closing `feature/182-pairarb-shadow`.
+Next chapter is daily/hourly/longer-horizon Polymarket markets — category not yet
+chosen, zero code or data exists for it in this repo, fresh build.
+
+## Why now, not a new finding — a second confirmation of the existing one
+
+`docs/archive/PIVOT_2026-07.md` (2026-07-10) already reached this verdict for
+BTC-direction prediction specifically: 0/75 edge slices survived FDR, real money
+−$19.35 net over 351 live fills, fees (0.07 taker, crypto's rate is the platform's
+highest) consumed the entire gross edge, and the actors who profit on this venue
+are subsidized makers/latency snipers, not forecasters. Its own recommended next
+step (option C) was to move toward slower, lower-fee categories where the edge
+dimension is forecasting calibration, not latency — that recommendation sat
+unactioned while `feature/182-pairarb-shadow` pursued a different mechanism
+(copytrading a profitable account's flow into thin alt-coin books) instead of
+prediction.
+
+This session re-ran the copytrade shadow numbers as a second, independent test of
+the same underlying constraint (5-minute crypto markets on this venue): still net
+negative, and by more than the last recorded snapshot —
+`data/copytrade_doge.db`: **−$307.68 over 1,980 settled fills**;
+`data/copytrade_min.db`: **−$174.47 over 1,756 settled fills** (2026-08-17's
+snapshot in e4bfbdb had these at roughly −$228/−$174 — the doge book kept
+bleeding as more shadow trades settled, the min book held flat). Two different
+mechanisms (direction prediction, copytrading), same market structure, same
+result. `data/pairarb_shadow.db` never accumulated fills (`pair_execs: 0`,
+`pair_windows: 31`) — no verdict possible there, moot now regardless.
+
+## What carries forward to the next chapter
+
+- The discipline, not the code: shadow/paper before capital, pre-registered
+  deploy bar, OOS validation before any live weight, fee-true accounting from
+  fill one. All of that stays; it's what correctly killed this chapter before it
+  lost more than $19.35+shadow-losses total.
+- Nothing model-specific carries forward. No Chronos integration, no calibration
+  curve, no copytrade/pairarb code is known to work on a different market
+  category — the failure mode here (fees exceed a thin real edge in a
+  latency-dominated venue) is specific to 5-minute crypto, not necessarily
+  present in slower categories, but that is an untested hypothesis, not a
+  finding, until a category is chosen and shadow-tested.
+- Immediate next decision, blocking any build: which longer-horizon category
+  (crypto price-by-date, macro, politics, sports, etc.) — each has a different
+  fee tier and a different information source, which determines the entire data
+  pipeline and model shape. Not yet chosen.
+
+---
+
 # Update — fast feed wired into copytrade_shadow, gen_docs count_tests bug fixed (2026-08-29)
 
 Continuing the concluded priority order from `tasks/2026-08-17-strategy-discussion.md`
