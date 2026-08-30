@@ -154,3 +154,114 @@ progress) — logged here so a future tick has them even if this session ends
      dataset for BTC backtesting). Extend/generalize this for the alt
      asset set when the backtest-the-new-strategy tick comes up — bounded,
      clear, lower priority than getting the live shadow loop running first.
+
+---
+
+## Tick 2 (2026-08-30) — finished the rebrand, shipped the daily strategy
+
+Continued this same session (not a fresh `/loop` tick — the operator was
+present and reviewed the plan before either phase). Two commits.
+
+### Phase A — finished the deferred `BTC_`/`btc_` rename, with a real migration
+
+Tick 1 left one rebrand item unresolved: whether to rename the remaining
+`BTC_`-prefixed env vars/config constants and the 4 `btc_*` DB table names.
+Flagged the real risk (DB tables hold this environment's actual accumulated
+config/history; `BTC_LIVE_CONFIRM` is the literal live-trading safety gate)
+and asked the operator — **chose the full rename, DB tables included**, over
+a lower-risk skip/env-vars-only option. Executed with a real migration, not
+a blind sweep: `db.init_db()` now idempotently `ALTER TABLE`-renames the 4
+tables and `UPDATE`-renames the `btc_risk.`/`btc_runtime.`/`btc_model.`/
+`btc_recon.` config-key prefixes, verified against this environment's actual
+`data/btc_5m_binary_fair_value.db` (all 9 `btc_risk.*` rows migrated to
+`risk.*` with values intact, 908→934 tests green including the new ones).
+Deleted (not renamed) the `BTC_LIVE_*` deprecated-alias env vars and their
+`_trade_knob` plumbing — no `.env` in this repo, nothing external read them.
+Left unchanged on purpose: the 3 `btc_live.*` keys in `gate.py`'s pre-#64
+legacy-migration path (they must keep pointing at whatever literal key an
+ancient DB actually wrote), the default `DB_PATH` filename, and every
+asset-scoped identifier that legitimately means "the BTC asset specifically"
+(`btc_rows`, `btc_pnl`, `btc_slug`, `tools/backtest_btc_strategy.py`, etc.).
+Also fixed two logic bugs the rename surfaced in passing: two
+`notification_feed` `event_type LIKE 'btc_%'` filters that would have
+silently stopped matching anything once the shared prefix was gone, and
+`gen_docs.py`'s `collect_env_knobs()` heuristic, which relied on the same
+prefix to exclude non-knob env vars like `PATH`.
+
+### Phase B — daily altcoin Up/Down shadow scanner, shipped end-to-end
+
+New `polymarket_bot/daily/` package (`types.py`, `market.py`, `signal.py`,
+`ledger.py`, `scanner.py`) plus a new dashboard panel
+(`panels/daily_altcoin.py`) and a new `daily_shadow_positions` table.
+Auto-runs as an in-process asyncio task from the dashboard's FastAPI
+lifespan (operator's choice — no separate Start/Stop control, since it's
+paper-only with zero capital risk); scans every ~60s and opens one $10
+paper position on the single strongest qualifying signal across the
+tracked assets (operator's choice over one-position-per-qualifying-asset).
+
+**Reuse over rebuild**: `strategy.fair_up_probability`'s log-normal CDF math
+and `signal_from_executable_edges` (asset/timeframe-agnostic already),
+`shadow/fees.py`'s fee math verbatim, `shadow/ledger.py`'s
+`INSERT OR IGNORE` idempotency pattern, `pairarb/market_index.parse_market`
+for token extraction, `db.py`'s additive-table + `_migrate_columns`
+convention, and the existing `panels/_data.py` → `render()` → `ems.py`
+wiring convention. New multi-asset Binance spot/kline fetchers were written
+from scratch (small, ~60 lines) rather than resurrecting the dead
+`connectors/binance.py` or importing `tools/venue_recorder.py`'s heavier
+websocket-based `SpotFeed` (unnecessary at a 60s scan cadence). Kraken
+(flagged in tick 1) stayed deferred — no need surfaced building this.
+
+**Three live-verified corrections to the tick-1 plan**, each found by
+actually querying the venue rather than assuming:
+1. **Market discovery**: tried "list everything, classify it"
+   (`tools.venue_recorder.discover()`) first since it doesn't need knowing
+   each asset's exact slug spelling — a live run found it unreliable
+   (crowded out by unrelated categories platform-wide, silently missed 4/5
+   tracked assets). Switched to constructing today's slug directly per
+   asset (`{name}-up-or-down-on-{month}-{day}-{year}`) and querying by exact
+   slug, with the `discover()` sweep kept only as a per-asset fallback.
+2. **Reference price timing**: the market's `description` field (only
+   found by actually reading it) states the real comparison window is the
+   24h ending at `endDate`, NOT `[startDate, endDate]` — `startDate` is when
+   trading *opens*, up to ~2 days before the actual comparison period
+   starts. Getting this wrong would have silently fed a stale reference
+   price into every fair-value calculation.
+3. **Tie rule**: same `description` field states this family resolves an
+   *exact* tie 50-50, unlike the BTC family's tie-credits-Up. Reusing
+   `strategy.fair_up_probability` unmodified would have overstated Up's
+   fair value. `daily/signal.py`'s `fair_up_probability` is the plain
+   log-normal CDF with no tie-mass term at all (worked out that a 50-50 tie
+   needs no discretization correction, given `fair_down` is always derived
+   as `1 - fair_up` rather than scored independently).
+
+**Settlement is self-contained**, not dependent on Polymarket's own
+resolution status: a live check found an already-resolved market in this
+family stops being returned by the same `?slug=` lookup used to discover it
+while open, so re-querying Gamma for the outcome would silently strand every
+settlement. Each `daily_shadow_positions` row stamps its own
+`reference_price`/`resolves_at`/`binance_symbol` at record time; settlement
+recomputes the outcome from Binance directly once `resolves_at` passes.
+
+**Verified end-to-end against the live venue** (not mocked): discovered all
+5 assets' markets, scored real signals (ETH qualified first run, edge
++14.3%, entered Down @ 0.25), confirmed idempotency (re-scanning doesn't
+duplicate), confirmed the dashboard panel renders correctly with the open
+position and mechanism blurb via a live-booted `main.py` + browser check.
+Settlement itself could not be verified live this session — the recorded
+ETH window resolves at 2026-08-30T16:00:00Z, hours after this tick — so the
+next tick (or the operator, whenever they next check) should confirm a
+settled row appears with a sane `realized_pnl_usd` sign matching the
+recorded side vs. what Binance ETH/USDT actually did.
+
+**26 new tests** (`test_daily_ledger.py`, `test_daily_signal.py`,
+`test_daily_market.py`) covering idempotency, fee-true settlement including
+the 50-50 tie path, the sigma/drift time-scaling conversion, and the
+reference-price-timing regression specifically. 934/934 passing.
+
+### Next tick, if picked up
+
+- Confirm the first real settlement lands correctly (see above).
+- Consider whether daily-strategy config knobs (`DAILY_*`) need dashboard
+  controls, or env-only is fine for now (operator didn't ask for one).
+- Kraken cross-check, Deribit, OpenRouter, HuggingFace backtest extension:
+  all still flagged, still not started, still not blocking.

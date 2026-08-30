@@ -140,6 +140,45 @@ CREATE TABLE IF NOT EXISTS model_shadow_positions (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_model_shadow_positions_window_model
   ON model_shadow_positions(window_slug, model_id);
+
+-- Issue #185: daily (24h-window) altcoin Up/Down shadow scanner. A separate
+-- table from model_shadow_positions on purpose: it tracks ONE asset-scan
+-- decision per day-window (not several competing models per window), and a
+-- window_slug already uniquely identifies one (asset, day) pair for this
+-- market family, so the idempotency key is window_slug alone.
+CREATE TABLE IF NOT EXISTS daily_shadow_positions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_at TEXT NOT NULL,
+  window_slug TEXT NOT NULL,
+  asset TEXT NOT NULL,
+  side TEXT NOT NULL,
+  entry_price REAL NOT NULL,
+  notional_usd REAL NOT NULL,
+  shares REAL NOT NULL,
+  fair_prob REAL,
+  edge REAL,
+  confidence REAL,
+  reason TEXT,
+  state TEXT NOT NULL,
+  outcome TEXT,
+  settlement_price REAL,
+  resolved_at TEXT,
+  realized_pnl_usd REAL,
+  sigma_per_second REAL,
+  drift_per_second REAL,
+  -- Settlement is self-contained (recomputed from Binance, not from
+  -- Polymarket's own resolution status — a live check found a resolved
+  -- market in this family stops being returned by the same discovery query
+  -- used to find it while open). Stamped at record time so a later tick
+  -- never needs to re-resolve the market to settle it.
+  reference_price REAL,
+  resolves_at TEXT,
+  binance_symbol TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_daily_shadow_positions_window
+  ON daily_shadow_positions(window_slug);
+CREATE INDEX IF NOT EXISTS idx_daily_shadow_positions_asset
+  ON daily_shadow_positions(asset);
 """
 
 LIVE_ORDERS_COLUMN_MIGRATIONS = {

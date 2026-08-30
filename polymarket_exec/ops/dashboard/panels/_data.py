@@ -175,6 +175,24 @@ async def today_submitted_summary() -> tuple[int, float]:
     return int(row["n"] or 0), float(row["total"] or 0.0)
 
 
+async def daily_positions(state: str | None = None) -> list[dict[str, Any]]:
+    """Daily altcoin scanner rows (issue #185), newest first.
+
+    Same row shape as ``paper_positions`` for the fields ``performance()``
+    needs (``realized_pnl_usd``, ``notional_usd``, ``edge``, ``entry_price``)
+    so that pure aggregator is directly reusable for this table too.
+    """
+    query = "SELECT * FROM daily_shadow_positions"
+    params: list[Any] = []
+    if state is not None:
+        query += " WHERE state = ?"
+        params.append(state)
+    query += " ORDER BY id DESC"
+    async with connect() as db:
+        async with db.execute(query, params) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
 def performance(closed: list[dict[str, Any]]) -> dict[str, Any]:
     n = len(closed)
     if n == 0:

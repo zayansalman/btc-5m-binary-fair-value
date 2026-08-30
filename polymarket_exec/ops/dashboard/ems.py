@@ -16,6 +16,7 @@ from polymarket_exec.ops.dashboard.panels import _data as data
 from polymarket_exec.ops.dashboard.panels import (
     blotter,
     controls,
+    daily_altcoin,
     decision_engine,
     guardrails,
     market,
@@ -88,6 +89,10 @@ async def ems_html() -> str:
     perf_paper = data.performance(closed_paper)
     recon = await data.reconciliation()
     is_live = mode == "live"
+
+    daily_open = await data.daily_positions(state="open")
+    daily_closed = await data.daily_positions(state="settled")
+    daily_perf = data.performance(daily_closed)
 
     # ---- panels ----
     from polymarket_exec.execution.gate import (
@@ -194,6 +199,7 @@ async def ems_html() -> str:
     )
     tca_html = tca.render(perf=perf, spread=spread)
     blotter_html = blotter.render(closed=closed, open_pos=open_pos, tick=tick)
+    daily_altcoin_html = daily_altcoin.render(open_positions=daily_open, perf=daily_perf)
 
     return (
         "<div class='ems'>"
@@ -207,5 +213,6 @@ async def ems_html() -> str:
         + performance_html
         + tca_html
         + blotter_html
+        + daily_altcoin_html
         + "</div></div>"
     )

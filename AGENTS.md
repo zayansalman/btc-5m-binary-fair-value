@@ -24,12 +24,25 @@
 ## Active Scope
 
 This repository is a local Polymarket crypto binary-markets research and
-paper-trading lab. Its currently-wired default paper-trading path is inherited
-BTC 5-minute Up/Down; that line's active development closed 2026-08-29 (#182)
-and no replacement market/timeframe has been chosen or built yet — see
-`tasks/todo.md`.
+paper-trading lab. Two strategies are wired and run simultaneously:
 
-The primary active product behavior is:
+1. **BTC 5-minute Up/Down** (`polymarket_bot/paper.py:run_paper_loop`) — the
+   original line; its active *development* closed 2026-08-29 (#182), but the
+   loop itself is still the default paper-trading path, started/stopped by
+   the dashboard's ▶ Start / Stop controls (see below).
+2. **Daily altcoin Up/Down scanner** (`polymarket_bot/daily/scanner.py`,
+   issue #185) — scans Polymarket's daily (24h-window) Up/Down family across
+   a tracked set of thinner altcoin markets (doge/sol/xrp/bnb/eth by
+   default, `config.DAILY_ASSETS`) and shadow-trades a flat $10 paper
+   position on whichever asset shows the strongest signal. **Paper-only, no
+   live gate exists for it at all** — unlike the BTC loop, it has no
+   Start/Stop control: it auto-runs as soon as the dashboard process boots
+   (`polymarket_exec/ops/dashboard/app.py`'s lifespan) and keeps running
+   for the process's lifetime. Its own dashboard panel
+   (`panels/daily_altcoin.py`) shows current position(s), settled PnL, and a
+   plain-language explanation of the mechanism.
+
+The primary active product behavior for the BTC loop specifically is:
 
 1. Operator opens the local dashboard.
 2. Operator presses **▶ Start**.
@@ -40,7 +53,8 @@ The primary active product behavior is:
 Live trading is also built and multi-gated (see the live rule below); it stays
 off unless the operator explicitly arms every gate **and** this file names an
 authorized live-trading market (none is currently authorized — see Absolute
-Rules).
+Rules). This includes the daily altcoin scanner: it has no live path built at
+all, so there is nothing to arm for it.
 
 ## Scope Fence (in scope / out of scope)
 
@@ -55,6 +69,9 @@ In scope:
   venue's 5-minute Up/Down crypto family (btc/eth/sol/xrp/doge/bnb) —
   `polymarket_bot/pairarb/`, shadow only, placed no orders (#182, widened
   2026-08-14, closed 2026-08-29).
+- Daily (24h-window) Up/Down markets across doge/sol/xrp/bnb/eth —
+  `polymarket_bot/daily/`, shadow only, no live path exists, always-on
+  (#185, started 2026-08-30).
 - Use a settlement-aligned BTC reference feed for signal and paper fills.
 - Show the Chainlink Data Streams reference in the dashboard.
 - Compute a fair Up probability and edge versus market price.
@@ -142,6 +159,6 @@ Optional snapshot:
 <!-- BEGIN GENERATED:summary -->
 - **Trees:** `polymarket_bot/` = live loop + signal math; `polymarket_exec/` = execution/connectors/dashboard/backtest; top-level `config.py`/`db.py`/`logging_setup.py` = foundation. Both ACTIVE, bidirectionally coupled.
 - **Entry:** `python main.py` → FastAPI `polymarket_exec/ops/dashboard/app.py`; loop starts on operator ▶ Start → `polymarket_bot/controller.py:request_start`.
-- **Tests:** 908.
+- **Tests:** 934.
 - **Built-but-dead (do not edit expecting runtime effect):** `polymarket_bot/chronos_signal.py`, `polymarket_exec/backtest/conditional.py`, `polymarket_exec/backtest/harness.py`, `polymarket_exec/connectors/base.py`, `polymarket_exec/connectors/binance.py`, `polymarket_exec/connectors/chainlink.py`, `polymarket_exec/connectors/polymarket.py`, `polymarket_exec/ops/controller.py`, `polymarket_exec/ops/dashboard/panels/_shared.py`, `polymarket_exec/storage/replay.py`, `polymarket_exec/strategy/signal.py`.
 <!-- END GENERATED:summary -->

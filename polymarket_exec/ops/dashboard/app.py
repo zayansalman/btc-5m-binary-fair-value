@@ -1,7 +1,10 @@
-"""FastAPI dashboard for BTC 5m Binary Pricing Model trading system.
+"""FastAPI dashboard for the local Polymarket crypto trading lab.
 
 Replaces the 150MB+ Gradio dashboard with a lightweight FastAPI + Jinja2
-implementation. All visual design is preserved via extracted CSS.
+implementation. All visual design is preserved via extracted CSS. Also
+starts the daily altcoin scanner (#185) as a background task for its
+lifetime — see ``_lifespan`` — a paper-only strategy independent of the
+BTC 5m loop the rest of this module's endpoints control.
 
 Endpoints:
     GET  /              — Main dashboard page (HTML)
@@ -22,7 +25,7 @@ from html import escape
 from pathlib import Path
 from typing import Any
 
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -105,7 +108,21 @@ async def _lifespan(app: FastAPI):
     # halt-ON now that the bypass applies to real money. Idempotent via sentinel.
     from polymarket_exec.execution.gate import migrate_clear_stale_bypass_v76
     await migrate_clear_stale_bypass_v76()
+
+    # Daily altcoin scanner (#185): auto-runs in-process for the dashboard's
+    # lifetime — paper-only, no live gate, so no Start/Stop control needed
+    # (unlike the BTC loop, which controller.py starts/stops explicitly).
+    from polymarket_bot.daily.scanner import run_forever as _run_daily_scanner
+
+    daily_stop_event = asyncio.Event()
+    daily_task = asyncio.create_task(_run_daily_scanner(daily_stop_event))
+
     yield
+
+    daily_stop_event.set()
+    daily_task.cancel()
+    with suppress(asyncio.CancelledError):
+        await daily_task
 
 
 # ---------------------------------------------------------------------------
@@ -114,7 +131,7 @@ async def _lifespan(app: FastAPI):
 
 dashboard_dir = Path(__file__).parent
 
-app = FastAPI(title="BTC 5m Binary Pricing Model", lifespan=_lifespan)
+app = FastAPI(title="Polymarket Crypto Trading Lab", lifespan=_lifespan)
 
 app.add_middleware(
     CORSMiddleware,

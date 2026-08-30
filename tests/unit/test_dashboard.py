@@ -28,7 +28,7 @@ def client() -> TestClient:
 
 class TestAppCreation:
     def test_app_has_title(self):
-        assert app.title == "BTC 5m Binary Pricing Model"
+        assert app.title == "Polymarket Crypto Trading Lab"
 
     def test_app_has_routes(self):
         paths = {r.path for r in app.routes}
