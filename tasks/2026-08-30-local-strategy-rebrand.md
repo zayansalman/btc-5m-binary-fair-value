@@ -96,3 +96,61 @@ repo-wide text sweep + docs regen + test verification) this tick, per the
 playbook above. Strategy design/build is next tick's work, gated on
 resolving the "does a repeating daily market exist for these assets" open
 question first.
+
+### Market research result (resolves the open question above)
+
+Confirmed via live Gamma API query: Polymarket runs a **daily "Up or Down on
+[date]" market per asset** (btc/eth/sol/xrp/doge/bnb at minimum), separate
+from the 5m/15m/4h family, resolving on a ~24h cadence. Checked
+`solana-up-or-down-on-august-30-2026` directly: outcomes `["Up","Down"]`,
+price `[0.505, 0.495]`, **spread 0.07** (wide — 14% of the 0.50 fair range,
+notably worse than the old 5m books), `orderMinSize` 5 shares, liquidity
+$8.1k, 24h volume ~$401. Confirmed the same shape exists for
+`dogecoin-up-or-down-on-august-30-2026` (doge's daily volume was much
+smaller when queried by keyword relevance, ~$29-66 on the finer-grained
+hourly variants — the full-day version needs a direct slug check per asset,
+not a keyword search, to find reliably). **Verdict: tradeable, real market
+exists, genuinely wider spread than 5m (consistent with the "less
+efficient" thesis) — but this is a market-structure observation, not yet
+evidence of an exploitable edge.** Same discipline as every other chapter
+here: build the shadow-test, don't presume the edge before measuring it.
+
+Separately, Polymarket also runs **monthly price-threshold markets** per
+asset (e.g. `what-price-will-dogecoin-hit-in-august-2026`,
+$105.8k volume — an order of magnitude more liquid than the daily up/down
+market). Not the confirmed mechanic (daily up/down), but worth knowing
+this higher-liquidity alternative shape exists if the daily up/down family
+proves too thin to size $10 into cleanly across enough assets for a real
+sample.
+
+### New requirements added mid-tick (operator, while rebrand was in
+progress) — logged here so a future tick has them even if this session ends
+
+1. **Strategy must scan across markets/assets dynamically**, not run pinned
+   to one fixed asset — allocate toward whichever asset currently shows the
+   strongest signal within the daily up/down family (doge/sol/xrp/bnb/eth),
+   same spirit as the old project's simultaneous multi-asset shadow runs.
+2. **New connectors to build, decided this tick:**
+   - **Binance** — un-deaden the existing (currently DEAD, zero
+     importers) `btc_5m_exec/connectors/binance.py` / its post-rebrand
+     path — wire it as the real OHLC/realized-vol input across the alt
+     asset set. Clearly load-bearing, building it.
+   - **Kraken** — new connector, same shape as Binance (public spot
+     OHLC, no auth), for cross-venue price consistency checking and as a
+     Binance fallback. Building it.
+   - **Deribit** — **flagged, not started.** Deribit only lists options
+     on BTC/ETH/(recently)SOL — not doge/xrp/bnb, the thin alts actually
+     driving this pivot. An options-implied-probability signal from it
+     would only ever cover part of the asset set. Don't build until the
+     operator says how partial coverage should be handled (e.g. SOL-only
+     signal boost, or skip Deribit entirely).
+   - **OpenRouter** — **flagged, not started.** Not a market-data
+     connector — an LLM gateway. Needs a stated target (what signal is it
+     meant to produce — news/sentiment scoring feeding fair-value? Something
+     else?) before building; also the only piece here with a real external
+     per-call API cost the operator hasn't sized. Don't build speculatively.
+   - **HuggingFace** — already partially integrated
+     (`tools/offline_replay.py` pulls historical Polymarket data from an HF
+     dataset for BTC backtesting). Extend/generalize this for the alt
+     asset set when the backtest-the-new-strategy tick comes up — bounded,
+     clear, lower priority than getting the live shadow loop running first.
