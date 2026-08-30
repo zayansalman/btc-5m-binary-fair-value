@@ -48,14 +48,14 @@ from polymarket_bot.strategy import (  # noqa: E402
     sigma_per_second,
 )
 from config import (  # noqa: E402
-    BTC_PAPER_ENTRY_EDGE_MAX,
-    BTC_PAPER_ENTRY_EDGE_MIN,
-    BTC_PAPER_ENTRY_MIN_REMAINING_SECONDS,
-    BTC_PAPER_MAX_TRADE_USD,
-    BTC_PAPER_MIN_CONFIDENCE,
-    BTC_PAPER_MIN_ENTRY_PRICE,
-    BTC_PAPER_MIN_TRADE_USD,
-    BTC_PRINT_GRANULARITY_USD,
+    PAPER_ENTRY_EDGE_MAX,
+    PAPER_ENTRY_EDGE_MIN,
+    PAPER_ENTRY_MIN_REMAINING_SECONDS,
+    PAPER_MAX_TRADE_USD,
+    PAPER_MIN_CONFIDENCE,
+    PAPER_MIN_ENTRY_PRICE,
+    PAPER_MIN_TRADE_USD,
+    PRINT_GRANULARITY_USD,
     DATA_DIR,
 )
 
@@ -181,13 +181,13 @@ class ReplayEntry:
 
 def _params_from_env() -> StrategyParams:
     return StrategyParams(
-        min_trade_usd=BTC_PAPER_MIN_TRADE_USD,
-        max_trade_usd=BTC_PAPER_MAX_TRADE_USD,
-        entry_edge_min=BTC_PAPER_ENTRY_EDGE_MIN,
-        min_confidence=BTC_PAPER_MIN_CONFIDENCE,
-        entry_min_remaining_seconds=BTC_PAPER_ENTRY_MIN_REMAINING_SECONDS,
-        entry_edge_max=BTC_PAPER_ENTRY_EDGE_MAX,
-        min_entry_price=BTC_PAPER_MIN_ENTRY_PRICE,
+        min_trade_usd=PAPER_MIN_TRADE_USD,
+        max_trade_usd=PAPER_MAX_TRADE_USD,
+        entry_edge_min=PAPER_ENTRY_EDGE_MIN,
+        min_confidence=PAPER_MIN_CONFIDENCE,
+        entry_min_remaining_seconds=PAPER_ENTRY_MIN_REMAINING_SECONDS,
+        entry_edge_max=PAPER_ENTRY_EDGE_MAX,
+        min_entry_price=PAPER_MIN_ENTRY_PRICE,
     )
 
 
@@ -197,7 +197,7 @@ def replay_market(
     market_prices: pl.DataFrame,
     params: StrategyParams,
 ) -> ReplayEntry | None:
-    """One-entry-per-window replay (matching ``BTC_EXIT_STYLE='settle'``).
+    """One-entry-per-window replay (matching ``EXIT_STYLE='settle'``).
 
     Walk the in-window mid-price ticks chronologically. For each:
     * spot = latest Chainlink print at-or-before that ts
@@ -251,7 +251,7 @@ def replay_market(
         sigma = sigma_per_second(recent[-30:])
 
         fair_up = fair_up_probability(
-            spot, reference, sigma, remaining, print_granularity=BTC_PRINT_GRANULARITY_USD
+            spot, reference, sigma, remaining, print_granularity=PRINT_GRANULARITY_USD
         )
         up_mid = float(row["up_price"])
         down_mid = float(row["down_price"])

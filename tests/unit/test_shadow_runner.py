@@ -72,7 +72,7 @@ def _snapshot(**overrides: object) -> PaperSnapshot:
 async def _models_for(db, window_slug: str) -> dict[str, dict]:
     async with db.connect() as conn:
         async with conn.execute(
-            "SELECT * FROM btc_model_shadow_positions WHERE window_slug = ?",
+            "SELECT * FROM model_shadow_positions WHERE window_slug = ?",
             (window_slug,),
         ) as cur:
             return {r["model_id"]: dict(r) for r in await cur.fetchall()}

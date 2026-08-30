@@ -73,13 +73,13 @@ _POS = {
 
 def test_settle_style_holds_through_target_and_stop_marks():
     # +20% mark would be TARGET, -20% would be STOP under scalp; settle holds.
-    assert paper.BTC_EXIT_STYLE == "settle"  # repo default
+    assert paper.EXIT_STYLE == "settle"  # repo default
     assert paper._exit_reason(_snapshot(), _POS, exit_price=0.60) is None
     assert paper._exit_reason(_snapshot(), _POS, exit_price=0.40) is None
 
 
 def test_scalp_style_still_scalps(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(paper, "BTC_EXIT_STYLE", "scalp")
+    monkeypatch.setattr(paper, "EXIT_STYLE", "scalp")
     assert paper._exit_reason(_snapshot(), _POS, exit_price=0.60) == "TARGET"
     assert paper._exit_reason(_snapshot(), _POS, exit_price=0.40) == "STOP"
 
@@ -95,22 +95,22 @@ async def test_one_entry_per_window(test_db, monkeypatch: pytest.MonkeyPatch):
     snap = _snapshot()
     await paper._maybe_open_position(snap)
     async with paper.connect() as db:
-        async with db.execute("SELECT COUNT(*) AS n FROM btc_paper_positions") as cur:
+        async with db.execute("SELECT COUNT(*) AS n FROM paper_positions") as cur:
             assert (await cur.fetchone())["n"] == 1
         # Close it; settle style must still refuse a second entry this window.
-        await db.execute("UPDATE btc_paper_positions SET state = 'closed'")
+        await db.execute("UPDATE paper_positions SET state = 'closed'")
         await db.commit()
     await paper._maybe_open_position(snap)
     async with paper.connect() as db:
-        async with db.execute("SELECT COUNT(*) AS n FROM btc_paper_positions") as cur:
+        async with db.execute("SELECT COUNT(*) AS n FROM paper_positions") as cur:
             assert (await cur.fetchone())["n"] == 1
     # A new window is a fresh signal.
     await paper._maybe_open_position(_snapshot(window_slug="btc-updown-5m-1781160300"))
     async with paper.connect() as db:
-        async with db.execute("SELECT COUNT(*) AS n FROM btc_paper_positions") as cur:
+        async with db.execute("SELECT COUNT(*) AS n FROM paper_positions") as cur:
             assert (await cur.fetchone())["n"] == 2
         async with db.execute(
-            "SELECT strategy_style FROM btc_paper_positions LIMIT 1"
+            "SELECT strategy_style FROM paper_positions LIMIT 1"
         ) as cur:
             assert (await cur.fetchone())["strategy_style"] == "settle"
 
@@ -151,7 +151,7 @@ async def test_record_settlement_win(test_db, tmp_path: Path):
     assert ex._position_open is False
     async with _db.connect() as conn:
         async with conn.execute(
-            "SELECT intent, status, price, size FROM btc_live_orders"
+            "SELECT intent, status, price, size FROM live_orders"
         ) as cur:
             rows = [dict(r) for r in await cur.fetchall()]
     assert rows and rows[-1]["intent"] == "SETTLEMENT" and rows[-1]["price"] == 1.0
@@ -189,7 +189,7 @@ async def test_settled_close_places_no_exit_order(
     snap = _snapshot()
     async with paper.connect() as db:
         await db.execute(
-            "INSERT INTO btc_paper_positions(opened_at, window_slug, side, state,"
+            "INSERT INTO paper_positions(opened_at, window_slug, side, state,"
             " entry_price, notional_usd, shares, quote_source, strategy_style)"
             " VALUES (?, ?, 'Up', 'open', 0.5, 3.0, 6.0, 'clob', 'settle')",
             (snap.created_at, snap.window_slug),
@@ -201,7 +201,7 @@ async def test_settled_close_places_no_exit_order(
     executor.submit_exit.assert_not_called()
     async with paper.connect() as db:
         async with db.execute(
-            "SELECT state, exit_price, realized_pnl_usd FROM btc_paper_positions"
+            "SELECT state, exit_price, realized_pnl_usd FROM paper_positions"
         ) as cur:
             row = dict(await cur.fetchone())
     assert row["state"] == "closed"
@@ -212,7 +212,7 @@ async def test_settled_close_places_no_exit_order(
 async def _insert_settle_pos(snap) -> None:
     async with paper.connect() as db:
         await db.execute(
-            "INSERT INTO btc_paper_positions(opened_at, window_slug, side, state,"
+            "INSERT INTO paper_positions(opened_at, window_slug, side, state,"
             " entry_price, notional_usd, shares, quote_source, strategy_style)"
             " VALUES (?, ?, 'Up', 'open', 0.5, 3.0, 6.0, 'clob', 'settle')",
             (snap.created_at, snap.window_slug),
@@ -239,7 +239,7 @@ async def test_settled_close_uses_real_held_size(
     )
     async with paper.connect() as db:
         async with db.execute(
-            "SELECT realized_pnl_usd FROM btc_paper_positions"
+            "SELECT realized_pnl_usd FROM paper_positions"
         ) as cur:
             row = dict(await cur.fetchone())
     assert row["realized_pnl_usd"] == pytest.approx(2.0)  # 4 * (1.0 - 0.5)
@@ -260,7 +260,7 @@ async def test_settled_close_phantom_books_zero(
     )
     async with paper.connect() as db:
         async with db.execute(
-            "SELECT realized_pnl_usd FROM btc_paper_positions"
+            "SELECT realized_pnl_usd FROM paper_positions"
         ) as cur:
             row = dict(await cur.fetchone())
     assert row["realized_pnl_usd"] == pytest.approx(0.0)
@@ -352,7 +352,7 @@ async def test_retired_active_model_falls_back_to_default_loudly_once(test_db):
     path and notify exactly once per process — never crash, never silently
     keep 'trading' a model that no longer exists."""
     paper._unknown_model_notified.clear()
-    await _db.set_config("btc_model.active", "down_skeptic_drift_v6")
+    await _db.set_config("model.active", "down_skeptic_drift_v6")
 
     first = await paper._resolve_active_model()
     second = await paper._resolve_active_model()
@@ -362,7 +362,7 @@ async def test_retired_active_model_falls_back_to_default_loudly_once(test_db):
     async with _db.connect() as conn:
         async with conn.execute(
             "SELECT COUNT(*) AS n FROM notification_feed"
-            " WHERE event_type = 'btc_model_fallback'"
+            " WHERE event_type = 'model_fallback'"
         ) as cur:
             assert (await cur.fetchone())["n"] == 1
 
@@ -370,11 +370,11 @@ async def test_retired_active_model_falls_back_to_default_loudly_once(test_db):
 @pytest.mark.asyncio
 async def test_current_roster_models_resolve_unchanged(test_db):
     paper._unknown_model_notified.clear()
-    await _db.set_config("btc_model.active", "cushion_fresh_v7")
+    await _db.set_config("model.active", "cushion_fresh_v7")
     assert await paper._resolve_active_model() == "cushion_fresh_v7"
     async with _db.connect() as conn:
         async with conn.execute(
             "SELECT COUNT(*) AS n FROM notification_feed"
-            " WHERE event_type = 'btc_model_fallback'"
+            " WHERE event_type = 'model_fallback'"
         ) as cur:
             assert (await cur.fetchone())["n"] == 0

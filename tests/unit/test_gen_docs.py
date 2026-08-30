@@ -137,15 +137,15 @@ def test_collect_env_knobs_canonical_and_sorted(tmp_path):
     cfg = (
         '"""config."""\n'
         "import os\n"
-        'A = os.environ.get("BTC_TRADE_MAX_USD", "5")\n'
-        'B = os.environ.get("BTC_LIVE_MAX_USD", "10")\n'
+        'A = os.environ.get("TRADE_MAX_USD", "5")\n'
+        'B = os.environ.get("LIVE_MAX_USD", "10")\n'
         'NOT_A_KNOB = os.environ.get("PATH", "")\n'
         'lowercase = "btc_not_upper"\n'
     )
     (tmp_path / "config.py").write_text(cfg)
     knobs = gd.collect_env_knobs(tmp_path)
-    assert "BTC_TRADE_MAX_USD" in knobs
-    assert "BTC_LIVE_MAX_USD" in knobs
+    assert "TRADE_MAX_USD" in knobs
+    assert "LIVE_MAX_USD" in knobs
     assert "PATH" not in knobs
     assert "btc_not_upper" not in knobs
     assert knobs == sorted(knobs)

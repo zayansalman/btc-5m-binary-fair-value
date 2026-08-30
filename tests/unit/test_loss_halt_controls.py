@@ -113,7 +113,7 @@ class TestPaperHaltPauseNotify:
         async with _db.connect() as conn:
             async with conn.execute(
                 "SELECT COUNT(*) AS n FROM notification_feed"
-                " WHERE event_type = 'btc_paper_halt_pause'"
+                " WHERE event_type = 'paper_halt_pause'"
             ) as cur:
                 assert (await cur.fetchone())["n"] == 1
 
@@ -133,7 +133,7 @@ class TestPaperHaltPauseNotify:
         async with _db.connect() as conn:
             async with conn.execute(
                 "SELECT COUNT(*) AS n FROM notification_feed"
-                " WHERE event_type = 'btc_paper_halt_pause'"
+                " WHERE event_type = 'paper_halt_pause'"
             ) as cur:
                 assert (await cur.fetchone())["n"] == 0
 
@@ -178,13 +178,13 @@ class TestLossHaltEndpoints:
         # loop honours) but leaves the loss-halt tally to the loop (it owns it
         # in memory). The operator's one-click "let me trade again".
         asyncio.run(_db.set_config("polymarket_bot.state", "running"))
-        asyncio.run(_db.set_config("btc_risk.live_realized_pnl", "-8.0"))
+        asyncio.run(_db.set_config("risk.live_realized_pnl", "-8.0"))
         asyncio.run(_db.set_config("polymarket_bot.auto_paused", "1"))
         r = client.post("/api/loss_halt/reset")
         body = r.json()
         assert body["status"] == "ok"
         assert body["halt_reset"] is False
-        assert asyncio.run(_db.get_config("btc_risk.live_realized_pnl")) == "-8.0"
+        assert asyncio.run(_db.get_config("risk.live_realized_pnl")) == "-8.0"
         assert asyncio.run(_db.get_config("polymarket_bot.auto_paused")) == "0"
 
     def test_reset_clears_auto_pause_when_stopped(self, client: TestClient) -> None:
@@ -196,12 +196,12 @@ class TestLossHaltEndpoints:
 
     def test_reset_zeroes_when_stopped(self, client: TestClient) -> None:
         asyncio.run(_db.set_config("polymarket_bot.state", "stopped"))
-        asyncio.run(_db.set_config("btc_risk.live_realized_pnl", "-8.0"))
-        asyncio.run(_db.set_config("btc_risk.paper_realized_pnl", "-3.0"))
+        asyncio.run(_db.set_config("risk.live_realized_pnl", "-8.0"))
+        asyncio.run(_db.set_config("risk.paper_realized_pnl", "-3.0"))
         r = client.post("/api/loss_halt/reset")
         assert r.json()["status"] == "ok"
-        assert float(asyncio.run(_db.get_config("btc_risk.live_realized_pnl"))) == 0.0
-        assert float(asyncio.run(_db.get_config("btc_risk.paper_realized_pnl"))) == 0.0
+        assert float(asyncio.run(_db.get_config("risk.live_realized_pnl"))) == 0.0
+        assert float(asyncio.run(_db.get_config("risk.paper_realized_pnl"))) == 0.0
 
     def test_reset_clears_trailing_halt_after_banked_peak(
         self, client: TestClient
@@ -211,10 +211,10 @@ class TestLossHaltEndpoints:
         halted. Reset must also clear the peaks. Proven through a freshly loaded
         gate (what the loop sees on the next Start), not just the raw keys."""
         asyncio.run(_db.set_config("polymarket_bot.state", "stopped"))
-        asyncio.run(_db.set_config("btc_risk.date", RiskGate._today()))
+        asyncio.run(_db.set_config("risk.date", RiskGate._today()))
         # Banked +$30 peak, bled back to +$20 → floor +20, 20 <= 20 → HALTED.
-        asyncio.run(_db.set_config("btc_risk.live_realized_pnl", "20.0"))
-        asyncio.run(_db.set_config("btc_risk.live_peak_pnl", "30.0"))
+        asyncio.run(_db.set_config("risk.live_realized_pnl", "20.0"))
+        asyncio.run(_db.set_config("risk.live_peak_pnl", "30.0"))
 
         before = RiskGate(_cfg(), is_live=True)
         asyncio.run(before.load())

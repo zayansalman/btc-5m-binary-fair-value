@@ -26,7 +26,7 @@ def render(
     last_live_at: str | None,
 ) -> str:
     is_live = mode == "live"
-    halt = _config.BTC_LIVE_DAILY_LOSS_HALT_USD
+    halt = _config.TRADE_DAILY_LOSS_HALT_USD
     headroom = halt + min(0.0, day_pnl)  # remaining loss budget
     kill_armed = Path(str(_config.KILL_SWITCH_PATH)).exists()
     session_pnl = sum(c["realized_pnl_usd"] or 0.0 for c in closed_session)
@@ -43,7 +43,7 @@ def render(
     # (b) what feed_source that tick recorded for each upstream. Each chip
     # flips off when its source goes degraded; a TICK chip shows loop age.
     tick_age = s.tick_age_seconds(tick.get("created_at") if tick else None)
-    stale_after = int(max(_config.BTC_PAPER_TICK_SECONDS * 3, 20))
+    stale_after = int(max(_config.PAPER_TICK_SECONDS * 3, 20))
     parts = s.parse_feed_source(tick.get("feed_source") if tick else None)
     book_ok = bool(tick) and (
         tick.get("up_best_ask") is not None

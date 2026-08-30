@@ -3,11 +3,11 @@
 Safety model
 ------------
 * Boot is gated: live mode refuses to start unless ``POLYMARKET_PRIVATE_KEY``
-  is set AND ``BTC_LIVE_CONFIRM == "YES_I_UNDERSTAND"`` AND the wallet config
+  is set AND ``LIVE_CONFIRM == "YES_I_UNDERSTAND"`` AND the wallet config
   is coherent (a funder address is mandatory for proxy signature types 1/2).
 * Hard risk gates run BEFORE every order: per-trade notional cap, one open
   position max, daily realized-loss halt, and an OPTIONAL daily bankroll cap
-  (disabled when ``BTC_LIVE_BANKROLL_CAP_USD`` is blank/unset/≤0). The daily
+  (disabled when ``TRADE_BANKROLL_CAP_USD`` is blank/unset/≤0). The daily
   counters are PERSISTED in SQLite and rebuilt at boot, so Stop/Start or a
   process restart cannot reset the daily loss halt or grant a fresh bankroll
   when the cap is enabled. The spend counter is still tracked when the cap is
@@ -24,7 +24,7 @@ Safety model
   market into resolution. Callers must treat a non-ok exit as "position
   still open — retry".
 * Every order/cancel attempt — including blocked ones — is journaled to the
-  ``btc_live_orders`` SQLite table.
+  ``live_orders`` SQLite table.
 
 Threading: a single runner thread owns the executor for its whole life
 (entries, exits, kill handling, shutdown flatten). The dashboard controller
@@ -60,7 +60,7 @@ from logging_setup import get_logger  # type: ignore[import-untyped]
 from polymarket_bot.shadow.fees import taker_fee_per_share  # canonical venue fee math
 from polymarket_exec.execution.gate import EntryRequest, GateConfig, RiskGate
 
-log = get_logger("btc_live")
+log = get_logger("live")
 
 BUY = "BUY"
 SELL = "SELL"
@@ -101,13 +101,13 @@ def assert_live_boot_allowed(
 ) -> None:
     """Refuse live boot unless the operator config is complete AND coherent.
 
-    Reads ``config.POLYMARKET_*`` / ``config.BTC_LIVE_CONFIRM`` at call time
+    Reads ``config.POLYMARKET_*`` / ``config.LIVE_CONFIRM`` at call time
     (not import time) so operators and tests can adjust config. Also refuses
     when any risk-limit env var failed to parse (config.CONFIG_PARSE_ERRORS):
     a typo in a risk limit must never silently degrade to looser defaults.
     """
     key = private_key if private_key is not None else _config.POLYMARKET_PRIVATE_KEY
-    phrase = confirm if confirm is not None else _config.BTC_LIVE_CONFIRM
+    phrase = confirm if confirm is not None else _config.LIVE_CONFIRM
     fund = funder if funder is not None else _config.POLYMARKET_FUNDER
     sig = (
         signature_type
@@ -124,7 +124,7 @@ def assert_live_boot_allowed(
     if not key:
         problems.append("POLYMARKET_PRIVATE_KEY is not set")
     if phrase != CONFIRM_PHRASE:
-        problems.append(f"BTC_LIVE_CONFIRM is not '{CONFIRM_PHRASE}'")
+        problems.append(f"LIVE_CONFIRM is not '{CONFIRM_PHRASE}'")
     if sig not in (0, 1, 2, 3):
         problems.append(
             f"POLYMARKET_SIGNATURE_TYPE={sig} is not one of 0 (EOA), 1 (email/Magic "
@@ -305,19 +305,19 @@ class LiveExecutor:
         gate_cfg = GateConfig(
             max_trade_usd=(
                 max_trade_usd if max_trade_usd is not None
-                else _config.BTC_TRADE_MAX_USD
+                else _config.TRADE_MAX_USD
             ),
             daily_loss_halt_usd=(
                 daily_loss_halt_usd if daily_loss_halt_usd is not None
-                else _config.BTC_TRADE_DAILY_LOSS_HALT_USD
+                else _config.TRADE_DAILY_LOSS_HALT_USD
             ),
             bankroll_cap_usd=(
                 bankroll_cap_usd if bankroll_cap_usd is not None
-                else _config.BTC_TRADE_BANKROLL_CAP_USD
+                else _config.TRADE_BANKROLL_CAP_USD
             ),
             max_entry_slippage=(
                 max_entry_slippage if max_entry_slippage is not None
-                else _config.BTC_TRADE_MAX_ENTRY_SLIPPAGE
+                else _config.TRADE_MAX_ENTRY_SLIPPAGE
             ),
             kill_switch_path=Path(
                 kill_switch_path if kill_switch_path is not None
@@ -329,7 +329,7 @@ class LiveExecutor:
         self.exit_fill_timeout_seconds = (
             exit_fill_timeout_seconds
             if exit_fill_timeout_seconds is not None
-            else _config.BTC_LIVE_EXIT_FILL_TIMEOUT_SECONDS
+            else _config.LIVE_EXIT_FILL_TIMEOUT_SECONDS
         )
 
         self._client = client
@@ -459,7 +459,7 @@ class LiveExecutor:
         # 2) Re-adopt any open ledger position so it keeps being managed.
         async with connect() as db:
             async with db.execute(
-                "SELECT * FROM btc_paper_positions WHERE state = 'open' ORDER BY opened_at"
+                "SELECT * FROM paper_positions WHERE state = 'open' ORDER BY opened_at"
             ) as cur:
                 open_rows = [dict(r) for r in await cur.fetchall()]
         if not open_rows:
@@ -468,14 +468,14 @@ class LiveExecutor:
             raise LiveBootRefused(
                 f"Boot reconciliation failed: {len(open_rows)} open ledger positions "
                 "found (max 1 by design). Resolve them manually (flatten on Polymarket, "
-                "then UPDATE btc_paper_positions SET state='closed', exit_reason='MANUAL' "
+                "then UPDATE paper_positions SET state='closed', exit_reason='MANUAL' "
                 "for each row) before restarting live mode."
             )
         row = open_rows[0]
         async with connect() as db:
             async with db.execute(
                 "SELECT token_id, clob_order_id, price, size, details_json "
-                "FROM btc_live_orders "
+                "FROM live_orders "
                 "WHERE intent = 'ENTRY' AND status = 'SUBMITTED' AND window_slug = ? "
                 "ORDER BY id DESC LIMIT 1",
                 (row["window_slug"],),
@@ -525,7 +525,7 @@ class LiveExecutor:
             if _window_resolved(row["window_slug"]):
                 await self._close_ledger_row(row, "RECONCILED_STALE_RESOLVED")
                 await notify(
-                    "btc_live_reconciled",
+                    "live_reconciled",
                     f"Closed stale live position {row['position_id']} "
                     f"({row['window_slug']}): its window already resolved and "
                     "the CLOB no longer returns the entry order. Run "
@@ -579,7 +579,7 @@ class LiveExecutor:
         )
         self._position_open = True
         await notify(
-            "btc_live_reconciled",
+            "live_reconciled",
             f"Re-adopted open live position from a previous session: "
             f"{matched:.2f} shares of {row['side']} in {row['window_slug']}. "
             "It will be flattened by the normal exit path.",
@@ -595,7 +595,7 @@ class LiveExecutor:
     async def _close_ledger_row(row: dict[str, Any], reason: str) -> None:
         async with connect() as db:
             await db.execute(
-                "UPDATE btc_paper_positions SET state = 'closed', closed_at = ?, "
+                "UPDATE paper_positions SET state = 'closed', closed_at = ?, "
                 "exit_reason = ?, realized_pnl_usd = COALESCE(realized_pnl_usd, 0) "
                 "WHERE position_id = ?",
                 (datetime.now(UTC).isoformat(timespec="seconds"), reason,
@@ -652,7 +652,7 @@ class LiveExecutor:
                 path=str(self.gate.cfg.kill_switch_path),
             )
             await notify(
-                "btc_live_kill_switch",
+                "live_kill_switch",
                 f"KILL switch file detected at {self.gate.cfg.kill_switch_path}. "
                 "New entries halted; cancelling resting orders. Open positions "
                 "will still be flattened by the exit path.",

@@ -201,7 +201,7 @@ def _today_utc() -> str:
 def gather_models(conn: sqlite3.Connection, since: str, today: str) -> list[ModelStats]:
     rows = conn.execute(
         "SELECT model_id, created_at, side, entry_price, realized_pnl_usd "
-        "FROM btc_model_shadow_positions "
+        "FROM model_shadow_positions "
         "WHERE state='settled' AND created_at >= ? "
         "ORDER BY model_id, created_at",
         (since,),
@@ -253,7 +253,7 @@ class LiveBook:
     by_day: list[tuple[str, int, float]]
     # Maker/taker attribution of ENTRY placements (#137): 'matched' = crossed
     # at placement (taker fee paid), 'live' = rested on the book (maker if
-    # later filled — no fee on that portion). Zeroes when btc_live_orders is
+    # later filled — no fee on that portion). Zeroes when live_orders is
     # absent (minimal DBs) or carries no placement responses.
     entries_matched: int = 0
     entries_rested: int = 0
@@ -267,13 +267,13 @@ def _placement_split(conn: sqlite3.Connection) -> tuple[int, int]:
     placement_status column migration. Resilient to a missing table.
     """
     has_table = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='btc_live_orders'"
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='live_orders'"
     ).fetchone()
     if not has_table:
         return (0, 0)
     rows = conn.execute(
         "SELECT json_extract(details_json, '$.response.status') ps, COUNT(*) n "
-        "FROM btc_live_orders "
+        "FROM live_orders "
         "WHERE mode='live' AND intent='ENTRY' AND status='SUBMITTED' "
         "GROUP BY ps",
     ).fetchall()
@@ -285,13 +285,13 @@ def gather_live_book(conn: sqlite3.Connection) -> LiveBook:
     rows = conn.execute(
         "SELECT substr(opened_at,1,10) day, COUNT(*) n, "
         "ROUND(SUM(realized_pnl_usd),2) pnl "
-        "FROM btc_paper_positions WHERE mode='live' "
+        "FROM paper_positions WHERE mode='live' "
         "GROUP BY day ORDER BY day",
     ).fetchall()
     by_day = [(str(r["day"]), int(r["n"]), float(r["pnl"] or 0.0)) for r in rows]
     total_row = conn.execute(
         "SELECT COUNT(*) n, ROUND(SUM(realized_pnl_usd),2) pnl "
-        "FROM btc_paper_positions WHERE mode='live'",
+        "FROM paper_positions WHERE mode='live'",
     ).fetchone()
     matched, rested = _placement_split(conn)
     return LiveBook(
@@ -324,15 +324,15 @@ def gather_bot_state(conn: sqlite3.Connection) -> BotState:
         ).fetchall()
     }
     last_tick = conn.execute(
-        "SELECT MAX(created_at) m FROM btc_paper_ticks",
+        "SELECT MAX(created_at) m FROM paper_ticks",
     ).fetchone()["m"]
     last_shadow = conn.execute(
-        "SELECT MAX(created_at) m FROM btc_model_shadow_positions",
+        "SELECT MAX(created_at) m FROM model_shadow_positions",
     ).fetchone()["m"]
     now = datetime.now(timezone.utc)
     cutoff = (now - timedelta(seconds=CADENCE_WINDOW_SECONDS)).isoformat()
     ticks_last_10min = conn.execute(
-        "SELECT COUNT(*) c FROM btc_paper_ticks WHERE created_at >= ?",
+        "SELECT COUNT(*) c FROM paper_ticks WHERE created_at >= ?",
         (cutoff,),
     ).fetchone()["c"]
     state = cfg.get("polymarket_bot.state", ("?", ""))[0]

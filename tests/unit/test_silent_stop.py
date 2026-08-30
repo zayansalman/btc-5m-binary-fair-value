@@ -66,7 +66,7 @@ async def test_silent_stop_notifies_once_and_heals(bot_db, monkeypatch) -> None:
     status = await get_status()
 
     assert status.state == "stopped"  # self-healed
-    notifs = await _notifications(bot_db, "btc_silent_stop")
+    notifs = await _notifications(bot_db, "silent_stop")
     assert len(notifs) == 1
     assert "silent bot stop" in notifs[0]["message"].lower()
     # The last heartbeat is surfaced so the operator knows when it died.
@@ -82,7 +82,7 @@ async def test_silent_stop_does_not_spam_on_repeated_polls(bot_db, monkeypatch) 
     for _ in range(5):
         await get_status()
 
-    notifs = await _notifications(bot_db, "btc_silent_stop")
+    notifs = await _notifications(bot_db, "silent_stop")
     assert len(notifs) == 1
 
 
@@ -95,7 +95,7 @@ async def test_healthy_running_never_notifies(bot_db, monkeypatch) -> None:
     status = await get_status()
 
     assert status.state == "running"
-    assert await _notifications(bot_db, "btc_silent_stop") == []
+    assert await _notifications(bot_db, "silent_stop") == []
 
 
 @pytest.mark.asyncio
@@ -106,7 +106,7 @@ async def test_clean_stop_never_notifies(bot_db, monkeypatch) -> None:
 
     await get_status()
 
-    assert await _notifications(bot_db, "btc_silent_stop") == []
+    assert await _notifications(bot_db, "silent_stop") == []
 
 
 @pytest.mark.asyncio
@@ -118,7 +118,7 @@ async def test_detector_rearms_after_runner_recovers(bot_db, monkeypatch) -> Non
     # First death → 1 alert.
     await _db.set_config("polymarket_bot.state", "running")
     await get_status()
-    assert len(await _notifications(bot_db, "btc_silent_stop")) == 1
+    assert len(await _notifications(bot_db, "silent_stop")) == 1
 
     # Operator restarts: runner alive + state running → re-arms detector.
     alive["v"] = True
@@ -130,4 +130,4 @@ async def test_detector_rearms_after_runner_recovers(bot_db, monkeypatch) -> Non
     alive["v"] = False
     await _db.set_config("polymarket_bot.state", "running")
     await get_status()
-    assert len(await _notifications(bot_db, "btc_silent_stop")) == 2
+    assert len(await _notifications(bot_db, "silent_stop")) == 2

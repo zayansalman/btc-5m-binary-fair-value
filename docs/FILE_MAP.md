@@ -6,9 +6,9 @@ _Status: `WIRED` = has non-test importers; `DEAD?` = no importers found (investi
 
 | Module | Status | Importers | Role |
 |---|---|---|---|
-| `config.py` | WIRED | 56 | Configuration for the local BTC 5-minute binary pricing-model strategy lab. |
+| `config.py` | WIRED | 56 | Configuration for the local Polymarket crypto trading lab. |
 | `dashboard.py` | WIRED | 2 | Local Gradio dashboard for BTC 5-minute paper trading. |
-| `db.py` | WIRED | 37 | SQLite storage for the BTC 5-minute binary pricing-model strategy lab. |
+| `db.py` | WIRED | 37 | SQLite storage for the local Polymarket crypto trading lab. |
 | `logging_setup.py` | WIRED | 19 | Structured JSON logging with structlog. Module + trade_id context. |
 | `main.py` | cli | 0 | Entrypoint for the BTC 5-minute paper trading system. |
 | `polymarket_bot/__init__.py` | pkg | 8 | BTC 5-minute paper-trading package. |

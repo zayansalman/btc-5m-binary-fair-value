@@ -14,14 +14,14 @@ from db import connect
 async def latest_tick() -> dict[str, Any] | None:
     async with connect() as db:
         async with db.execute(
-            "SELECT * FROM btc_paper_ticks ORDER BY id DESC LIMIT 1"
+            "SELECT * FROM paper_ticks ORDER BY id DESC LIMIT 1"
         ) as cur:
             row = await cur.fetchone()
     return dict(row) if row else None
 
 
 async def last_live_order_at() -> str | None:
-    """ISO timestamp of the most recent action recorded in btc_live_orders.
+    """ISO timestamp of the most recent action recorded in live_orders.
 
     A live bot that has lost the ability to actually place orders looks fine
     in the tick journal (the loop still polls Chainlink and CLOB) — the only
@@ -29,14 +29,14 @@ async def last_live_order_at() -> str | None:
     """
     async with connect() as db:
         async with db.execute(
-            "SELECT MAX(created_at) AS last_at FROM btc_live_orders"
+            "SELECT MAX(created_at) AS last_at FROM live_orders"
         ) as cur:
             row = await cur.fetchone()
     return (row["last_at"] if row else None) if row is not None else None
 
 
 async def reconciliation() -> dict[str, Any] | None:
-    """Latest Polymarket reconciliation snapshot (``btc_recon.*`` keys), or None.
+    """Latest Polymarket reconciliation snapshot (``recon.*`` keys), or None.
 
     Written by ``tools/reconcile_live_ledger.py`` (#102). Surfaces the real
     account truth the per-position rows cannot — full-history account PnL and
@@ -46,7 +46,7 @@ async def reconciliation() -> dict[str, Any] | None:
     """
     async with connect() as db:
         async with db.execute(
-            "SELECT key, value FROM config WHERE key LIKE 'btc_recon.%'"
+            "SELECT key, value FROM config WHERE key LIKE 'recon.%'"
         ) as cur:
             rows = await cur.fetchall()
     if not rows:
@@ -72,7 +72,7 @@ async def closed(
     recent-N window.
     """
     base = (
-        "SELECT * FROM btc_paper_positions WHERE state='closed' "
+        "SELECT * FROM paper_positions WHERE state='closed' "
         "AND quote_source='clob' AND strategy_style=?"
     )
     params: list[Any] = [style]
@@ -96,7 +96,7 @@ async def closed(
 async def open_positions(style: str) -> list[dict[str, Any]]:
     async with connect() as db:
         async with db.execute(
-            "SELECT * FROM btc_paper_positions WHERE state='open' "
+            "SELECT * FROM paper_positions WHERE state='open' "
             "AND strategy_style=? ORDER BY position_id DESC",
             (style,),
         ) as cur:
@@ -108,7 +108,7 @@ async def avg_spread() -> float | None:
     async with connect() as db:
         async with db.execute(
             "SELECT up_best_bid, up_best_ask, down_best_bid, down_best_ask "
-            "FROM btc_paper_ticks WHERE up_best_ask IS NOT NULL "
+            "FROM paper_ticks WHERE up_best_ask IS NOT NULL "
             "ORDER BY id DESC LIMIT 60"
         ) as cur:
             rows = [dict(r) for r in await cur.fetchall()]
@@ -127,7 +127,7 @@ async def recent_decisions(limit: int = 10) -> list[dict[str, Any]]:
             "SELECT created_at, spot_price, reference_price, fair_up_prob, edge, "
             "up_best_ask, down_best_ask, signal_side, notional_usd, confidence, "
             "reason, remaining_seconds, feed_source "
-            "FROM btc_paper_ticks ORDER BY id DESC LIMIT ?",
+            "FROM paper_ticks ORDER BY id DESC LIMIT ?",
             (limit,),
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
@@ -145,7 +145,7 @@ async def recent_blocked(limit: int = 5) -> list[dict[str, Any]]:
     async with connect() as db:
         async with db.execute(
             "SELECT created_at, intent, notional_usd, error, mode "
-            "FROM btc_live_orders "
+            "FROM live_orders "
             "WHERE status='BLOCKED' "
             "AND date(created_at)=date('now') "
             "ORDER BY id DESC LIMIT ?",
@@ -165,7 +165,7 @@ async def today_submitted_summary() -> tuple[int, float]:
     async with connect() as db:
         async with db.execute(
             "SELECT COUNT(*) AS n, COALESCE(SUM(notional_usd), 0.0) AS total "
-            "FROM btc_live_orders "
+            "FROM live_orders "
             "WHERE intent='ENTRY' AND status='SUBMITTED' "
             "AND date(created_at)=date('now')"
         ) as cur:

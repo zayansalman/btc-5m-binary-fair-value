@@ -52,7 +52,7 @@ def _freshness_badge(recon: dict[str, Any] | None) -> str:
 
     Net P&L / ROI / win-rate are booked at the bot's *assumed* fills (zero-fee,
     at entry). ``tools/reconcile_live_ledger.py --apply`` corrects the ledger to
-    real Polymarket fills and writes the ``btc_recon.*`` snapshot read here, so
+    real Polymarket fills and writes the ``recon.*`` snapshot read here, so
     its presence is the signal that the headline numbers were last grounded to
     reality — and its absence means they are pure assumed-fill.
     """

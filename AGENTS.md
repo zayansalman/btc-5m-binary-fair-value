@@ -89,7 +89,7 @@ Out of scope:
   scope by default — see Scope Fence above.
 - One open BTC paper position at a time.
 - **Live trading is BUILT and multi-gated** (`polymarket_exec/execution/live.py:LiveExecutor`).
-  It runs only with `BTC_BOT_MODE=live` **AND** `BTC_LIVE_CONFIRM=YES_I_UNDERSTAND`
+  It runs only with `BOT_MODE=live` **AND** `LIVE_CONFIRM=YES_I_UNDERSTAND`
   **AND** a private key **AND** a coherent wallet. **Agents NEVER flip the gate or
   place live orders; the operator launches.** Default is paper.
 - Do not read, print, log, commit, echo, or expose private keys.

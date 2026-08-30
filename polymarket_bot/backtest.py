@@ -16,10 +16,10 @@ from zoneinfo import ZoneInfo
 
 from config import (
     BINANCE_API_BASE,
-    BTC_HISTORY_CSV_PATH,
-    BTC_PAPER_ENTRY_EDGE_MIN,
-    BTC_PAPER_ENTRY_MIN_REMAINING_SECONDS,
-    BTC_PAPER_MIN_CONFIDENCE,
+    HISTORY_CSV_PATH,
+    PAPER_ENTRY_EDGE_MIN,
+    PAPER_ENTRY_MIN_REMAINING_SECONDS,
+    PAPER_MIN_CONFIDENCE,
     DATA_DIR,
 )
 from polymarket_bot.strategy import (
@@ -179,7 +179,7 @@ def build_opportunities(
     history_path: Path | None = None,
     cache: BinanceWindowCache | None = None,
 ) -> list[BuyOpportunity]:
-    csv_path = history_path or BTC_HISTORY_CSV_PATH
+    csv_path = history_path or HISTORY_CSV_PATH
     if not csv_path.exists():
         return []
     cache = cache or BinanceWindowCache()
@@ -320,9 +320,9 @@ def build_report(history_path: Path | None = None) -> dict[str, Any]:
     current = evaluate_params(
         opportunities,
         BacktestParams(
-            entry_edge_min=BTC_PAPER_ENTRY_EDGE_MIN,
-            min_confidence=BTC_PAPER_MIN_CONFIDENCE,
-            min_remaining_seconds=BTC_PAPER_ENTRY_MIN_REMAINING_SECONDS,
+            entry_edge_min=PAPER_ENTRY_EDGE_MIN,
+            min_confidence=PAPER_MIN_CONFIDENCE,
+            min_remaining_seconds=PAPER_ENTRY_MIN_REMAINING_SECONDS,
             max_entry_price=0.95,
         ),
         name="current_default_filter",
@@ -331,7 +331,7 @@ def build_report(history_path: Path | None = None) -> dict[str, Any]:
     recommended = _select_recommended(optimized) or current
     return {
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "history_path": str(history_path or BTC_HISTORY_CSV_PATH),
+        "history_path": str(history_path or HISTORY_CSV_PATH),
         "method": (
             "Trade-history conditional backtest. It replays only historical BTC buys "
             "from the exported Polymarket CSV, enriches each buy with Binance 1s "
@@ -395,7 +395,7 @@ def _select_recommended(results: list[BacktestMetrics]) -> BacktestMetrics | Non
     eligible = [
         m
         for m in results
-        if m.params.get("entry_edge_min", 0) >= BTC_PAPER_ENTRY_EDGE_MIN
+        if m.params.get("entry_edge_min", 0) >= PAPER_ENTRY_EDGE_MIN
         and m.params.get("min_remaining_seconds", 0) >= 60
     ]
     return eligible[0] if eligible else (results[0] if results else None)

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from statistics import mean, median
 
-from config import BTC_HISTORY_CSV_PATH
+from config import HISTORY_CSV_PATH
 
 
 @dataclass
@@ -28,7 +28,7 @@ class BtcHistoryStats:
 
 def load_btc_history_stats(path: Path | None = None) -> BtcHistoryStats:
     """Summarize exported BTC Up/Down rows if the CSV is present."""
-    csv_path = path or BTC_HISTORY_CSV_PATH
+    csv_path = path or HISTORY_CSV_PATH
     stats = BtcHistoryStats(path=str(csv_path), found=csv_path.exists())
     if not stats.found:
         return stats

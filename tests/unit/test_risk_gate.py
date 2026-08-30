@@ -330,8 +330,8 @@ class TestTrailingHighWaterMarkHalt:
         from datetime import UTC, datetime
 
         today = datetime.now(UTC).date().isoformat()
-        await _db.set_config("btc_risk.date", today)
-        await _db.set_config("btc_risk.live_realized_pnl", repr(8.0))
+        await _db.set_config("risk.date", today)
+        await _db.set_config("risk.live_realized_pnl", repr(8.0))
         gate = RiskGate(_cfg(daily_loss_halt_usd=10.0), is_live=True)
         await gate.load()
         assert gate.halt_peak == pytest.approx(8.0)
@@ -444,7 +444,7 @@ class TestRuntimeMaxTradeOverride:
         import db as _db
 
         gate = RiskGate(_cfg(max_trade_usd=5.0))
-        await _db.set_config("btc_runtime.max_trade_usd", "not-a-number")
+        await _db.set_config("runtime.max_trade_usd", "not-a-number")
         await gate.refresh_runtime_limits()
         assert gate.runtime_max_trade_usd is None
         assert gate.effective_max_trade_usd == 5.0

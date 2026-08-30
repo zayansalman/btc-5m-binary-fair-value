@@ -1,7 +1,7 @@
 """Tick-replay backtest for the shadow roster over the FULL quote history (#144).
 
 The shadow race only covers the days the runner existed; the tick journal
-(``btc_paper_ticks``) reaches further back with everything a signal needs:
+(``paper_ticks``) reaches further back with everything a signal needs:
 both books, the model fair, spot/reference, sigma, remaining seconds. This
 tool replays those ticks through the CURRENT roster signal functions,
 settles fee-true, and reports standings — turning pre-race history into an
@@ -52,8 +52,8 @@ def _params() -> strategy.StrategyParams:
 
     a = _p.load_active()
     return strategy.StrategyParams(
-        min_trade_usd=_config.BTC_PAPER_MIN_TRADE_USD,
-        max_trade_usd=_config.BTC_PAPER_MAX_TRADE_USD,
+        min_trade_usd=_config.PAPER_MIN_TRADE_USD,
+        max_trade_usd=_config.PAPER_MAX_TRADE_USD,
         entry_edge_min=a.entry_edge_min,
         min_confidence=a.min_confidence,
         entry_min_remaining_seconds=a.min_remaining_seconds,
@@ -81,7 +81,7 @@ def load_ticks(db_path: Path) -> dict[str, list[sqlite3.Row]]:
         "SELECT created_at, window_slug, remaining_seconds, spot_price, "
         "reference_price, sigma_per_second, fair_up_prob, up_best_bid, "
         "up_best_ask, down_best_ask, down_best_bid "
-        "FROM btc_paper_ticks "
+        "FROM paper_ticks "
         "WHERE up_best_ask IS NOT NULL AND down_best_ask IS NOT NULL "
         "AND fair_up_prob IS NOT NULL AND spot_price IS NOT NULL "
         "AND reference_price IS NOT NULL AND remaining_seconds IS NOT NULL "
@@ -98,7 +98,7 @@ def known_outcomes(db_path: Path) -> dict[str, str]:
     """Window -> outcome from the settled shadow ledger (ground truth)."""
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     rows = conn.execute(
-        "SELECT DISTINCT window_slug, outcome FROM btc_model_shadow_positions "
+        "SELECT DISTINCT window_slug, outcome FROM model_shadow_positions "
         "WHERE state='settled' AND outcome IN ('Up','Down')"
     ).fetchall()
     conn.close()
@@ -238,7 +238,7 @@ def harness_check(trades: list[Trade], db_path: Path) -> None:
     rec = {
         w: (s, p)
         for w, s, p in conn.execute(
-            "SELECT window_slug, side, entry_price FROM btc_model_shadow_positions "
+            "SELECT window_slug, side, entry_price FROM model_shadow_positions "
             "WHERE model_id='cushion_favorite_v2' AND state='settled'"
         )
     }
