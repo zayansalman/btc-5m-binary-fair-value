@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from btc_bot.pairarb.mirror import price_the_copy, trade_dict_from_fast_fill
+from polymarket_bot.pairarb.mirror import price_the_copy, trade_dict_from_fast_fill
 
 
 def test_trade_dict_from_fast_fill_maps_resolved_tuple_to_expected_keys():

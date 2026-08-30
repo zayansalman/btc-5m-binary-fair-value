@@ -8,7 +8,7 @@ Three things it does that the 5m-era recorder
 (``btc_5m_fv/storage/recorder.py``) does not, each traceable to a correction:
 
   full depth   every level of both books, not the touch. The 5m recorder kept
-               only the best level (``btc_bot/paper.py::_best_level``), which is
+               only the best level (``polymarket_bot/paper.py::_best_level``), which is
                why no true L2 depth exists anywhere in this project's history.
                C6 requires the cost stack to become a size-dependent function
                "measured from recorded L2"; C17 records that the spec asking for

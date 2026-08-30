@@ -17,7 +17,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 from fastapi.testclient import TestClient
 
-from btc_5m_exec.ops.dashboard.app import app
+from polymarket_exec.ops.dashboard.app import app
 
 
 @pytest.fixture
@@ -166,7 +166,7 @@ class TestPerformanceReconLine:
     }
 
     def test_recon_line_renders_real_numbers(self) -> None:
-        from btc_5m_exec.ops.dashboard.panels import performance
+        from polymarket_exec.ops.dashboard.panels import performance
 
         html = performance.render(
             style="settle", perf=self._PERF, perf_live={"n": 0}, perf_paper={"n": 0},
@@ -178,7 +178,7 @@ class TestPerformanceReconLine:
         assert "2026-06-22T05:03:56" in html
 
     def test_recon_line_absent_without_data(self) -> None:
-        from btc_5m_exec.ops.dashboard.panels import performance
+        from polymarket_exec.ops.dashboard.panels import performance
 
         html = performance.render(
             style="settle", perf=self._PERF, perf_live={"n": 0}, perf_paper={"n": 0},
@@ -189,7 +189,7 @@ class TestPerformanceReconLine:
     def test_account_footer_flags_non_bot_inclusion(self) -> None:
         # #113: the account-wide figure bundles the operator's non-bot trades —
         # the label must say so, so it can't be misread as the bot's number.
-        from btc_5m_exec.ops.dashboard.panels import performance
+        from polymarket_exec.ops.dashboard.panels import performance
 
         html = performance.render(
             style="settle", perf=self._PERF, perf_live={"n": 0}, perf_paper={"n": 0},
@@ -200,7 +200,7 @@ class TestPerformanceReconLine:
     def test_freshness_badge_warns_when_unreconciled(self) -> None:
         # #113: with no reconciliation snapshot the headline metrics are pure
         # assumed-fill — the operator must see that, not a silent number.
-        from btc_5m_exec.ops.dashboard.panels import performance
+        from polymarket_exec.ops.dashboard.panels import performance
 
         html = performance.render(
             style="settle", perf=self._PERF, perf_live={"n": 0}, perf_paper={"n": 0},
@@ -209,7 +209,7 @@ class TestPerformanceReconLine:
         assert "assumed-fill" in html
 
     def test_freshness_badge_shows_reconciled_date(self) -> None:
-        from btc_5m_exec.ops.dashboard.panels import performance
+        from polymarket_exec.ops.dashboard.panels import performance
 
         html = performance.render(
             style="settle", perf=self._PERF, perf_live={"n": 0}, perf_paper={"n": 0},
@@ -236,19 +236,19 @@ class TestBlotterOpenUnrealized:
         return p
 
     def test_open_row_shows_unrealized_for_current_window(self) -> None:
-        from btc_5m_exec.ops.dashboard.panels import blotter
+        from polymarket_exec.ops.dashboard.panels import blotter
 
         html = blotter.render(closed=[], open_pos=[self._pos()], tick=self._TICK)
         assert "+$1.10" in html  # (0.61-0.50)*10
 
     def test_open_row_static_open_without_tick(self) -> None:
-        from btc_5m_exec.ops.dashboard.panels import blotter
+        from polymarket_exec.ops.dashboard.panels import blotter
 
         html = blotter.render(closed=[], open_pos=[self._pos()], tick=None)
         assert "OPEN" in html
 
     def test_open_row_static_open_for_other_window(self) -> None:
-        from btc_5m_exec.ops.dashboard.panels import blotter
+        from polymarket_exec.ops.dashboard.panels import blotter
 
         html = blotter.render(
             closed=[], open_pos=[self._pos(window_slug="btc-updown-5m-999")],
@@ -278,13 +278,13 @@ class TestMarketOpenPosition:
         return p
 
     def test_no_open_block_when_flat(self) -> None:
-        from btc_5m_exec.ops.dashboard.panels import market
+        from polymarket_exec.ops.dashboard.panels import market
 
         html = market.render(self._TICK, [])
         assert "OPEN POSITION" not in html
 
     def test_up_position_marks_to_side_mid(self) -> None:
-        from btc_5m_exec.ops.dashboard.panels import market
+        from polymarket_exec.ops.dashboard.panels import market
 
         # UP mid = (0.60+0.62)/2 = 0.61; unrealized = (0.61-0.50)*10 = +1.10.
         html = market.render(self._TICK, [self._pos()])
@@ -292,14 +292,14 @@ class TestMarketOpenPosition:
         assert "+$1.10" in html
 
     def test_down_position_marks_to_down_mid(self) -> None:
-        from btc_5m_exec.ops.dashboard.panels import market
+        from polymarket_exec.ops.dashboard.panels import market
 
         # DOWN mid = (0.38+0.42)/2 = 0.40; unrealized = (0.40-0.55)*10 = -1.50.
         html = market.render(self._TICK, [self._pos(side="DOWN", entry_price=0.55)])
         assert "$-1.50" in html
 
     def test_other_window_position_not_marked(self) -> None:
-        from btc_5m_exec.ops.dashboard.panels import market
+        from polymarket_exec.ops.dashboard.panels import market
 
         html = market.render(self._TICK, [self._pos(window_slug="btc-updown-5m-999")])
         # No fabricated unrealized from a stale window; entry still shown.
@@ -307,7 +307,7 @@ class TestMarketOpenPosition:
         assert "+$1.10" not in html
 
     def test_render_back_compat_without_open_pos(self) -> None:
-        from btc_5m_exec.ops.dashboard.panels import market
+        from polymarket_exec.ops.dashboard.panels import market
 
         # Existing single-arg call site must still work.
         html = market.render(self._TICK)
@@ -318,7 +318,7 @@ class TestMarketOpenPosition:
         # odd number of single-width cards, so a half-width LIVE MARKET orphans
         # the neighbouring cell (empty band under STRATEGY). Both the populated
         # and the no-tick states must carry `card wide`.
-        from btc_5m_exec.ops.dashboard.panels import market
+        from polymarket_exec.ops.dashboard.panels import market
 
         assert "class='card wide'" in market.render(self._TICK)
         assert "class='card wide'" in market.render(None)
@@ -331,7 +331,7 @@ class TestGuardrailsTrailingHalt:
     the old fixed -limit floor."""
 
     def _render(self, **over):
-        from btc_5m_exec.ops.dashboard.panels import guardrails
+        from polymarket_exec.ops.dashboard.panels import guardrails
 
         kw = dict(
             day_spend=0.0, bankroll_cap=None, submitted_count=0, submitted_notional=0.0,
@@ -382,8 +382,8 @@ class TestModelSelector:
     active model still renders (orphan guard); the switch rejects unknown ids."""
 
     def test_selector_lists_all_selectable_models(self) -> None:
-        from btc_5m_exec.ops.dashboard.panels import controls
-        from btc_bot.shadow import runner
+        from polymarket_exec.ops.dashboard.panels import controls
+        from polymarket_bot.shadow import runner
 
         html = controls.render(
             trade_shares_current=None, current_price=None, active_model="pricing_v0"
@@ -402,7 +402,7 @@ class TestModelSelector:
 
     def test_selector_includes_orphaned_active_model(self) -> None:
         """An unknown / non-selectable active model still renders (orphan guard)."""
-        from btc_5m_exec.ops.dashboard.panels import controls
+        from polymarket_exec.ops.dashboard.panels import controls
 
         html = controls.render(
             trade_shares_current=None, current_price=None, active_model="ghost_model"

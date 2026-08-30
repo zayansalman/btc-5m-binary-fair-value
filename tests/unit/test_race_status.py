@@ -160,9 +160,9 @@ def _seed(path: Path) -> None:
 
     conn.execute("INSERT INTO btc_paper_ticks (created_at) VALUES ('2026-07-07T06:40:00+00:00')")
     for k, v in [
-        ("btc_bot.mode", "paper"),
-        ("btc_bot.state", "stopped"),
-        ("btc_bot.updated_at", "2026-07-08T16:51:23+00:00"),
+        ("polymarket_bot.mode", "paper"),
+        ("polymarket_bot.state", "stopped"),
+        ("polymarket_bot.updated_at", "2026-07-08T16:51:23+00:00"),
     ]:
         conn.execute(
             "INSERT INTO config (key, value, updated_at) VALUES (?,?,?)",
@@ -325,7 +325,7 @@ def _cadence_db(tmp_path: Path, *, state: str, n_recent_ticks: int) -> Path:
     for i in range(n_recent_ticks):
         ts = (now - timedelta(seconds=5 * (i + 1))).isoformat()
         conn.execute("INSERT INTO btc_paper_ticks (created_at) VALUES (?)", (ts,))
-    for k, v in [("btc_bot.mode", "paper"), ("btc_bot.state", state)]:
+    for k, v in [("polymarket_bot.mode", "paper"), ("polymarket_bot.state", state)]:
         conn.execute(
             "INSERT INTO config (key, value, updated_at) VALUES (?,?,?)",
             (k, v, now.isoformat()),

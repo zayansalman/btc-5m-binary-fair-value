@@ -53,9 +53,9 @@ firewall.
 Designed, not built. Build after the first live soak yields real fills.
 
 A shipped, human-gated **v0** of steps 2–5 already exists for the backtest grid:
-`btc_bot/params_propose.py` runs `btc_bot.backtest.build_report`, picks the
+`polymarket_bot/params_propose.py` runs `polymarket_bot.backtest.build_report`, picks the
 recommended params, and writes them to `$DATA_DIR/params_proposed.json` for
-operator review — it never auto-applies. `btc_bot/params_apply.py` then promotes
+operator review — it never auto-applies. `polymarket_bot/params_apply.py` then promotes
 proposed → active (`params_active.json`, which the live bot reloads each window
 roll) only when invoked with `--confirm`. This is the "AI proposes, human
 disposes" pattern in miniature over the existing grid search; the full loop above

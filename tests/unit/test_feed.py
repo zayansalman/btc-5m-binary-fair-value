@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from btc_bot.pairarb.feed import (
+from polymarket_bot.pairarb.feed import (
     PUBLIC_HTTP_RPCS,
     FeedFill,
     FeedUnavailable,

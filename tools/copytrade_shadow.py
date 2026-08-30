@@ -30,7 +30,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from btc_bot.pairarb.mirror import MIN_ORDER_SHARES, CopyFill, price_the_copy
+from polymarket_bot.pairarb.mirror import MIN_ORDER_SHARES, CopyFill, price_the_copy
 
 GAMMA = "https://gamma-api.polymarket.com"
 CLOB = "https://clob.polymarket.com"
@@ -242,16 +242,16 @@ async def run_rpc(
     """Same ledger and pricing as :func:`run`, sourced from the fast feed.
 
     No ``POLYGON_RPC_WSS`` key required — polls ``eth_getLogs`` on a public
-    Polygon RPC (:func:`~btc_bot.pairarb.feed.http_poll_fills`), which reads
+    Polygon RPC (:func:`~polymarket_bot.pairarb.feed.http_poll_fills`), which reads
     the same on-chain event as the WSS transport at poll-interval-plus-block-
     time latency instead of the ``data-api``'s ~20s-stale batching. Detection
     time stands in for the fill timestamp (see
     ``mirror.trade_dict_from_fast_fill``), so ``their_ts`` and ``seen_ts`` are
     seconds apart here, not the tens of seconds the api feed measures.
     """
-    from btc_bot.pairarb.feed import FeedUnavailable, http_poll_fills
-    from btc_bot.pairarb.market_index import TokenIndex
-    from btc_bot.pairarb.mirror import trade_dict_from_fast_fill
+    from polymarket_bot.pairarb.feed import FeedUnavailable, http_poll_fills
+    from polymarket_bot.pairarb.market_index import TokenIndex
+    from polymarket_bot.pairarb.mirror import trade_dict_from_fast_fill
 
     db_path.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(db_path)

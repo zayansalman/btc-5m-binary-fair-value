@@ -16,7 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import config as _config  # noqa: E402  (loads .env)
-from btc_bot.adaptive import (  # noqa: E402
+from polymarket_bot.adaptive import (  # noqa: E402
     clear_auto_pause,
     is_paused,
     rolling_performance,

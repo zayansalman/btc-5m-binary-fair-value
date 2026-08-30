@@ -1,4 +1,4 @@
-"""Shared pytest fixtures for the btc_5m_exec test suite."""
+"""Shared pytest fixtures for the polymarket_exec test suite."""
 
 from __future__ import annotations
 
@@ -10,12 +10,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from btc_5m_exec.core.interfaces import (
+from polymarket_exec.core.interfaces import (
     AbstractExecutionManager,
     AbstractMarketConnector,
     AbstractPriceConnector,
 )
-from btc_5m_exec.core.types import (
+from polymarket_exec.core.types import (
     BacktestParams,
     MarketWindow,
     OrderState,
@@ -27,7 +27,7 @@ from btc_5m_exec.core.types import (
     StrategyParams,
     Tick,
 )
-from btc_5m_exec.ops.telemetry import FeedHealthTracker, LatencyTracker
+from polymarket_exec.ops.telemetry import FeedHealthTracker, LatencyTracker
 
 
 # ---------------------------------------------------------------------------

@@ -1,5 +1,35 @@
 # Changelog
 
+## v1.0.2 — Rename project to polymarket-crypto (#184) (2026-08-30)
+
+Following the branch close-out in #182 / commit 27f38fd: 5-minute-market work is closed
+and the next chapter (daily-window altcoin markets, #185) is not BTC- or 5-minute-specific.
+The old name — folder, GitHub repo, package `btc-5m-exec`, module dirs — was inaccurate
+BTC-5m-era branding. Mechanical rename plus a small set of honest status rewrites, no
+behavior change: 908 tests still green.
+
+- **`btc_5m_exec/` → `polymarket_exec/`**, **`btc_bot/` → `polymarket_bot/`** (`git mv`,
+  history preserved); package name `btc-5m-exec` → `polymarket-crypto` in `pyproject.toml`;
+  all imports, docstrings, comments, CI config, and current-state docs (README, AGENTS.md,
+  `docs/*.md`) updated to match.
+- Deleted `btc_5m_fv/` (confirmed dead — untracked, only `__pycache__`/`.DS_Store`,
+  superseded by #169) and the stale `btc_5m_exec.egg-info/` build artifact.
+- `docs/FILE_MAP.md` and the `<!-- GENERATED -->` blocks in `AGENTS.md`/`docs/CODE_MAP.md`
+  regenerated via `tools/gen_docs.py` — not hand-edited.
+- **Substantive, not cosmetic**: `AGENTS.md`'s Scope Fence previously named "BTC 5-minute
+  Up/Down" as the sole authorized live-trading market. Updated to state no market is
+  currently authorized for live trading — 5-minute work closed, no replacement category
+  chosen or built. Strictly more restrictive than before, cannot enable anything that
+  wasn't already stopped.
+- Left unchanged (deliberately): the `data/btc_5m_binary_fair_value.db` default filename
+  (`config.py`, `.env.example`) — same reasoning as #169: a data-layer identifier, not code
+  branding, renaming it risks silently pointing at a new, empty DB. Also left unchanged:
+  historical records that would be falsified by editing them — every `CHANGELOG.md` entry
+  below this one, `tasks/*.md` session logs, and the dated per-issue archives under
+  `docs/specs/` and `docs/superpowers/`.
+- Also renamed: the GitHub repo (`zayansalman/polymarket-btc-5m-pricing` →
+  `zayansalman/polymarket-crypto`, old URL redirects) and the local project folder.
+
 ## v1.0.1 — Remove "fair value" branding (#169) (2026-08-04)
 
 Reopen housekeeping before any new build work (see the 9-issue reopen scope filed this

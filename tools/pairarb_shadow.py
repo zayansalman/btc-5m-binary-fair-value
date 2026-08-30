@@ -13,10 +13,10 @@ What it does each cycle:
    ascending over ``closed=false`` and surfaces zombie Dec-2025 windows instead
    of live ones (#182).
 2. On first sight of a window, read both legs' books and ask
-   :func:`btc_bot.pairarb.quoter.plan_quote` where it would rest. Record the
+   :func:`polymarket_bot.pairarb.quoter.plan_quote` where it would rest. Record the
    depth already queued at those prices — we join the **back**.
 3. Each cycle, pull the market's public trade tape and advance the simulated
-   fills (:mod:`btc_bot.pairarb.fills`).
+   fills (:mod:`polymarket_bot.pairarb.fills`).
 4. Once resolved, settle into hedged pairs plus any stranded leg. Stranded legs
    settle on the realized outcome, never at par.
 
@@ -43,10 +43,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from btc_bot.pairarb import ledger
-from btc_bot.pairarb.fills import settle_window, simulate_fill, vwap
-from btc_bot.pairarb.quoter import DEFAULT_MIN_EDGE, plan_quote
-from btc_bot.pairarb.types import BookSide, PairOutcome, QuotePlan, RestingOrder
+from polymarket_bot.pairarb import ledger
+from polymarket_bot.pairarb.fills import settle_window, simulate_fill, vwap
+from polymarket_bot.pairarb.quoter import DEFAULT_MIN_EDGE, plan_quote
+from polymarket_bot.pairarb.types import BookSide, PairOutcome, QuotePlan, RestingOrder
 
 GAMMA = "https://gamma-api.polymarket.com"
 CLOB = "https://clob.polymarket.com"

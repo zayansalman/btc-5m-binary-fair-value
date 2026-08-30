@@ -9,9 +9,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from btc_bot.history import load_btc_history_stats
-from btc_bot.paper import load_paper_summary
-from btc_bot.backtest import format_report
+from polymarket_bot.history import load_btc_history_stats
+from polymarket_bot.paper import load_paper_summary
+from polymarket_bot.backtest import format_report
 from config import DATA_DIR
 from db import init_db
 

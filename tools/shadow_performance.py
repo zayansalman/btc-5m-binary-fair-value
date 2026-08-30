@@ -41,7 +41,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 try:  # canonical fee math lives in the shadow package (built by the fees agent)
-    from btc_bot.shadow.fees import breakeven_winrate
+    from polymarket_bot.shadow.fees import breakeven_winrate
 except Exception:  # pragma: no cover - exercised only before the package lands
     # Standalone fallback matching the shared contract exactly:
     #   fee_per_share(p) = 0.07 * p * (1 - p), charged on entry. Solving the

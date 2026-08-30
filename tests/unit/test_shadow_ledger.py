@@ -8,8 +8,8 @@ import pytest
 import pytest_asyncio
 
 import db as _db
-from btc_bot.shadow.fees import net_pnl_per_share
-from btc_bot.shadow.ledger import record_shadow_signal, settle_open_shadow
+from polymarket_bot.shadow.fees import net_pnl_per_share
+from polymarket_bot.shadow.ledger import record_shadow_signal, settle_open_shadow
 
 
 @pytest_asyncio.fixture

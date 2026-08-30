@@ -9,7 +9,7 @@ clears zero at its current point estimate).
 
 Every number matches the shadow ledger's own accounting: ``realized_pnl_usd``
 is already NET of the Polymarket taker fee (``0.07 * p * (1 - p)`` per share,
-charged on entry — see :mod:`btc_bot.shadow.fees`), so totals and means read
+charged on entry — see :mod:`polymarket_bot.shadow.fees`), so totals and means read
 straight off that column, and the fee-adjusted breakeven win-rate each model
 must beat is ``p + 0.07 * p * (1 - p)``.
 
@@ -78,7 +78,7 @@ MIN_TICKS_PER_WINDOW = 30  # ~25% of the ~120 expected; well clear of a brief bl
 
 
 def taker_fee_per_share(price: float, fee_rate: float = 0.07) -> float:
-    """Polymarket entry taker fee per share (mirrors btc_bot.shadow.fees)."""
+    """Polymarket entry taker fee per share (mirrors polymarket_bot.shadow.fees)."""
     return fee_rate * price * (1.0 - price)
 
 
@@ -320,7 +320,7 @@ def gather_bot_state(conn: sqlite3.Connection) -> BotState:
         r["key"]: (r["value"], r["updated_at"])
         for r in conn.execute(
             "SELECT key, value, updated_at FROM config WHERE key IN "
-            "('btc_bot.mode','btc_bot.state','btc_bot.updated_at')",
+            "('polymarket_bot.mode','polymarket_bot.state','polymarket_bot.updated_at')",
         ).fetchall()
     }
     last_tick = conn.execute(
@@ -335,7 +335,7 @@ def gather_bot_state(conn: sqlite3.Connection) -> BotState:
         "SELECT COUNT(*) c FROM btc_paper_ticks WHERE created_at >= ?",
         (cutoff,),
     ).fetchone()["c"]
-    state = cfg.get("btc_bot.state", ("?", ""))[0]
+    state = cfg.get("polymarket_bot.state", ("?", ""))[0]
     # "Accruing" means the loop is both marked running AND has produced a tick
     # within the last two window-lengths (10 min) of the snapshot.
     accruing = False
@@ -350,9 +350,9 @@ def gather_bot_state(conn: sqlite3.Connection) -> BotState:
     # watchdog cannot see. Not applicable to a stopped bot.
     cadence_ok = state != "running" or ticks_last_10min >= MIN_TICKS_PER_WINDOW
     return BotState(
-        mode=cfg.get("btc_bot.mode", ("?", ""))[0],
+        mode=cfg.get("polymarket_bot.mode", ("?", ""))[0],
         state=state,
-        updated_at=cfg.get("btc_bot.updated_at", ("", ""))[0],
+        updated_at=cfg.get("polymarket_bot.updated_at", ("", ""))[0],
         last_tick=str(last_tick or "—"),
         last_shadow=str(last_shadow or "—"),
         accruing=accruing,

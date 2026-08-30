@@ -1,8 +1,8 @@
 from pathlib import Path
 
-from btc_bot.history import load_btc_history_stats
-from btc_bot.backtest import BacktestParams, BuyOpportunity, evaluate_params, parse_market_window
-from btc_bot.strategy import StrategyParams, notional_from_confidence
+from polymarket_bot.history import load_btc_history_stats
+from polymarket_bot.backtest import BacktestParams, BuyOpportunity, evaluate_params, parse_market_window
+from polymarket_bot.strategy import StrategyParams, notional_from_confidence
 from config import BTC_PAPER_MAX_TRADE_USD, BTC_PAPER_MIN_CONFIDENCE, BTC_PAPER_MIN_TRADE_USD
 
 

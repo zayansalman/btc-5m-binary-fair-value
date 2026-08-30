@@ -36,10 +36,10 @@ from typing import Callable
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import config as _config  # noqa: E402
-from btc_bot import strategy  # noqa: E402
-from btc_bot.shadow import runner as shadow_runner  # noqa: E402
-from btc_bot.shadow.fees import net_pnl_per_share  # noqa: E402
-from btc_bot.shadow.types import ShadowSignal, SnapshotView  # noqa: E402
+from polymarket_bot import strategy  # noqa: E402
+from polymarket_bot.shadow import runner as shadow_runner  # noqa: E402
+from polymarket_bot.shadow.fees import net_pnl_per_share  # noqa: E402
+from polymarket_bot.shadow.types import ShadowSignal, SnapshotView  # noqa: E402
 
 WINDOW_SECONDS = 300
 SHARES = shadow_runner.SHADOW_SHARES
@@ -47,8 +47,8 @@ SHARES = shadow_runner.SHADOW_SHARES
 
 def _params() -> strategy.StrategyParams:
     """The production strategy params — the same mapping the paper loop uses
-    (btc_bot/paper.py::_strategy_params, minus the runtime sizing override)."""
-    from btc_bot import params as _p
+    (polymarket_bot/paper.py::_strategy_params, minus the runtime sizing override)."""
+    from polymarket_bot import params as _p
 
     a = _p.load_active()
     return strategy.StrategyParams(
@@ -275,7 +275,7 @@ def main() -> None:
         print("WARNING: reconstruction below 99% — treat unlabeled-window results as noisy")
 
     params = _params()
-    from btc_bot.shadow.signals import cushion_fresh_v7  # noqa: E402
+    from polymarket_bot.shadow.signals import cushion_fresh_v7  # noqa: E402
 
     models: dict[str, Callable] = dict(shadow_runner._MODELS)
     trades = replay(ticks, outcomes, models, params)
@@ -289,7 +289,7 @@ def main() -> None:
 
     if args.grid:
         print("\n=== v7 FRAGILITY GRID (params must sit on a plateau, not a spike) ===")
-        from btc_bot.shadow.signals import (  # noqa: E402
+        from polymarket_bot.shadow.signals import (  # noqa: E402
             cushion_fresh_v7_f45,
             cushion_fresh_v7_f45_spread,
         )

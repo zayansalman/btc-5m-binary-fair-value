@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from btc_5m_exec.ops.incidents import IncidentManager, IncidentState, RunbookActions
+from polymarket_exec.ops.incidents import IncidentManager, IncidentState, RunbookActions
 
 
 # ---------------------------------------------------------------------------

@@ -1,11 +1,13 @@
 # Engineering Roadmap
 
-This roadmap keeps the project useful as a local BTC paper-trading tool while
-moving it toward the engineering shape expected of serious trading systems.
+This roadmap keeps the project useful as a local Polymarket crypto paper-trading
+tool while moving it toward the engineering shape expected of serious trading
+systems.
 
 ## Current Strengths
 
-- Narrow market scope: BTC 5-minute Up/Down only.
+- Narrow market scope (inherited): BTC 5-minute Up/Down was the original build;
+  that line closed 2026-08-29 (#182) and no replacement category is chosen yet.
 - Explicit operator controls: Start, Stop, Refresh, activity feed.
 - Local paper ledger: ticks, simulated positions, exits, config state, and
   notifications are persisted in SQLite.
@@ -15,13 +17,13 @@ moving it toward the engineering shape expected of serious trading systems.
   dashboard state.
 
 > Several earlier roadmap items have since shipped and were removed from this
-> list: the market-data recorder (`btc_5m_exec/storage/recorder.py`), the
-> full-market replay + backtest harness (`btc_5m_exec/storage/replay.py`,
-> `btc_5m_exec/backtest/harness.py` — built, though not yet wired into the live
+> list: the market-data recorder (`polymarket_exec/storage/recorder.py`), the
+> full-market replay + backtest harness (`polymarket_exec/storage/replay.py`,
+> `polymarket_exec/backtest/harness.py` — built, though not yet wired into the live
 > tooling; see `docs/BACKTESTING.md`), feed/latency telemetry
-> (`btc_5m_exec/ops/telemetry.py`), incident states (`btc_5m_exec/ops/incidents.py`
+> (`polymarket_exec/ops/telemetry.py`), incident states (`polymarket_exec/ops/incidents.py`
 > + `docs/OPERATIONS_RUNBOOK.md`), the dedicated-wallet live executor
-> (`btc_5m_exec/execution/live.py`), and CI with deterministic fixtures
+> (`polymarket_exec/execution/live.py`), and CI with deterministic fixtures
 > (`.github/workflows/ci.yml`). What remains below is genuine future work.
 
 ## Priority Buildout
@@ -42,8 +44,8 @@ moving it toward the engineering shape expected of serious trading systems.
 
    Separate signal research from execution state. A new signal should be
    testable in replay before it is allowed in the live paper loop. The
-   human-gated params propose/apply flow (`btc_bot/params_propose.py`,
-   `btc_bot/params_apply.py`) is a first step; wiring the full-market harness
+   human-gated params propose/apply flow (`polymarket_bot/params_propose.py`,
+   `polymarket_bot/params_apply.py`) is a first step; wiring the full-market harness
    into that loop is the remaining work.
 
 ## Later, Explicitly Reviewed

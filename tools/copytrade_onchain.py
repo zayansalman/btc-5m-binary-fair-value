@@ -5,7 +5,7 @@ Replaces the ``data-api`` activity poll, which is **~20s stale** (median over
 Measured slippage by lag bucket: 9.56c median at 11-30s versus 2.82c at 0-2s,
 so this is worth roughly 3x on the dominant cost.
 
-Transport only; decoding lives in :mod:`btc_bot.pairarb.onchain`.
+Transport only; decoding lives in :mod:`polymarket_bot.pairarb.onchain`.
 
 Needs a Polygon RPC. Reading logs costs no gas and fits any free tier — set
 ``POLYGON_RPC_WSS`` (preferred, pushed) or ``POLYGON_RPC_HTTP`` (polled).
@@ -34,7 +34,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from btc_bot.pairarb.onchain import (
+from polymarket_bot.pairarb.onchain import (
     EXCHANGES,
     ORDER_FILLED_TOPIC,
     address_topic,

@@ -17,9 +17,9 @@ import pytest_asyncio
 
 import config as _config
 import db as _db
-import btc_bot.controller as controller
-import btc_bot.paper as paper
-from btc_5m_exec.execution.live import LiveOrderResult
+import polymarket_bot.controller as controller
+import polymarket_bot.paper as paper
+from polymarket_exec.execution.live import LiveOrderResult
 
 
 @pytest_asyncio.fixture
@@ -323,8 +323,8 @@ async def test_live_loop_refuses_without_gates(
     await paper.run_paper_loop(threading.Event())
 
     assert paper._live_executor is None
-    assert await _db.get_config("btc_bot.state") == "stopped"
-    detail = await _db.get_config("btc_bot.detail")
+    assert await _db.get_config("polymarket_bot.state") == "stopped"
+    detail = await _db.get_config("polymarket_bot.detail")
     assert "refused" in detail.lower()
     assert "paper mode" in detail  # explicit "did NOT fall back" message
 
@@ -380,7 +380,7 @@ def test_config_mode_choices_reject_unknown(monkeypatch: pytest.MonkeyPatch) -> 
 def _dash_module():
     import importlib
 
-    return importlib.import_module("btc_5m_exec.ops.dashboard.app")
+    return importlib.import_module("polymarket_exec.ops.dashboard.app")
 
 
 def test_dashboard_paper_copy_by_default(monkeypatch: pytest.MonkeyPatch) -> None:

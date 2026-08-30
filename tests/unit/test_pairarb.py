@@ -8,9 +8,9 @@ attribution — so a future change that loosens them fails loudly.
 
 from __future__ import annotations
 
-from btc_bot.pairarb.fills import hits_resting_bid, settle_window, simulate_fill
-from btc_bot.pairarb.quoter import MIN_ORDER_SHARES, plan_quote, quote_price
-from btc_bot.pairarb.types import BookSide, RestingOrder
+from polymarket_bot.pairarb.fills import hits_resting_bid, settle_window, simulate_fill
+from polymarket_bot.pairarb.quoter import MIN_ORDER_SHARES, plan_quote, quote_price
+from polymarket_bot.pairarb.types import BookSide, RestingOrder
 
 
 def _order(price=0.50, size=10.0, depth_ahead=0.0, outcome="Up", posted_ts=1000):
@@ -202,7 +202,7 @@ def test_plan_carries_queue_depth_for_both_legs():
 
 
 def test_vwap_weights_by_size_not_count():
-    from btc_bot.pairarb.fills import vwap
+    from polymarket_bot.pairarb.fills import vwap
 
     price, size = vwap([(0.40, 1.0), (0.50, 9.0)])
     assert size == 10.0
@@ -210,7 +210,7 @@ def test_vwap_weights_by_size_not_count():
 
 
 def test_vwap_of_no_executions_is_zero_not_a_crash():
-    from btc_bot.pairarb.fills import vwap
+    from polymarket_bot.pairarb.fills import vwap
 
     assert vwap([]) == (0.0, 0.0)
     assert vwap([(0.50, 0.0)]) == (0.0, 0.0)
@@ -218,7 +218,7 @@ def test_vwap_of_no_executions_is_zero_not_a_crash():
 
 def test_requoted_leg_settles_on_its_blended_cost():
     """Filled 5 @ 0.45 then 5 @ 0.55 -> blended 0.50 against a 0.49 hedge."""
-    from btc_bot.pairarb.fills import vwap
+    from polymarket_bot.pairarb.fills import vwap
 
     up_px, up_sz = vwap([(0.45, 5.0), (0.55, 5.0)])
     out = settle_window("w", up_sz, 10.0, up_px, 0.49, resolved_up=True)
@@ -264,7 +264,7 @@ def test_offset_quote_reports_the_deeper_queue():
 
 def test_never_rests_below_the_floor_price():
     """A 1c bid shows huge edge but fills only once the outcome is decided."""
-    from btc_bot.pairarb.quoter import MIN_QUOTE_PRICE
+    from polymarket_bot.pairarb.quoter import MIN_QUOTE_PRICE
 
     assert quote_price(_side("Up", 0.05), offset=0.04) is None
     assert quote_price(_side("Up", 0.10), offset=0.05) == 0.05
@@ -284,7 +284,7 @@ def _t(price=0.50, size=20.0, outcome="Up", ts=1000):
 
 
 def test_copy_is_priced_at_the_ask_we_cross_not_their_fill():
-    from btc_bot.pairarb.mirror import price_the_copy
+    from polymarket_bot.pairarb.mirror import price_the_copy
 
     f = price_the_copy(_t(price=0.40), [(0.52, 100.0)], max_shares=5.0)
     assert f is not None
@@ -296,7 +296,7 @@ def test_copy_is_priced_at_the_ask_we_cross_not_their_fill():
 
 def test_copy_size_is_clamped_up_to_the_venue_floor():
     """Their 2-share clip cannot be matched — the floor forces 5."""
-    from btc_bot.pairarb.mirror import price_the_copy
+    from polymarket_bot.pairarb.mirror import price_the_copy
 
     f = price_the_copy(_t(size=2.0), [(0.50, 100.0)], max_shares=50.0)
     assert f is not None
@@ -304,7 +304,7 @@ def test_copy_size_is_clamped_up_to_the_venue_floor():
 
 
 def test_skip_below_min_declines_rather_than_oversizing():
-    from btc_bot.pairarb.mirror import price_the_copy
+    from polymarket_bot.pairarb.mirror import price_the_copy
 
     assert price_the_copy(_t(size=2.0), [(0.50, 100.0)], skip_below_min=True) is None
     assert price_the_copy(_t(size=20.0), [(0.50, 100.0)], skip_below_min=True) is not None
@@ -312,13 +312,13 @@ def test_skip_below_min_declines_rather_than_oversizing():
 
 def test_declines_when_depth_cannot_cover_the_venue_minimum():
     """3 shares displayed cannot support a 5-share order — not a small fill."""
-    from btc_bot.pairarb.mirror import price_the_copy
+    from polymarket_bot.pairarb.mirror import price_the_copy
 
     assert price_the_copy(_t(), [(0.50, 3.0)], max_shares=5.0) is None
 
 
 def test_copy_pnl_charges_the_fee_on_both_win_and_loss():
-    from btc_bot.pairarb.mirror import price_the_copy
+    from polymarket_bot.pairarb.mirror import price_the_copy
 
     f = price_the_copy(_t(), [(0.50, 100.0)], max_shares=5.0)
     assert f is not None

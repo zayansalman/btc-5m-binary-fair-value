@@ -11,7 +11,7 @@ them to the plausible-looking wrong ones.
 
 from __future__ import annotations
 
-from btc_bot.pairarb.onchain import (
+from polymarket_bot.pairarb.onchain import (
     ORDER_FILLED_TOPIC,
     address_topic,
     decode_order_filled,

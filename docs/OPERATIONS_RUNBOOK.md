@@ -1,6 +1,8 @@
 # Operations Runbook
 
-This runbook is for the local BTC 5-minute binary pricing-model strategy lab. The goal is to
+This runbook is for the local Polymarket crypto binary-markets strategy lab
+(currently-wired path is inherited BTC 5-minute — see AGENTS.md for status).
+The goal is to
 make operation boring: visible state, bounded risk, and fast Stop behavior.
 Paper mode is the default; live mode is strictly opt-in (see "Going live").
 
@@ -128,8 +130,8 @@ the funder address** — no key export needed anywhere.
 
    > **Both vars are required.** Setting only `BTC_LIVE_CONFIRM` leaves the bot
    > paper-trading while the UI may read armed — `BTC_BOT_MODE=live` is what
-   > actually routes orders to the live executor (see `btc_bot/controller.py`,
-   > `btc_bot/paper.py`). The private key + funder from step 1 and a clean config
+   > actually routes orders to the live executor (see `polymarket_bot/controller.py`,
+   > `polymarket_bot/paper.py`). The private key + funder from step 1 and a clean config
    > parse are the remaining gates; any missing one makes Start refuse.
 
 4. Verify the dashboard says **LIVE — orders are real** and the activity feed

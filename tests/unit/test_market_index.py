@@ -12,7 +12,7 @@ import json
 
 import pytest
 
-from btc_bot.pairarb.market_index import (
+from polymarket_bot.pairarb.market_index import (
     MarketTokens,
     TokenIndex,
     parse_market,

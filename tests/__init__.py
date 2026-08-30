@@ -1,1 +1,1 @@
-"""Test suite for btc_5m_exec."""
+"""Test suite for polymarket_exec."""

@@ -17,7 +17,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 from fastapi.testclient import TestClient
 
-from btc_5m_exec.ops.dashboard.app import app
+from polymarket_exec.ops.dashboard.app import app
 
 
 @pytest.fixture

@@ -19,7 +19,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 NO_DOCSTRING = "(needs docstring)"
 
-SOURCE_ROOTS = ["btc_5m_exec", "btc_bot", "tools"]
+SOURCE_ROOTS = ["polymarket_exec", "polymarket_bot", "tools"]
 TOPLEVEL_MODULES = ["main.py", "config.py", "db.py", "logging_setup.py", "dashboard.py"]
 # Entrypoints / foundation: never flagged DEAD even with zero importers.
 WIRED_ALLOWLIST = {"main.py", "config.py", "db.py", "logging_setup.py"}
@@ -206,7 +206,7 @@ def count_tests(root: Path) -> int:
 def entrypoint_ok(root: Path) -> bool:
     try:
         res = subprocess.run(
-            [sys.executable, "-c", "import btc_5m_exec.ops.dashboard.app"],
+            [sys.executable, "-c", "import polymarket_exec.ops.dashboard.app"],
             cwd=root, capture_output=True, text=True, timeout=60,
         )
     except subprocess.TimeoutExpired:
@@ -302,8 +302,8 @@ def render_summary(
     else:
         n = PLACEHOLDER_TEST_COUNT
     lines = [
-        "- **Trees:** `btc_bot/` = live loop + signal math; `btc_5m_exec/` = execution/connectors/dashboard/backtest; top-level `config.py`/`db.py`/`logging_setup.py` = foundation. Both ACTIVE, bidirectionally coupled.",
-        "- **Entry:** `python main.py` → FastAPI `btc_5m_exec/ops/dashboard/app.py`; loop starts on operator ▶ Start → `btc_bot/controller.py:request_start`.",
+        "- **Trees:** `polymarket_bot/` = live loop + signal math; `polymarket_exec/` = execution/connectors/dashboard/backtest; top-level `config.py`/`db.py`/`logging_setup.py` = foundation. Both ACTIVE, bidirectionally coupled.",
+        "- **Entry:** `python main.py` → FastAPI `polymarket_exec/ops/dashboard/app.py`; loop starts on operator ▶ Start → `polymarket_bot/controller.py:request_start`.",
         f"- **Tests:** {n}.",
         f"- **Built-but-dead (do not edit expecting runtime effect):** {', '.join(f'`{d}`' for d in dead) or 'none'}.",
     ]
@@ -379,7 +379,7 @@ def main(argv=None) -> int:
 
     _write_generated(REPO, fast=args.fast)
     if not entrypoint_ok(REPO):
-        print("WARNING: btc_5m_exec.ops.dashboard.app failed to import — Gradio fallback would activate.", file=sys.stderr)
+        print("WARNING: polymarket_exec.ops.dashboard.app failed to import — Gradio fallback would activate.", file=sys.stderr)
     return 0
 
 

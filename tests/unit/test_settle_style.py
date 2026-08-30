@@ -13,8 +13,8 @@ import pytest
 import pytest_asyncio
 
 import db as _db
-import btc_bot.paper as paper
-from btc_5m_exec.execution.live import LiveExecutor
+import polymarket_bot.paper as paper
+from polymarket_exec.execution.live import LiveExecutor
 
 
 @pytest_asyncio.fixture
@@ -296,7 +296,7 @@ async def test_settled_live_close_skips_paper_counter(
 
 
 def test_edge_above_cap_is_rejected():
-    from btc_bot.strategy import StrategyParams, signal_from_executable_edges
+    from polymarket_bot.strategy import StrategyParams, signal_from_executable_edges
 
     params = StrategyParams(
         min_trade_usd=1.0, max_trade_usd=5.0, entry_edge_min=0.045,
@@ -311,7 +311,7 @@ def test_edge_above_cap_is_rejected():
 
 
 def test_longshot_entry_below_min_price_is_rejected():
-    from btc_bot.strategy import StrategyParams, signal_from_executable_edges
+    from polymarket_bot.strategy import StrategyParams, signal_from_executable_edges
 
     params = StrategyParams(
         min_trade_usd=1.0, max_trade_usd=5.0, entry_edge_min=0.045,
@@ -326,7 +326,7 @@ def test_longshot_entry_below_min_price_is_rejected():
 
 
 def test_modest_edge_favorite_passes_filters():
-    from btc_bot.strategy import StrategyParams, signal_from_executable_edges
+    from polymarket_bot.strategy import StrategyParams, signal_from_executable_edges
 
     params = StrategyParams(
         min_trade_usd=1.0, max_trade_usd=5.0, entry_edge_min=0.045,

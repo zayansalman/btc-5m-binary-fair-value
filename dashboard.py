@@ -9,9 +9,9 @@ from typing import Any
 
 import gradio as gr
 
-from btc_bot.controller import get_status, request_start, request_stop
-from btc_bot.history import load_btc_history_stats
-from btc_bot.paper import load_paper_summary
+from polymarket_bot.controller import get_status, request_start, request_stop
+from polymarket_bot.history import load_btc_history_stats
+from polymarket_bot.paper import load_paper_summary
 from config import (
     BTC_CHAINLINK_STREAM_URL,
     DATA_DIR,
@@ -30,7 +30,7 @@ from config import (
 )
 from db import connect
 from logging_setup import get_logger
-from btc_bot.backtest import format_report
+from polymarket_bot.backtest import format_report
 
 log = get_logger("dashboard")
 

@@ -5,10 +5,10 @@ from __future__ import annotations
 
 import pytest
 
-from btc_5m_exec.core.types import Side, Signal, SignalAction, StrategyParams
-from btc_5m_exec.strategy.pricing_model import fair_up_probability, sigma_per_second
-from btc_5m_exec.strategy.signal import signal_from_edge
-from btc_5m_exec.strategy.sizing import confidence_from_edge, notional_from_confidence
+from polymarket_exec.core.types import Side, Signal, SignalAction, StrategyParams
+from polymarket_exec.strategy.pricing_model import fair_up_probability, sigma_per_second
+from polymarket_exec.strategy.signal import signal_from_edge
+from polymarket_exec.strategy.sizing import confidence_from_edge, notional_from_confidence
 
 
 # ============================================================================

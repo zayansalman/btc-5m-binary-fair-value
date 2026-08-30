@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from btc_bot import params as p
+from polymarket_bot import params as p
 
 
 @pytest.fixture

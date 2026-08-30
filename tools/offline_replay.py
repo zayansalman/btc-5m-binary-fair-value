@@ -1,6 +1,6 @@
 """Offline replay of the BTC 5-m pricing-model strategy on HF Polymarket data.
 
-Issue #56. Replays ``btc_bot.strategy.fair_up_probability`` +
+Issue #56. Replays ``polymarket_bot.strategy.fair_up_probability`` +
 ``signal_from_executable_edges`` over the HF dataset
 ``aliplayer1/polymarket-crypto-updown`` to validate Brier / ROI / win-rate
 on ≫ the ~844 fills present in the live SQLite journal.
@@ -41,7 +41,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from btc_bot.strategy import (  # noqa: E402
+from polymarket_bot.strategy import (  # noqa: E402
     StrategyParams,
     fair_up_probability,
     signal_from_executable_edges,
@@ -296,7 +296,7 @@ def aggregate_metrics(entries: list[ReplayEntry]) -> dict:
     losses = n - wins
     # Binary payoff on Polymarket: shares = notional/entry_price; win → $1/share
     # gross, $0 if lose. PnL = (1/entry_price - 1) * notional on a win, else
-    # -notional. Matches `_metrics_from_trades` in btc_bot/backtest.py.
+    # -notional. Matches `_metrics_from_trades` in polymarket_bot/backtest.py.
     pnl_usd = 0.0
     notional_total = 0.0
     for e in entries:

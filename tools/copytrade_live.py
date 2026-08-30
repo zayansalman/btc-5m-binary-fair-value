@@ -51,8 +51,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from btc_bot.pairarb.feed import FeedUnavailable, open_feed
-from btc_bot.pairarb.mirror import MIN_ORDER_SHARES, price_the_copy
+from polymarket_bot.pairarb.feed import FeedUnavailable, open_feed
+from polymarket_bot.pairarb.mirror import MIN_ORDER_SHARES, price_the_copy
 
 CLOB = "https://clob.polymarket.com"
 DATA = "https://data-api.polymarket.com"
@@ -96,7 +96,7 @@ def assert_copy_live_allowed(live_flag: bool) -> None:
 
     problems: list[str] = []
     try:
-        from btc_5m_exec.execution.live import assert_live_boot_allowed
+        from polymarket_exec.execution.live import assert_live_boot_allowed
 
         assert_live_boot_allowed()
     except ImportError as exc:  # noqa: BLE001

@@ -11,7 +11,7 @@ load_dotenv()
 
 # Env vars that failed to parse. Paper mode tolerates the fallback defaults,
 # but live mode REFUSES to boot while this is non-empty (see
-# btc_5m_exec.execution.live.assert_live_boot_allowed): a typo in a risk limit
+# polymarket_exec.execution.live.assert_live_boot_allowed): a typo in a risk limit
 # must never silently degrade to looser defaults with real funds.
 CONFIG_PARSE_ERRORS: list[str] = []
 

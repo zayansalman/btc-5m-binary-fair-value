@@ -13,11 +13,11 @@ import pytest
 import pytest_asyncio
 
 import db as _db
-from btc_bot import strategy
-from btc_bot.paper import PaperSnapshot
-from btc_bot.shadow import runner
-from btc_bot.shadow.fees import net_pnl_per_share
-from btc_bot.shadow.ledger import settle_open_shadow
+from polymarket_bot import strategy
+from polymarket_bot.paper import PaperSnapshot
+from polymarket_bot.shadow import runner
+from polymarket_bot.shadow.fees import net_pnl_per_share
+from polymarket_bot.shadow.ledger import settle_open_shadow
 
 
 @pytest.fixture
