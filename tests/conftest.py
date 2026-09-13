@@ -1,4 +1,4 @@
-"""Shared pytest fixtures for the btc_5m_fv test suite."""
+"""Shared pytest fixtures for the polymarket_exec test suite."""
 
 from __future__ import annotations
 
@@ -10,12 +10,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from btc_5m_fv.core.interfaces import (
+from polymarket_exec.core.interfaces import (
     AbstractExecutionManager,
     AbstractMarketConnector,
     AbstractPriceConnector,
 )
-from btc_5m_fv.core.types import (
+from polymarket_exec.core.types import (
     BacktestParams,
     MarketWindow,
     OrderState,
@@ -27,7 +27,7 @@ from btc_5m_fv.core.types import (
     StrategyParams,
     Tick,
 )
-from btc_5m_fv.ops.telemetry import FeedHealthTracker, LatencyTracker
+from polymarket_exec.ops.telemetry import FeedHealthTracker, LatencyTracker
 
 
 # ---------------------------------------------------------------------------
@@ -400,7 +400,7 @@ def closed_position(sample_order: PaperOrder) -> PaperPosition:
 
 
 # ---------------------------------------------------------------------------
-# Price series fixtures for fair-value tests
+# Price series fixtures for pricing-model tests
 # ---------------------------------------------------------------------------
 
 

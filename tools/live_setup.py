@@ -13,7 +13,7 @@ path for API trading is a wallet you control:
 SECURITY: the generated private key is written straight into ``.env`` and is
 NEVER printed to the terminal — so it cannot leak into logs, scrollback, or
 an assistant transcript. Only the PUBLIC signer/deposit addresses are shown.
-``BTC_LIVE_CONFIRM`` is deliberately NOT written: you add that line yourself
+``LIVE_CONFIRM`` is deliberately NOT written: you add that line yourself
 as the final, conscious "I accept the risk" step before launching.
 
 Requires the official py-sdk for the one-time setup only:
@@ -42,15 +42,15 @@ from dotenv import load_dotenv  # noqa: E402
 ENV_PATH = PROJECT_ROOT / ".env"
 load_dotenv(ENV_PATH)
 
-# Keys this script manages in .env. BTC_LIVE_CONFIRM is intentionally absent.
+# Keys this script manages in .env. LIVE_CONFIRM is intentionally absent.
 _LIVE_KEYS = (
-    "BTC_BOT_MODE",
+    "BOT_MODE",
     "POLYMARKET_PRIVATE_KEY",
     "POLYMARKET_FUNDER",
     "POLYMARKET_SIGNATURE_TYPE",
-    "BTC_LIVE_MAX_TRADE_USD",
-    "BTC_PAPER_MIN_TRADE_USD",
-    "BTC_PAPER_MAX_TRADE_USD",
+    "TRADE_MAX_USD",
+    "PAPER_MIN_TRADE_USD",
+    "PAPER_MAX_TRADE_USD",
 )
 
 
@@ -150,13 +150,13 @@ def main() -> int:
     print(f"deposit wallet / FUNDER (public): {funder}")
 
     _write_env_secure({
-        "BTC_BOT_MODE": "live",
+        "BOT_MODE": "live",
         "POLYMARKET_PRIVATE_KEY": key,
         "POLYMARKET_FUNDER": funder,
         "POLYMARKET_SIGNATURE_TYPE": "3",
-        "BTC_LIVE_MAX_TRADE_USD": "5",
-        "BTC_PAPER_MIN_TRADE_USD": "5",
-        "BTC_PAPER_MAX_TRADE_USD": "5",
+        "TRADE_MAX_USD": "5",
+        "PAPER_MIN_TRADE_USD": "5",
+        "PAPER_MAX_TRADE_USD": "5",
     })
 
     print("\n.env updated (key written, not shown; perms 0600; .env.bak saved).")
@@ -167,7 +167,7 @@ def main() -> int:
     print(f"  1. Fund the deposit wallet with USDC/pUSD on Polygon: {funder}")
     print("     (From a Polymarket UI account: Withdraw -> paste that address.)")
     print("  2. Add this line to .env yourself (the conscious go-live step):")
-    print("        BTC_LIVE_CONFIRM=YES_I_UNDERSTAND")
+    print("        LIVE_CONFIRM=YES_I_UNDERSTAND")
     print("  3. Verify: .venv/bin/python tools/live_preflight.py")
     return 0
 

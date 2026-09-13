@@ -14,9 +14,9 @@ import time
 
 import pytest
 
-import btc_bot.controller as controller
-import btc_bot.paper as paper
-from btc_bot.controller import watchdog_verdict
+import polymarket_bot.controller as controller
+import polymarket_bot.paper as paper
+from polymarket_bot.controller import watchdog_verdict
 
 
 class TestWatchdogVerdict:

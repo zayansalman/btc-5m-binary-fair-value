@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from btc_bot.calibration import (
+from polymarket_bot.calibration import (
     IdentityCalibrator,
     IsotonicCalibrator,
     _pav,

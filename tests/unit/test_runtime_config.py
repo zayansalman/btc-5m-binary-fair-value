@@ -14,7 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import db as _db
-from btc_5m_fv.execution.gate import (
+from polymarket_exec.execution.gate import (
     get_runtime_max_trade_usd,
     get_runtime_trade_shares,
 )
@@ -23,7 +23,7 @@ from btc_5m_fv.execution.gate import (
 @pytest.fixture
 def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
     monkeypatch.setattr(_db, "DB_PATH", tmp_path / "rt_config.db")
-    from btc_5m_fv.ops.dashboard.app import app
+    from polymarket_exec.ops.dashboard.app import app
 
     with TestClient(app) as c:
         yield c

@@ -1,6 +1,8 @@
 # Operations Runbook
 
-This runbook is for the local BTC 5-minute binary fair-value strategy lab. The goal is to
+This runbook is for the local Polymarket crypto binary-markets strategy lab
+(currently-wired path is inherited BTC 5-minute — see AGENTS.md for status).
+The goal is to
 make operation boring: visible state, bounded risk, and fast Stop behavior.
 Paper mode is the default; live mode is strictly opt-in (see "Going live").
 
@@ -96,7 +98,7 @@ deterministic deposit wallet, and writes the config straight into `.env`
 (perms `0600`). The private key is **never printed** — it cannot leak into
 scrollback or logs. There is no separate approval step: the collateral
 allowance is set automatically the first time the bot connects to a funded
-wallet (`update_balance_allowance`). `BTC_LIVE_CONFIRM` is deliberately not
+wallet (`update_balance_allowance`). `LIVE_CONFIRM` is deliberately not
 written — you add that line yourself as the final go-live step.
 
 **Funding:** send USDC/pUSD on Polygon to the printed funder address. Funds
@@ -121,37 +123,37 @@ the funder address** — no key export needed anywhere.
    **Start** on the dashboard:
 
    ```bash
-   export BTC_BOT_MODE=live
-   export BTC_LIVE_CONFIRM=YES_I_UNDERSTAND
+   export BOT_MODE=live
+   export LIVE_CONFIRM=YES_I_UNDERSTAND
    ./.venv/bin/python main.py
    ```
 
-   > **Both vars are required.** Setting only `BTC_LIVE_CONFIRM` leaves the bot
-   > paper-trading while the UI may read armed — `BTC_BOT_MODE=live` is what
-   > actually routes orders to the live executor (see `btc_bot/controller.py`,
-   > `btc_bot/paper.py`). The private key + funder from step 1 and a clean config
+   > **Both vars are required.** Setting only `LIVE_CONFIRM` leaves the bot
+   > paper-trading while the UI may read armed — `BOT_MODE=live` is what
+   > actually routes orders to the live executor (see `polymarket_bot/controller.py`,
+   > `polymarket_bot/paper.py`). The private key + funder from step 1 and a clean config
    > parse are the remaining gates; any missing one makes Start refuse.
 
 4. Verify the dashboard says **LIVE — orders are real** and the activity feed
-   shows `btc_live_started`. If any boot gate is missing, Start refuses with
+   shows `live_started`. If any boot gate is missing, Start refuses with
    an explicit error and nothing runs — live never silently falls back to paper.
 
 ### Hard risk limits (enforced in code before every order)
 
 | Limit | Env var | Default |
 | --- | --- | --- |
-| Max notional per trade | `BTC_LIVE_MAX_TRADE_USD` | $3 |
+| Max notional per trade | `TRADE_MAX_USD` | $3 |
 | Open positions | (fixed) | 1 |
-| Daily realized-loss halt | `BTC_LIVE_DAILY_LOSS_HALT_USD` | $10 (UTC day, persisted) |
-| Daily bankroll cap (sum of buys) | `BTC_LIVE_BANKROLL_CAP_USD` | **disabled** when blank/unset/≤0; positive number = cap (UTC day, persisted) |
-| Entry slippage guard (ask vs signal) | `BTC_LIVE_MAX_ENTRY_SLIPPAGE` | 0.02 |
-| Exit fill wait before cancel/retry | `BTC_LIVE_EXIT_FILL_TIMEOUT_SECONDS` | 10s |
+| Daily realized-loss halt | `TRADE_DAILY_LOSS_HALT_USD` | $10 (UTC day, persisted) |
+| Daily bankroll cap (sum of buys) | `TRADE_BANKROLL_CAP_USD` | **disabled** when blank/unset/≤0; positive number = cap (UTC day, persisted) |
+| Entry slippage guard (ask vs signal) | `TRADE_MAX_ENTRY_SLIPPAGE` | 0.02 |
+| Exit fill wait before cancel/retry | `LIVE_EXIT_FILL_TIMEOUT_SECONDS` | 10s |
 
 The daily loss halt is on by default but is now operator-controllable from the
 dashboard — see **Loss-halt operator controls (#76)** below. As of #76 the live
 halt fires on the **live (real-money) leg only**; paper-study losses no longer
 halt live trading. The daily bankroll cap is **opt-in** as of
-v0.4.4: leave `BTC_LIVE_BANKROLL_CAP_USD` blank/unset and the cap gate is
+v0.4.4: leave `TRADE_BANKROLL_CAP_USD` blank/unset and the cap gate is
 bypassed (the spend counter still increments so the dashboard can show daily
 throughput). When set to a positive dollar amount it behaves as before —
 persisted in SQLite, restart-safe within the UTC day. Realized PnL feeds the
@@ -178,16 +180,16 @@ live realized −$12.40 ≤ −$10.00. Bot stopped & flattened — Reset the hal
 Start to resume."* Operator workflow after a halt: **Reset halt → Start**.
 Pressing Start without resetting re-trips on the first tick and stops again.
 
-Every bypass/reset is journaled to `notification_feed` (`btc_loss_halt_bypass`,
-`btc_loss_halt_reset`, `btc_loss_halt_stop`). On the first dashboard boot after
+Every bypass/reset is journaled to `notification_feed` (`loss_halt_bypass`,
+`loss_halt_reset`, `loss_halt_stop`). On the first dashboard boot after
 this change, a one-shot migration clears any stale paper-era bypass flag so live
 starts halt-ON.
 
-A malformed risk-limit env value (e.g. `BTC_LIVE_MAX_TRADE_USD=O.50`) makes
+A malformed risk-limit env value (e.g. `TRADE_MAX_USD=O.50`) makes
 live boot REFUSE with the exact parse error instead of silently falling back
 to the looser default.
 
-Blocked attempts are journaled to the `btc_live_orders` table with status
+Blocked attempts are journaled to the `live_orders` table with status
 `BLOCKED` — check it if the bot seems quiet.
 
 Note: Polymarket enforces a minimum order size (typically 5 shares). With a $3
@@ -201,7 +203,7 @@ Every live boot, BEFORE any trading:
 1. **All resting CLOB orders on the account are cancelled** (`cancel_all`).
    Use a dedicated bot wallet — manual orders from the same wallet would be
    cancelled too.
-2. Any **open ledger position is re-adopted** from the `btc_live_orders`
+2. Any **open ledger position is re-adopted** from the `live_orders`
    journal (token, entry price, exchange-confirmed fill size) so the normal
    exit path flattens it. Open rows with no live order behind them (paper
    artifacts, never-filled entries) are closed harmlessly with reason
@@ -244,10 +246,10 @@ Drill this once before going live so you know it works.
 
   ```bash
   sqlite3 data/btc_5m_binary_fair_value.db \
-    "UPDATE btc_paper_positions SET state='closed', exit_reason='MANUAL' WHERE state='open'"
+    "UPDATE paper_positions SET state='closed', exit_reason='MANUAL' WHERE state='open'"
   ```
 
-### Settlement and redemption (BTC_EXIT_STYLE=settle, the default)
+### Settlement and redemption (EXIT_STYLE=settle, the default)
 
 Settle-style positions ride to window resolution and never place exit
 orders. The engine reads the Chainlink settlement (Up iff close ≥ open),
@@ -261,7 +263,7 @@ frees the position slot.
   new entries.
 - Losing tokens expire worthless; nothing to do.
 - Legacy scalp behavior (intra-window TARGET/STOP/BAND exits, always flat
-  before resolution) is available with `BTC_EXIT_STYLE=scalp` — note it
+  before resolution) is available with `EXIT_STYLE=scalp` — note it
   soaked **negative** under honest fills and exists for experiments only.
 
 ### Live audit trail
@@ -270,7 +272,7 @@ Every order, cancel, and blocked attempt lands in SQLite:
 
 ```bash
 sqlite3 data/btc_5m_binary_fair_value.db \
-  "SELECT created_at, intent, side, price, size, status, error FROM btc_live_orders ORDER BY id DESC LIMIT 20"
+  "SELECT created_at, intent, side, price, size, status, error FROM live_orders ORDER BY id DESC LIMIT 20"
 ```
 
 ## Data

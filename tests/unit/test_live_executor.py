@@ -19,7 +19,7 @@ from py_clob_client_v2 import OrderPayload
 
 import config as _config
 import db as _db
-from btc_5m_fv.execution.live import (
+from polymarket_exec.execution.live import (
     BUY,
     CONFIRM_PHRASE,
     SELL,
@@ -136,7 +136,7 @@ def _executor(
 async def _journal_rows(journal_db) -> list[dict]:
     async with journal_db.connect() as conn:
         async with conn.execute(
-            "SELECT * FROM btc_live_orders ORDER BY id"
+            "SELECT * FROM live_orders ORDER BY id"
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
 
@@ -152,7 +152,7 @@ def test_boot_refused_without_private_key() -> None:
 
 
 def test_boot_refused_without_confirm_phrase() -> None:
-    with pytest.raises(LiveBootRefused, match="BTC_LIVE_CONFIRM"):
+    with pytest.raises(LiveBootRefused, match="LIVE_CONFIRM"):
         assert_live_boot_allowed(private_key="0xabc", confirm="", funder="0xF")
 
 
@@ -211,7 +211,7 @@ def test_boot_refused_on_malformed_risk_env(monkeypatch: pytest.MonkeyPatch) -> 
     # looser default.
     monkeypatch.setattr(
         _config, "CONFIG_PARSE_ERRORS",
-        ["BTC_LIVE_MAX_TRADE_USD='O.50' is not a valid number"],
+        ["TRADE_MAX_USD='O.50' is not a valid number"],
     )
     with pytest.raises(LiveBootRefused, match="invalid env value"):
         assert_live_boot_allowed(
@@ -221,22 +221,22 @@ def test_boot_refused_on_malformed_risk_env(monkeypatch: pytest.MonkeyPatch) -> 
 
 def test_boot_gate_reads_config_at_call_time(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(_config, "POLYMARKET_PRIVATE_KEY", "")
-    monkeypatch.setattr(_config, "BTC_LIVE_CONFIRM", "")
+    monkeypatch.setattr(_config, "LIVE_CONFIRM", "")
     monkeypatch.setattr(_config, "POLYMARKET_FUNDER", "")
     with pytest.raises(LiveBootRefused):
         build_live_executor()
     monkeypatch.setattr(_config, "POLYMARKET_PRIVATE_KEY", "0xabc")
-    monkeypatch.setattr(_config, "BTC_LIVE_CONFIRM", CONFIRM_PHRASE)
+    monkeypatch.setattr(_config, "LIVE_CONFIRM", CONFIRM_PHRASE)
     monkeypatch.setattr(_config, "POLYMARKET_FUNDER", "0xFUNDER")
     executor = build_live_executor()
     assert isinstance(executor, LiveExecutor)
 
 
 def test_paper_mode_is_default_in_config(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Paper is the default when BTC_BOT_MODE is unset — asserted on the
+    # Paper is the default when BOT_MODE is unset — asserted on the
     # resolution logic, independent of any operator .env that opts into live.
-    monkeypatch.delenv("BTC_BOT_MODE", raising=False)
-    assert _config._env_choice("BTC_BOT_MODE", "paper", {"paper", "live"}) == "paper"
+    monkeypatch.delenv("BOT_MODE", raising=False)
+    assert _config._env_choice("BOT_MODE", "paper", {"paper", "live"}) == "paper"
 
 
 # ---------------------------------------------------------------------------
@@ -580,11 +580,11 @@ async def test_bankroll_cap_blocks_session_overspend(journal_db, tmp_path: Path)
 async def test_bankroll_cap_none_does_not_block(
     journal_db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """With BTC_LIVE_BANKROLL_CAP_USD unset (None), the cap gate is disabled
+    """With TRADE_BANKROLL_CAP_USD unset (None), the cap gate is disabled
     and no amount of cumulative spend triggers a 'bankroll cap' BLOCKED."""
     # Monkeypatch the config fallback used by the constructor — the test must
     # not depend on whatever value the developer has in their local .env.
-    monkeypatch.setattr(_config, "BTC_LIVE_BANKROLL_CAP_USD", None)
+    monkeypatch.setattr(_config, "TRADE_BANKROLL_CAP_USD", None)
     client = _mock_client()
     executor = _executor(client, tmp_path, bankroll=None)
     assert executor.bankroll_cap_usd is None
@@ -996,7 +996,7 @@ async def test_entry_blocked_when_ask_gaps_above_signal(
 async def _seed_open_position(journal_db, window_slug: str = "w-prev") -> int:
     async with journal_db.connect() as conn:
         cur = await conn.execute(
-            "INSERT INTO btc_paper_positions("
+            "INSERT INTO paper_positions("
             "opened_at, window_slug, side, state, entry_price, notional_usd, shares"
             ") VALUES (?, ?, 'Up', 'open', 0.57, 3.0, 5.26)",
             ("2026-06-10T11:00:00+00:00", window_slug),
@@ -1071,7 +1071,7 @@ async def test_boot_closes_open_row_without_live_trace(
 
     async with journal_db.connect() as conn:
         async with conn.execute(
-            "SELECT state, exit_reason FROM btc_paper_positions WHERE position_id = ?",
+            "SELECT state, exit_reason FROM paper_positions WHERE position_id = ?",
             (position_id,),
         ) as cur:
             row = dict(await cur.fetchone())
@@ -1097,7 +1097,7 @@ async def test_boot_closes_open_row_when_entry_never_filled(
 
     async with journal_db.connect() as conn:
         async with conn.execute(
-            "SELECT state, exit_reason FROM btc_paper_positions WHERE position_id = ?",
+            "SELECT state, exit_reason FROM paper_positions WHERE position_id = ?",
             (position_id,),
         ) as cur:
             row = dict(await cur.fetchone())
@@ -1146,7 +1146,7 @@ async def test_boot_closes_stale_row_when_order_pruned_and_window_resolved(
 
     async with journal_db.connect() as conn:
         async with conn.execute(
-            "SELECT state, exit_reason FROM btc_paper_positions WHERE position_id = ?",
+            "SELECT state, exit_reason FROM paper_positions WHERE position_id = ?",
             (position_id,),
         ) as cur:
             row = dict(await cur.fetchone())
@@ -1277,7 +1277,7 @@ async def test_boot_cancel_retries_transient_then_succeeds(
 ) -> None:
     """A transient 425 'order manager not ready' on cancel_all is retried,
     not treated as fatal — reconciliation succeeds once the cancel does."""
-    monkeypatch.setattr("btc_5m_fv.execution.live._BOOT_CANCEL_BACKOFF_SECONDS", 0.0)
+    monkeypatch.setattr("polymarket_exec.execution.live._BOOT_CANCEL_BACKOFF_SECONDS", 0.0)
     client = _mock_client()
     client.cancel_all.side_effect = [
         Exception("PolyApiException[status_code=425, order manager not ready]"),
@@ -1297,7 +1297,7 @@ async def test_boot_cancel_refuses_after_exhausting_retries(
 ) -> None:
     """If the cancel keeps failing, boot is STILL refused — the never-trade-on-
     unknown-resting-orders safety is preserved, just no longer tripped by a blip."""
-    monkeypatch.setattr("btc_5m_fv.execution.live._BOOT_CANCEL_BACKOFF_SECONDS", 0.0)
+    monkeypatch.setattr("polymarket_exec.execution.live._BOOT_CANCEL_BACKOFF_SECONDS", 0.0)
     client = _mock_client()
     client.cancel_all.side_effect = Exception("PolyApiException[status_code=425]")
     ex = _executor(client, tmp_path)

@@ -16,7 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import config as _config  # noqa: E402  (loads .env)
-from btc_bot.adaptive import (  # noqa: E402
+from polymarket_bot.adaptive import (  # noqa: E402
     clear_auto_pause,
     is_paused,
     rolling_performance,
@@ -26,7 +26,7 @@ from btc_bot.adaptive import (  # noqa: E402
 async def main() -> int:
     paused, reason = await is_paused()
     perf = await rolling_performance(
-        _config.BTC_AUTO_PAUSE_WINDOW, _config.BTC_EXIT_STYLE
+        _config.AUTO_PAUSE_WINDOW, _config.EXIT_STYLE
     )
     print(f"current: paused={paused} reason={reason!r}")
     print(
