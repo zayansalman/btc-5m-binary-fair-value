@@ -32,10 +32,6 @@ def render(
     mode_pnl = live_pnl if is_live else paper_pnl
     session_pnl = sum(c["realized_pnl_usd"] or 0.0 for c in closed_session)
 
-    mode_pill = (
-        f"<span class='pill {'live' if is_live else 'paper'}'>"
-        f"{'● LIVE' if is_live else 'PAPER'}</span>"
-    )
     run_pill = (
         f"<span class='pill {'on' if state == 'running' else 'off'}'>{state.upper()}</span>"
     )
@@ -95,11 +91,10 @@ def render(
 
     return (
         "<div class='ribbon'>"
-        f"<div class='ribbon-id'>POLYMARKET CRYPTO <b>EMS</b>"
-        f"{mode_pill}{run_pill}{pause_chip}{kill_chip}</div>"
+        f"<div class='ribbon-id'>{run_pill}{pause_chip}{kill_chip}</div>"
         "<div class='ribbon-stats'>"
         f"{s.stat('Equity Δ (session)', s.money(session_pnl, True) if closed_session else '—', s.cls(session_pnl), flash='pnl')}"
-        f"{s.stat('P&L (today)', s.money(mode_pnl, True), s.cls(mode_pnl), 'real money' if is_live else 'paper', flash='pnl')}"
+        f"{s.stat('P&L (today)', s.money(mode_pnl, True), s.cls(mode_pnl), flash='pnl')}"
         f"{s.stat('Open Risk', s.money(sum(p['notional_usd'] or 0 for p in open_pos)), '', f'{len(open_pos)} pos')}"
         f"{s.stat('Halt Headroom', s.money(headroom), 'down' if headroom < halt * 0.4 else '')}"
         f"<div class='feeds'>{feeds}</div>"
