@@ -202,9 +202,9 @@ async def execution_view_html() -> str:
     daily_altcoin_html = daily_altcoin.render(open_positions=daily_open, perf=daily_perf)
 
     return (
-        "<div class='ems'>"
+        "<div class='execution-view'>"
         + ribbon_html
-        + "<div class='ems-grid'>"
+        + "<div class='execution-grid'>"
         + guardrails_html
         + controls_html
         + strategy_html

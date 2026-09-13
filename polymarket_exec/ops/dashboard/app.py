@@ -544,7 +544,7 @@ async def _execution_view_safe() -> str:
         return await execution_view_html()
     except Exception as e:  # noqa: BLE001
         log.warning("execution_view_render_failed", error=str(e))
-        return f"<div class='ems'><div class='card'>Execution view error: {escape(str(e))}</div></div>"
+        return f"<div class='execution-view'><div class='card'>Execution view error: {escape(str(e))}</div></div>"
 
 
 async def _get_activity_data() -> str:

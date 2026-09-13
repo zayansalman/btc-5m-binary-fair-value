@@ -109,20 +109,29 @@ class TestStaticAssets:
 
 
 class TestVisualContract:
-    """Trading-terminal dark theme."""
+    """Institutional light theme — hairline grids, color reserved for signal."""
 
-    def test_dark_palette(self, client: TestClient):
+    def test_light_palette(self, client: TestClient):
         css = client.get("/static/style.css").text
-        assert "#0a0d13" in css       # --bg dark slate
-        assert "#ffa53c" in css       # --accent Bloomberg amber
+        assert "#ffffff" in css      # --bg
+        assert "#1b7a43" in css      # --pos
+        assert "#b3261e" in css      # --neg
+        assert "#ffa53c" not in css  # old Bloomberg amber accent must be gone
 
     def test_pnl_color_classes(self, client: TestClient):
         css = client.get("/static/style.css").text
         assert ".up" in css and ".down" in css
-        assert "--green:" in css and "--red:" in css
+        assert "--pos:" in css and "--neg:" in css
+
+    def test_no_rounded_corners_or_shadows(self, client: TestClient):
+        css = client.get("/static/style.css").text
+        import re
+        radii = re.findall(r"border-radius:\s*([^;]+);", css)
+        assert all(r.strip() in ("0", "0px", "0 0 0 0") for r in radii), radii
+        assert "box-shadow" not in css
 
     def test_monospace_numbers(self, client: TestClient):
-        assert "--mono:" in client.get("/static/style.css").text
+        assert "--font-mono:" in client.get("/static/style.css").text
 
     def test_pill_and_tag_variants(self, client: TestClient):
         css = client.get("/static/style.css").text
