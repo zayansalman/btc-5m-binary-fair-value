@@ -15,18 +15,18 @@ from polymarket_bot.paper import (
     force_close_open_positions,
     run_paper_loop,
 )
-from config import BTC_BOT_MODE, BTC_PAPER_MAX_TRADE_USD, BTC_PAPER_MIN_TRADE_USD
+from config import BOT_MODE, PAPER_MAX_TRADE_USD, PAPER_MIN_TRADE_USD
 from db import get_config, notify, set_config
 from logging_setup import get_logger
 
-log = get_logger("btc_controller")
+log = get_logger("controller")
 
 PAPER_ONLY_DETAIL = (
     "BTC 5-minute paper mode is ready. No live orders are placed in paper mode."
 )
 LIVE_MODE_DETAIL = (
     "BTC 5-minute LIVE mode is configured — Start will place REAL orders on the "
-    "Polymarket CLOB, risk-gated and journaled to btc_live_orders."
+    "Polymarket CLOB, risk-gated and journaled to live_orders."
 )
 
 _runner_thread: threading.Thread | None = None
@@ -92,20 +92,20 @@ class BtcBotStatus:
 
 
 def _default_detail() -> str:
-    if _config.BTC_BOT_MODE == "live":
-        cap = _config.BTC_LIVE_BANKROLL_CAP_USD
+    if _config.BOT_MODE == "live":
+        cap = _config.TRADE_BANKROLL_CAP_USD
         cap_str = f"${cap:.2f}" if cap is not None else "disabled"
         return (
             f"{LIVE_MODE_DETAIL}\n\n"
-            f"Per-trade cap ${_config.BTC_LIVE_MAX_TRADE_USD:.2f}, daily loss halt "
-            f"${_config.BTC_LIVE_DAILY_LOSS_HALT_USD:.2f}, bankroll cap "
+            f"Per-trade cap ${_config.TRADE_MAX_USD:.2f}, daily loss halt "
+            f"${_config.TRADE_DAILY_LOSS_HALT_USD:.2f}, bankroll cap "
             f"{cap_str}. "
             f"Kill switch: touch {_config.KILL_SWITCH_PATH}."
         )
     return (
         f"{PAPER_ONLY_DETAIL}\n\n"
-        f"Paper sizing range: ${BTC_PAPER_MIN_TRADE_USD:.0f}-"
-        f"${BTC_PAPER_MAX_TRADE_USD:.0f} by confidence."
+        f"Paper sizing range: ${PAPER_MIN_TRADE_USD:.0f}-"
+        f"${PAPER_MAX_TRADE_USD:.0f} by confidence."
     )
 
 
@@ -117,7 +117,7 @@ async def get_status() -> BtcBotStatus:
     """Return current BTC controller status."""
     global _silent_stop_notified
     state = await get_config("polymarket_bot.state", "stopped")
-    mode = await get_config("polymarket_bot.mode", BTC_BOT_MODE)
+    mode = await get_config("polymarket_bot.mode", BOT_MODE)
     updated_at = await get_config("polymarket_bot.updated_at")
     detail = await get_config("polymarket_bot.detail", _default_detail())
 
@@ -132,7 +132,7 @@ async def get_status() -> BtcBotStatus:
             _silent_stop_notified = True
             log.error("btc.silent_stop_detected", last_heartbeat=updated_at)
             await notify(
-                "btc_silent_stop",
+                "silent_stop",
                 "Detected silent bot stop: the loop is not running but the "
                 f"saved state was 'running' (last heartbeat {updated_at or 'unknown'}). "
                 "No operator stop was recorded — the loop or process died "
@@ -152,7 +152,7 @@ async def get_status() -> BtcBotStatus:
 
     return BtcBotStatus(
         state=state or "stopped",
-        mode=mode or BTC_BOT_MODE,
+        mode=mode or BOT_MODE,
         updated_at=updated_at,
         detail=detail or _default_detail(),
     )
@@ -160,7 +160,7 @@ async def get_status() -> BtcBotStatus:
 
 async def current_mode() -> str:
     """The active execution mode: runtime selector overrides the env default."""
-    return await get_config("polymarket_bot.requested_mode", _config.BTC_BOT_MODE) or "paper"
+    return await get_config("polymarket_bot.requested_mode", _config.BOT_MODE) or "paper"
 
 
 async def set_mode(mode: str) -> BtcBotStatus:
@@ -244,7 +244,7 @@ async def request_stop() -> BtcBotStatus:
     the operator instead of being closed with fictional paper prices.
     """
     now = datetime.now(UTC).isoformat(timespec="seconds")
-    mode = _config.BTC_BOT_MODE
+    mode = _config.BOT_MODE
     global _desired_running
     _desired_running = False  # an operator stop is never a stall (#147)
     if _stop_event is not None:
@@ -259,13 +259,13 @@ async def request_stop() -> BtcBotStatus:
             detail = (
                 "BTC live loop stop requested but the runner has not finished its "
                 "shutdown flatten yet. Do NOT restart until it exits; check logs "
-                "and btc_live_orders."
+                "and live_orders."
             )
         elif remaining:
             detail = (
                 f"BTC live loop stopped, but {remaining} live position(s) could NOT "
                 "be flattened and remain OPEN in the ledger. Flatten manually on "
-                "Polymarket and check the btc_live_orders journal."
+                "Polymarket and check the live_orders journal."
             )
         else:
             detail = (
@@ -346,7 +346,7 @@ def _watchdog_loop() -> None:
                 log.warning("watchdog.loop_stalled_restarting", age_seconds=age)
                 asyncio.run(
                     notify(
-                        "btc_loop_watchdog_restart",
+                        "loop_watchdog_restart",
                         f"Loop watchdog: no heartbeat for {age:.0f}s while the "
                         "paper bot should be running — abandoned the wedged "
                         "loop and respawned it (#147).",
@@ -360,7 +360,7 @@ def _watchdog_loop() -> None:
                 log.error("watchdog.live_loop_stalled", age_seconds=age)
                 asyncio.run(
                     notify(
-                        "btc_loop_watchdog_stall_live",
+                        "loop_watchdog_stall_live",
                         f"Loop watchdog: no heartbeat for {age:.0f}s in LIVE "
                         "mode. NOT auto-restarting a real-money path — check "
                         "the process and restart manually (#147).",

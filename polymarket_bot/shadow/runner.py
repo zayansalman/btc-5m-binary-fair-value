@@ -1,7 +1,7 @@
 """Shadow forward-tester runner.
 
 Each tick, log what each candidate strategy *would* trade this window to
-``btc_model_shadow_positions`` (idempotent per window/model), so the candidates
+``model_shadow_positions`` (idempotent per window/model), so the candidates
 accumulate an out-of-sample record alongside the live v0 strategy. Settlement is
 independent (see ``paper._settle_due_shadows``) and PnL is booked NET of the
 Polymarket 7% taker fee. No real orders are ever placed from here — this is a
@@ -131,7 +131,7 @@ _MODELS: dict[
 # by the loop, so switching it from the dashboard takes effect with no restart,
 # in paper AND live. v0 is the default and uses the loop's native signal path;
 # the others dispatch through CANDIDATE_SIGNALS.
-ACTIVE_MODEL_KEY = "btc_model.active"
+ACTIVE_MODEL_KEY = "model.active"
 DEFAULT_MODEL = "pricing_v0"
 MODEL_IDS: list[str] = list(_MODELS.keys())
 

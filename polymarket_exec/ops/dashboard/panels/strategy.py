@@ -34,7 +34,7 @@ def render(
         _dollar = (
             max_trade
             if max_trade is not None
-            else (_config.BTC_LIVE_MAX_TRADE_USD if is_live else _config.BTC_PAPER_MAX_TRADE_USD)
+            else (_config.TRADE_MAX_USD if is_live else _config.PAPER_MAX_TRADE_USD)
         )
         sizing = f"${_dollar:.0f}/clip · 1 pos max"
     proposed = _params.load_proposed()
@@ -81,8 +81,8 @@ def render(
         f"<div><span>Model</span><b>{escape(_shadow_runner.MODEL_LABELS.get(active_model, active_model))}</b></div>"
         f"<div><span>Logic</span><b class='dim'>{escape(_shadow_runner.MODEL_DESCRIPTIONS.get(active_model, ''))}</b></div>"
         f"<div><span>Style</span><b>{escape(style)} (1 entry/window, hold→resolution)</b></div>"
-        f"<div><span>Edge band</span><b>{_config.BTC_PAPER_ENTRY_EDGE_MIN:.3f} – {_config.BTC_PAPER_ENTRY_EDGE_MAX:.3f}</b></div>"
-        f"<div><span>Entry floor</span><b>≥ {_config.BTC_PAPER_MIN_ENTRY_PRICE:.2f} (favorites)</b></div>"
+        f"<div><span>Edge band</span><b>{_config.PAPER_ENTRY_EDGE_MIN:.3f} – {_config.PAPER_ENTRY_EDGE_MAX:.3f}</b></div>"
+        f"<div><span>Entry floor</span><b>≥ {_config.PAPER_MIN_ENTRY_PRICE:.2f} (favorites)</b></div>"
         f"<div><span>Sizing</span><b>{sizing}</b></div>"
         f"<div><span>Settlement</span><b>Chainlink BTC/USD · ≥ ⇒ Up</b></div>"
         f"<div><span>Params</span>{params_html}</div>"

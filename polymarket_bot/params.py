@@ -53,12 +53,12 @@ PROPOSED_FILE = "params_proposed.json"
 
 def _from_env() -> ActiveParams:
     return ActiveParams(
-        entry_edge_min=_config.BTC_PAPER_ENTRY_EDGE_MIN,
-        entry_edge_max=_config.BTC_PAPER_ENTRY_EDGE_MAX,
-        min_confidence=_config.BTC_PAPER_MIN_CONFIDENCE,
-        min_remaining_seconds=_config.BTC_PAPER_ENTRY_MIN_REMAINING_SECONDS,
+        entry_edge_min=_config.PAPER_ENTRY_EDGE_MIN,
+        entry_edge_max=_config.PAPER_ENTRY_EDGE_MAX,
+        min_confidence=_config.PAPER_MIN_CONFIDENCE,
+        min_remaining_seconds=_config.PAPER_ENTRY_MIN_REMAINING_SECONDS,
         max_entry_price=0.95,
-        min_entry_price=_config.BTC_PAPER_MIN_ENTRY_PRICE,
+        min_entry_price=_config.PAPER_MIN_ENTRY_PRICE,
         source="env",
     )
 

@@ -143,7 +143,7 @@ class RunbookActions:
             "3. If persistent, stop bot to prevent IP ban."
         ),
         IncidentState.UNEXPECTED_POSITION_COUNT: (
-            "1. Review open positions in btc_paper_positions. "
+            "1. Review open positions in paper_positions. "
             "2. Run force_close_all via controller. "
             "3. Investigate race condition in tick loop."
         ),

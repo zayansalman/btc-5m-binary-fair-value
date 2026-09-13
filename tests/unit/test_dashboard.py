@@ -28,7 +28,7 @@ def client() -> TestClient:
 
 class TestAppCreation:
     def test_app_has_title(self):
-        assert app.title == "BTC 5m Binary Pricing Model"
+        assert app.title == "Polymarket Crypto Trading Lab"
 
     def test_app_has_routes(self):
         paths = {r.path for r in app.routes}
@@ -82,7 +82,7 @@ class TestStaticFiles:
 
     def test_css_has_theme_variables(self, client: TestClient):
         css = client.get("/static/style.css").text
-        for var in ("--accent:", "--green:", "--red:", "--bg:", "--mono:"):
+        for var in ("--bg:", "--pos:", "--neg:", "--font-mono:"):
             assert var in css, f"missing var {var}"
 
     def test_css_has_ems_components(self, client: TestClient):
@@ -121,14 +121,14 @@ class TestApiData:
 
     def test_api_data_has_expected_keys(self, client: TestClient):
         data = client.get("/api/data").json()
-        assert "ems" in data
+        assert "execution_view" in data
         assert "activity" in data
         assert "backtest" in data
 
-    def test_api_data_ems_is_rendered_html(self, client: TestClient):
-        ems = client.get("/api/data").json()["ems"]
-        assert isinstance(ems, str) and len(ems) > 200
-        assert "ribbon" in ems
+    def test_api_data_execution_view_is_rendered_html(self, client: TestClient):
+        execution_view = client.get("/api/data").json()["execution_view"]
+        assert isinstance(execution_view, str) and len(execution_view) > 200
+        assert "ribbon" in execution_view
 
 
 class TestApiStart:
@@ -417,3 +417,11 @@ class TestModelSelector:
         )
         assert r.status_code == 200
         assert r.json()["status"] == "error"
+
+
+def test_stat_helper_emits_data_flash_attribute():
+    from polymarket_exec.ops.dashboard.panels._shared import stat
+    html_with_flash = stat("Session P&L", "+$1,284.50", flash="pnl")
+    assert "data-flash='pnl'" in html_with_flash
+    html_without_flash = stat("Win rate", "61.0%")
+    assert "data-flash" not in html_without_flash

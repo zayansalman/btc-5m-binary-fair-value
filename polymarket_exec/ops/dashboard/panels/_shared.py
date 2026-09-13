@@ -10,11 +10,12 @@ from datetime import UTC, datetime
 from html import escape
 from typing import Any
 
-# Bloomberg-EMS palette: amber accent, convention green/red, dim slate.
-ACCENT = "#ffa53c"
-GREEN = "#34d399"
-RED = "#ff5d6c"
-DIM = "#6b7689"
+# Institutional light palette: color reserved for signal (buy/sell, PnL, breach);
+# everything else grayscale.
+ACCENT = "#14171c"  # was Bloomberg amber; no decorative accent in the new palette — this now means "primary text/ink"
+GREEN = "#1b7a43"
+RED = "#b3261e"
+DIM = "#6b7078"
 
 
 # ---------------------------------------------------------------------------
@@ -83,10 +84,11 @@ def side_mid(tick: dict[str, Any], side: str) -> float | None:
     return None
 
 
-def stat(label: str, value: str, cls_: str = "", sub: str = "") -> str:
+def stat(label: str, value: str, cls_: str = "", sub: str = "", *, flash: str | None = None) -> str:
+    flash_attr = f" data-flash='{flash}'" if flash else ""
     return (
         f"<div class='stat'><div class='stat-l'>{escape(label)}</div>"
-        f"<div class='stat-v {cls_}'>{value}</div>"
+        f"<div class='stat-v {cls_}'{flash_attr}>{value}</div>"
         + (f"<div class='stat-s'>{escape(sub)}</div>" if sub else "")
         + "</div>"
     )

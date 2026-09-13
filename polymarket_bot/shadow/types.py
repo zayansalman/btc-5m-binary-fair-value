@@ -10,7 +10,7 @@ the integrator) and the candidate-strategy signal functions in
   quote sources. The signal functions are pure: everything they need to
   decide a would-be trade is on this object.
 * :class:`ShadowSignal` — a candidate's would-be trade for this tick. The
-  loop persists it to ``btc_model_shadow_positions`` and settles it later,
+  loop persists it to ``model_shadow_positions`` and settles it later,
   net of the Polymarket taker fee. ``None`` from a signal function means
   "no trade this tick".
 

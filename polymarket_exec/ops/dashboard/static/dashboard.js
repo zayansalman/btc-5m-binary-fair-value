@@ -259,10 +259,10 @@ function updateDashboard(data) {
     }
   }
 
-  // EMS main view (status ribbon + strategy/market/perf/TCA/blotter)
-  if (data.ems) {
-    var ems = document.getElementById('ems-content');
-    if (ems) ems.innerHTML = data.ems || '';
+  // Execution view (status ribbon + strategy/market/perf/TCA/blotter)
+  if (data.execution_view) {
+    var execEl = document.getElementById('execution-content');
+    if (execEl) execEl.innerHTML = data.execution_view || '';
   }
 
   // Activity

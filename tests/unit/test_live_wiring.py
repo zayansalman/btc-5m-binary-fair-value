@@ -75,7 +75,7 @@ def _mock_executor() -> MagicMock:
 
 async def _open_positions(bot_db) -> list[dict]:
     async with bot_db.connect() as conn:
-        async with conn.execute("SELECT * FROM btc_paper_positions") as cur:
+        async with conn.execute("SELECT * FROM paper_positions") as cur:
             return [dict(r) for r in await cur.fetchall()]
 
 
@@ -316,9 +316,9 @@ async def test_kill_switch_skips_new_entries_in_tick(
 async def test_live_loop_refuses_without_gates(
     bot_db, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(_config, "BTC_BOT_MODE", "live")
+    monkeypatch.setattr(_config, "BOT_MODE", "live")
     monkeypatch.setattr(_config, "POLYMARKET_PRIVATE_KEY", "")
-    monkeypatch.setattr(_config, "BTC_LIVE_CONFIRM", "")
+    monkeypatch.setattr(_config, "LIVE_CONFIRM", "")
 
     await paper.run_paper_loop(threading.Event())
 
@@ -333,9 +333,9 @@ async def test_live_loop_refuses_without_gates(
 async def test_controller_start_refuses_live_without_gates(
     bot_db, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(_config, "BTC_BOT_MODE", "live")
+    monkeypatch.setattr(_config, "BOT_MODE", "live")
     monkeypatch.setattr(_config, "POLYMARKET_PRIVATE_KEY", "")
-    monkeypatch.setattr(_config, "BTC_LIVE_CONFIRM", "")
+    monkeypatch.setattr(_config, "LIVE_CONFIRM", "")
     runner = MagicMock()
     monkeypatch.setattr(controller, "_ensure_runner_started", runner)
 
@@ -352,8 +352,8 @@ async def test_controller_start_runs_paper_by_default(
 ) -> None:
     # Pin paper explicitly so the test is deterministic regardless of an
     # operator .env that opts into live locally.
-    monkeypatch.setattr(controller, "BTC_BOT_MODE", "paper")
-    monkeypatch.setattr(_config, "BTC_BOT_MODE", "paper")
+    monkeypatch.setattr(controller, "BOT_MODE", "paper")
+    monkeypatch.setattr(_config, "BOT_MODE", "paper")
     runner = MagicMock()
     monkeypatch.setattr(controller, "_ensure_runner_started", runner)
     monkeypatch.setattr(controller, "_is_runner_alive", lambda: True)
@@ -366,10 +366,10 @@ async def test_controller_start_runs_paper_by_default(
 
 
 def test_config_mode_choices_reject_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("BTC_BOT_MODE", "yolo")
-    assert _config._env_choice("BTC_BOT_MODE", "paper", {"paper", "live"}) == "paper"
-    monkeypatch.setenv("BTC_BOT_MODE", "live")
-    assert _config._env_choice("BTC_BOT_MODE", "paper", {"paper", "live"}) == "live"
+    monkeypatch.setenv("BOT_MODE", "yolo")
+    assert _config._env_choice("BOT_MODE", "paper", {"paper", "live"}) == "paper"
+    monkeypatch.setenv("BOT_MODE", "live")
+    assert _config._env_choice("BOT_MODE", "paper", {"paper", "live"}) == "live"
 
 
 # ---------------------------------------------------------------------------

@@ -1,12 +1,15 @@
-"""FastAPI dashboard for BTC 5m Binary Pricing Model trading system.
+"""FastAPI dashboard for the local Polymarket crypto trading lab.
 
 Replaces the 150MB+ Gradio dashboard with a lightweight FastAPI + Jinja2
-implementation. All visual design is preserved via extracted CSS.
+implementation. All visual design is preserved via extracted CSS. Also
+starts the daily altcoin scanner (#185) as a background task for its
+lifetime — see ``_lifespan`` — a paper-only strategy independent of the
+BTC 5m loop the rest of this module's endpoints control.
 
 Endpoints:
     GET  /              — Main dashboard page (HTML)
     POST /api/start     — Start the trading bot (paper by default; LIVE when
-                          BTC_BOT_MODE=live and the boot gates pass)
+                          BOT_MODE=live and the boot gates pass)
     POST /api/stop      — Stop the trading bot (live mode flattens first)
     GET  /api/data      — Full dashboard data as JSON
     GET  /api/stream    — Server-Sent Events for live updates
@@ -22,7 +25,7 @@ from html import escape
 from pathlib import Path
 from typing import Any
 
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -39,21 +42,21 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from config import (  # type: ignore[import-untyped]
-    BTC_BOT_MODE,
-    BTC_CHAINLINK_STREAM_URL,
-    BTC_LIVE_BANKROLL_CAP_USD,
-    BTC_LIVE_DAILY_LOSS_HALT_USD,
-    BTC_LIVE_MAX_TRADE_USD,
+    BOT_MODE,
+    CHAINLINK_STREAM_URL,
+    TRADE_BANKROLL_CAP_USD,
+    TRADE_DAILY_LOSS_HALT_USD,
+    TRADE_MAX_USD,
     KILL_SWITCH_PATH,
-    BTC_HISTORY_CSV_PATH,
-    BTC_PAPER_ENTRY_EDGE_MIN,
-    BTC_PAPER_MAX_TRADE_USD,
-    BTC_PAPER_MIN_CONFIDENCE,
-    BTC_PAPER_MIN_TRADE_USD,
-    BTC_PAPER_STOP_RETURN,
-    BTC_PAPER_TARGET_RETURN,
-    BTC_PAPER_TICK_SECONDS,
-    BTC_PAPER_TIME_EXIT_SECONDS,
+    HISTORY_CSV_PATH,
+    PAPER_ENTRY_EDGE_MIN,
+    PAPER_MAX_TRADE_USD,
+    PAPER_MIN_CONFIDENCE,
+    PAPER_MIN_TRADE_USD,
+    PAPER_STOP_RETURN,
+    PAPER_TARGET_RETURN,
+    PAPER_TICK_SECONDS,
+    PAPER_TIME_EXIT_SECONDS,
     DASHBOARD_SERVER_NAME,
     DASHBOARD_SERVER_PORT,
     DATA_DIR,
@@ -61,11 +64,11 @@ from config import (  # type: ignore[import-untyped]
 )
 from db import connect, init_db  # type: ignore[import-untyped]
 from logging_setup import get_logger  # type: ignore[import-untyped]
-from polymarket_exec.ops.dashboard.ems import ems_html  # type: ignore[import-untyped]
+from polymarket_exec.ops.dashboard.execution_view import execution_view_html  # type: ignore[import-untyped]
 
 log = get_logger("dashboard")
 
-_IS_LIVE = BTC_BOT_MODE == "live"
+_IS_LIVE = BOT_MODE == "live"
 _MODE_BANNER = (
     "LIVE — orders are real. Risk-gated CLOB orders are placed on Polymarket."
     if _IS_LIVE
@@ -105,7 +108,21 @@ async def _lifespan(app: FastAPI):
     # halt-ON now that the bypass applies to real money. Idempotent via sentinel.
     from polymarket_exec.execution.gate import migrate_clear_stale_bypass_v76
     await migrate_clear_stale_bypass_v76()
+
+    # Daily altcoin scanner (#185): auto-runs in-process for the dashboard's
+    # lifetime — paper-only, no live gate, so no Start/Stop control needed
+    # (unlike the BTC loop, which controller.py starts/stops explicitly).
+    from polymarket_bot.daily.scanner import run_forever as _run_daily_scanner
+
+    daily_stop_event = asyncio.Event()
+    daily_task = asyncio.create_task(_run_daily_scanner(daily_stop_event))
+
     yield
+
+    daily_stop_event.set()
+    daily_task.cancel()
+    with suppress(asyncio.CancelledError):
+        await daily_task
 
 
 # ---------------------------------------------------------------------------
@@ -114,7 +131,7 @@ async def _lifespan(app: FastAPI):
 
 dashboard_dir = Path(__file__).parent
 
-app = FastAPI(title="BTC 5m Binary Pricing Model", lifespan=_lifespan)
+app = FastAPI(title="Polymarket Crypto Trading Lab", lifespan=_lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -215,7 +232,6 @@ async def _load_feed(limit: int = 18) -> list[dict[str, Any]]:
             """
             SELECT created_at, event_type, message, details_json
             FROM notification_feed
-            WHERE event_type = 'system_start' OR event_type LIKE 'btc_%'
             ORDER BY created_at DESC
             LIMIT ?
             """,
@@ -231,7 +247,7 @@ async def _get_status_safe() -> Any:
     # Mock status for testing / when polymarket_bot is not available
     class _MockStatus:
         state = "stopped"
-        mode = BTC_BOT_MODE
+        mode = BOT_MODE
         updated_at = None
         detail = f"BTC 5-minute bot is ready. Mode: {_MODE_BANNER}"
     return _MockStatus()
@@ -350,9 +366,9 @@ async def _paper_html() -> str:
         f"{_kpi_card('Last tick', _fmt_relative(paper.last_tick_at), paper.last_feed_source or 'no feed yet')}"
         f"{_kpi_card('Spot', 'n/a' if paper.last_spot_price is None else f'${paper.last_spot_price:,.2f}', paper.last_window_slug or 'no window yet')}"
         f"{_kpi_card('Fair Up', last_fair, f'market up {last_up}')}"
-        f"{_kpi_card('Edge', last_edge, f'min edge {BTC_PAPER_ENTRY_EDGE_MIN:.3f}')}"
+        f"{_kpi_card('Edge', last_edge, f'min edge {PAPER_ENTRY_EDGE_MIN:.3f}')}"
         f"{_kpi_card('Avg PnL', _money(paper.avg_pnl_usd, signed=True), f'avg hold {avg_hold}')}"
-        f"{_kpi_card('Sizing', f'${BTC_PAPER_MIN_TRADE_USD:.0f}-${BTC_PAPER_MAX_TRADE_USD:.0f}', f'min confidence {BTC_PAPER_MIN_CONFIDENCE:.0%}')}"
+        f"{_kpi_card('Sizing', f'${PAPER_MIN_TRADE_USD:.0f}-${PAPER_MAX_TRADE_USD:.0f}', f'min confidence {PAPER_MIN_CONFIDENCE:.0%}')}"
         "</div>"
         "<div class='panel'><h3>Recent Paper Positions</h3>"
         f"{_position_cards(paper.recent_positions)}"
@@ -382,13 +398,13 @@ def _history_html() -> str:
     else:
         class _MockStats:
             found = False
-            path = str(BTC_HISTORY_CSV_PATH)
+            path = str(HISTORY_CSV_PATH)
         stats = _MockStats()
 
     if not stats.found:
         return (
             "<h3>Historical Trade Baseline</h3>\n"
-            f"<p>Optional CSV not found at <code>{BTC_HISTORY_CSV_PATH}</code>. The bot still runs; "
+            f"<p>Optional CSV not found at <code>{HISTORY_CSV_PATH}</code>. The bot still runs; "
             "the CSV only helps explain why the lab sizes paper trades at $1-$5.</p>"
         )
     return (
@@ -415,8 +431,8 @@ def _brief_html() -> str:
         + (
             "<p><strong>Mode: LIVE — orders are real.</strong> Start places risk-gated "
             "limit orders on the Polymarket CLOB (per-trade cap "
-            f"${BTC_LIVE_MAX_TRADE_USD:.2f}, daily loss halt ${BTC_LIVE_DAILY_LOSS_HALT_USD:.2f}, "
-            f"bankroll cap {_fmt_cap(BTC_LIVE_BANKROLL_CAP_USD)}); Stop cancels and flattens. "
+            f"${TRADE_MAX_USD:.2f}, daily loss halt ${TRADE_DAILY_LOSS_HALT_USD:.2f}, "
+            f"bankroll cap {_fmt_cap(TRADE_BANKROLL_CAP_USD)}); Stop cancels and flattens. "
             f"Kill switch file: <code>{escape(str(KILL_SWITCH_PATH))}</code>.</p>"
             if _IS_LIVE
             else "<p>Mode: paper — this mode does not sign or submit live orders. The active "
@@ -445,19 +461,19 @@ def _settings_html() -> str:
         "<h3>BTC 5m Paper Rules</h3>\n"
         "<ul>\n"
         f"<li>Market scope: BTC Up/Down 5-minute windows only.</li>\n"
-        f"<li>Paper sizing: <strong>${BTC_PAPER_MIN_TRADE_USD:.0f}-${BTC_PAPER_MAX_TRADE_USD:.0f}</strong> by confidence.</li>\n"
-        f"<li>Tick cadence: <strong>{BTC_PAPER_TICK_SECONDS:.0f}s</strong>.</li>\n"
-        f"<li>Minimum confidence: <strong>{BTC_PAPER_MIN_CONFIDENCE:.0%}</strong>.</li>\n"
-        f"<li>Minimum edge: <strong>{BTC_PAPER_ENTRY_EDGE_MIN:.3f}</strong>.</li>\n"
-        f"<li>Target / stop return: <strong>{BTC_PAPER_TARGET_RETURN:.0%} / {BTC_PAPER_STOP_RETURN:.0%}</strong>.</li>\n"
-        f"<li>Time exit: <strong>{BTC_PAPER_TIME_EXIT_SECONDS}s</strong>.</li>\n"
-        f"<li>Settlement-aware reference target: {BTC_CHAINLINK_STREAM_URL}</li>\n"
+        f"<li>Paper sizing: <strong>${PAPER_MIN_TRADE_USD:.0f}-${PAPER_MAX_TRADE_USD:.0f}</strong> by confidence.</li>\n"
+        f"<li>Tick cadence: <strong>{PAPER_TICK_SECONDS:.0f}s</strong>.</li>\n"
+        f"<li>Minimum confidence: <strong>{PAPER_MIN_CONFIDENCE:.0%}</strong>.</li>\n"
+        f"<li>Minimum edge: <strong>{PAPER_ENTRY_EDGE_MIN:.3f}</strong>.</li>\n"
+        f"<li>Target / stop return: <strong>{PAPER_TARGET_RETURN:.0%} / {PAPER_STOP_RETURN:.0%}</strong>.</li>\n"
+        f"<li>Time exit: <strong>{PAPER_TIME_EXIT_SECONDS}s</strong>.</li>\n"
+        f"<li>Settlement-aware reference target: {CHAINLINK_STREAM_URL}</li>\n"
         "</ul>\n"
         + (
             "<p><strong>Mode: LIVE — orders are real.</strong> Live limits: per-trade cap "
-            f"<strong>${BTC_LIVE_MAX_TRADE_USD:.2f}</strong>, daily loss halt "
-            f"<strong>${BTC_LIVE_DAILY_LOSS_HALT_USD:.2f}</strong>, session bankroll cap "
-            f"<strong>{_fmt_cap(BTC_LIVE_BANKROLL_CAP_USD)}</strong>, max 1 open position, "
+            f"<strong>${TRADE_MAX_USD:.2f}</strong>, daily loss halt "
+            f"<strong>${TRADE_DAILY_LOSS_HALT_USD:.2f}</strong>, session bankroll cap "
+            f"<strong>{_fmt_cap(TRADE_BANKROLL_CAP_USD)}</strong>, max 1 open position, "
             f"kill switch <code>{escape(str(KILL_SWITCH_PATH))}</code>.</p>"
             if _IS_LIVE
             else "<p>Required local env vars are optional for paper mode except path overrides. "
@@ -522,13 +538,13 @@ async def _get_paper_data() -> dict[str, str]:
     return {"html": await _paper_html()}
 
 
-async def _ems_safe() -> str:
-    """Render the EMS view; never let a dashboard error touch the trading loop."""
+async def _execution_view_safe() -> str:
+    """Render the execution view; never let a dashboard error touch the trading loop."""
     try:
-        return await ems_html()
+        return await execution_view_html()
     except Exception as e:  # noqa: BLE001
-        log.warning("ems_render_failed", error=str(e))
-        return f"<div class='ems'><div class='card'>EMS view error: {escape(str(e))}</div></div>"
+        log.warning("execution_view_render_failed", error=str(e))
+        return f"<div class='execution-view'><div class='card'>Execution view error: {escape(str(e))}</div></div>"
 
 
 async def _get_activity_data() -> str:
@@ -560,7 +576,7 @@ async def dashboard(request: Request) -> Any:
         request,
         "dashboard.html",
         {
-            "ems": await _ems_safe(),
+            "execution_view": await _execution_view_safe(),
             "activity": await _get_activity_data(),
             "backtest": _get_backtest_data(),
             "mode": mode,
@@ -574,7 +590,7 @@ async def dashboard(request: Request) -> Any:
 async def _mode_context() -> tuple[str, bool, str]:
     """(active mode, is live selectable, hint) for the mode toggle."""
     if not _BTC_BOT_AVAILABLE:
-        return BTC_BOT_MODE, False, "polymarket_bot unavailable"
+        return BOT_MODE, False, "polymarket_bot unavailable"
     mode = await current_mode()
     try:
         assert_live_boot_allowed()
@@ -608,7 +624,7 @@ async def api_mode(request: Request) -> dict[str, str]:
 @app.post("/api/start")
 async def api_start() -> dict[str, str]:
     """Start the trading bot — paper by default, LIVE (real orders) when
-    BTC_BOT_MODE=live and every boot gate passes."""
+    BOT_MODE=live and every boot gate passes."""
     try:
         if _BTC_BOT_AVAILABLE:
             status = await request_start()
@@ -639,7 +655,7 @@ async def api_loss_halt_bypass(request: Request) -> dict[str, Any]:
 
     Applies to BOTH paper and live — the old "live can never disable a hard
     money limit from the UI" invariant was removed at the operator's request.
-    Persisted under ``btc_risk.paper_bypass_loss_halt`` so the choice survives
+    Persisted under ``risk.paper_bypass_loss_halt`` so the choice survives
     Stop/Start, and re-read by the gate every tick so it takes effect without a
     restart. Audited to ``notification_feed``.
     """
@@ -652,7 +668,7 @@ async def api_loss_halt_bypass(request: Request) -> dict[str, Any]:
     enabled = bool((body or {}).get("enabled", False))
     await set_loss_halt_bypass(enabled)
     await notify(
-        "btc_loss_halt_bypass",
+        "loss_halt_bypass",
         f"Operator {'ENABLED' if enabled else 'disabled'} loss-halt bypass "
         "(paper+live, runtime — affects real money in live)",
         {"enabled": enabled},
@@ -684,7 +700,7 @@ async def api_loss_halt_reset() -> dict[str, Any]:
     if halt_reset:
         await reset_daily_loss_halt()
     await notify(
-        "btc_loss_halt_reset",
+        "loss_halt_reset",
         "Operator cleared the auto-pause"
         + (
             "; reset the loss-halt tally + peaks to $0.00 (live + paper)"
@@ -740,7 +756,7 @@ async def api_runtime_config(request: Request) -> dict[str, Any]:
         value = round(value, 2)
         await set_runtime_max_trade_usd(value)
         await notify(
-            "btc_runtime_config",
+            "runtime_config",
             f"Operator set max trade size to ${value:.2f} (paper+live, runtime — no restart)",
             {"key": key, "value": value},
         )
@@ -765,7 +781,7 @@ async def api_runtime_config(request: Request) -> dict[str, Any]:
         value = round(value, 2)
         await set_runtime_trade_shares(value)
         await notify(
-            "btc_runtime_config",
+            "runtime_config",
             f"Operator set trade size to {value:g} shares (paper+live, runtime — no restart)",
             {"key": key, "value": value},
         )
@@ -781,7 +797,7 @@ async def api_runtime_config(request: Request) -> dict[str, Any]:
             return {"status": "error", "detail": f"unknown or non-selectable model {model!r}"}
         await set_config(_shadow_runner.ACTIVE_MODEL_KEY, model)
         await notify(
-            "btc_runtime_config",
+            "runtime_config",
             f"Operator set active model to {model} (paper+live, runtime — no restart)",
             {"key": key, "value": model},
         )
@@ -806,7 +822,7 @@ async def _runtime_state() -> dict[str, str]:
 async def api_data() -> dict[str, Any]:
     """Get current dashboard data as JSON."""
     return {
-        "ems": await _ems_safe(),
+        "execution_view": await _execution_view_safe(),
         "activity": await _get_activity_data(),
         "backtest": _get_backtest_data(),
         "runtime": await _runtime_state(),
@@ -822,7 +838,7 @@ async def api_stream(request: Request) -> StreamingResponse:
                 break
             try:
                 data = {
-                    "ems": await _ems_safe(),
+                    "execution_view": await _execution_view_safe(),
                     "activity": await _get_activity_data(),
                     "backtest": _get_backtest_data(),
                     "runtime": await _runtime_state(),

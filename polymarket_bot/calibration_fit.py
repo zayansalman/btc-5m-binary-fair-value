@@ -30,7 +30,7 @@ from db import connect
 async def _fetch_pairs(style: str | None) -> list[tuple[float, float]]:
     sql = (
         "SELECT edge, entry_price, realized_pnl_usd "
-        "FROM btc_paper_positions "
+        "FROM paper_positions "
         "WHERE state='closed' AND quote_source='clob' "
         "AND edge IS NOT NULL AND entry_price IS NOT NULL "
         "AND realized_pnl_usd IS NOT NULL"

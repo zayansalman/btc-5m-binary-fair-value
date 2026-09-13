@@ -1,4 +1,4 @@
-"""EMS view orchestrator (#37).
+"""Execution view orchestrator (#37).
 
 Loads journal data once and dispatches to the panel renderers in
 ``polymarket_exec/ops/dashboard/panels/``. Each panel is a pure (data, context) →
@@ -16,6 +16,7 @@ from polymarket_exec.ops.dashboard.panels import _data as data
 from polymarket_exec.ops.dashboard.panels import (
     blotter,
     controls,
+    daily_altcoin,
     decision_engine,
     guardrails,
     market,
@@ -26,14 +27,14 @@ from polymarket_exec.ops.dashboard.panels import (
 )
 
 
-async def ems_html() -> str:
+async def execution_view_html() -> str:
     """Render the full EMS view as one HTML string.
 
     Same public signature and output contract as before the panel split —
     ``app.py`` consumes this directly.
     """
-    style = _config.BTC_EXIT_STYLE
-    mode = await get_config("polymarket_bot.requested_mode", _config.BTC_BOT_MODE) or "paper"
+    style = _config.EXIT_STYLE
+    mode = await get_config("polymarket_bot.requested_mode", _config.BOT_MODE) or "paper"
     state = await get_config("polymarket_bot.state", "stopped") or "stopped"
     session_start = await get_config("polymarket_bot.session_start", None)
     paused = (await get_config("polymarket_bot.auto_paused", "0")) == "1"
@@ -43,26 +44,26 @@ async def ems_html() -> str:
     # ribbon and LOSS HALT panel never blend real-money and study results.
     # Falls back through the pre-split #64 key, then the legacy #20 keys.
     live_pnl = float(
-        await get_config("btc_risk.live_realized_pnl")
-        or await get_config("btc_risk.daily_realized_pnl")
+        await get_config("risk.live_realized_pnl")
+        or await get_config("risk.daily_realized_pnl")
         or await get_config("btc_live.daily_realized_pnl")
         or 0
     )
-    paper_pnl = float(await get_config("btc_risk.paper_realized_pnl") or 0)
+    paper_pnl = float(await get_config("risk.paper_realized_pnl") or 0)
     # Session high-water marks (#112): the loss halt trails these peaks. Absent
     # (pre-#112 state) → fall back to max(0, leg_pnl) so a never-profitable
     # session shows the old fixed -limit floor.
     live_peak = max(
-        float(await get_config("btc_risk.live_peak_pnl") or 0), live_pnl, 0.0
+        float(await get_config("risk.live_peak_pnl") or 0), live_pnl, 0.0
     )
     paper_peak = max(
-        float(await get_config("btc_risk.paper_peak_pnl") or 0), paper_pnl, 0.0
+        float(await get_config("risk.paper_peak_pnl") or 0), paper_pnl, 0.0
     )
     # Combined PnL for the ribbon's headline number. The loss-halt decision uses
     # the per-mode leg (live in live, paper in paper) — see RiskGate.halt_pnl (#76).
     day_pnl = live_pnl + paper_pnl
     day_notional = float(
-        await get_config("btc_risk.daily_buy_notional")
+        await get_config("risk.daily_buy_notional")
         or await get_config("btc_live.daily_buy_notional")
         or 0
     )
@@ -89,6 +90,10 @@ async def ems_html() -> str:
     recon = await data.reconciliation()
     is_live = mode == "live"
 
+    daily_open = await data.daily_positions(state="open")
+    daily_closed = await data.daily_positions(state="settled")
+    daily_perf = data.performance(daily_closed)
+
     # ---- panels ----
     from polymarket_exec.execution.gate import (
         get_loss_halt_bypass,
@@ -101,7 +106,7 @@ async def ems_html() -> str:
     # reflects the value the loop is actually enforcing this tick.
     max_trade_current = await get_runtime_max_trade_usd()
     max_trade_env = (
-        _config.BTC_LIVE_MAX_TRADE_USD if is_live else _config.BTC_PAPER_MAX_TRADE_USD
+        _config.TRADE_MAX_USD if is_live else _config.PAPER_MAX_TRADE_USD
     )
     max_trade_effective = (
         max_trade_current if max_trade_current is not None else max_trade_env
@@ -146,13 +151,13 @@ async def ems_html() -> str:
     )
     guardrails_html = guardrails.render(
         day_spend=day_notional,
-        bankroll_cap=_config.BTC_TRADE_BANKROLL_CAP_USD,
+        bankroll_cap=_config.TRADE_BANKROLL_CAP_USD,
         submitted_count=submitted_count,
         submitted_notional=submitted_notional,
         day_pnl=day_pnl,
         live_pnl=live_pnl,
         paper_pnl=paper_pnl,
-        loss_halt_usd=_config.BTC_TRADE_DAILY_LOSS_HALT_USD,
+        loss_halt_usd=_config.TRADE_DAILY_LOSS_HALT_USD,
         live_peak=live_peak,
         paper_peak=paper_peak,
         state=state,
@@ -194,11 +199,12 @@ async def ems_html() -> str:
     )
     tca_html = tca.render(perf=perf, spread=spread)
     blotter_html = blotter.render(closed=closed, open_pos=open_pos, tick=tick)
+    daily_altcoin_html = daily_altcoin.render(open_positions=daily_open, perf=daily_perf)
 
     return (
-        "<div class='ems'>"
+        "<div class='execution-view'>"
         + ribbon_html
-        + "<div class='ems-grid'>"
+        + "<div class='execution-grid'>"
         + guardrails_html
         + controls_html
         + strategy_html
@@ -207,5 +213,6 @@ async def ems_html() -> str:
         + performance_html
         + tca_html
         + blotter_html
+        + daily_altcoin_html
         + "</div></div>"
     )

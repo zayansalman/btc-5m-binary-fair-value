@@ -1,7 +1,7 @@
 """Persistence for the shadow forward-tester's would-be trades.
 
 Each tick, every candidate strategy logs the trade it *would* have taken to
-``btc_model_shadow_positions`` via :func:`record_shadow_signal`. No real order
+``model_shadow_positions`` via :func:`record_shadow_signal`. No real order
 is ever placed. When a window resolves, :func:`settle_open_shadow` marks every
 open row for that window settled and stamps the realized PnL net of the
 Polymarket taker fee, so candidates can be compared on the same after-fee basis
@@ -52,7 +52,7 @@ async def record_shadow_signal(
     async with _db.connect() as conn:
         await conn.execute(
             """
-            INSERT OR IGNORE INTO btc_model_shadow_positions(
+            INSERT OR IGNORE INTO model_shadow_positions(
               created_at, window_slug, model_id, side, entry_price,
               notional_usd, shares, fair_prob, edge, confidence, reason,
               state, quote_source, feed_source,
@@ -103,7 +103,7 @@ async def settle_open_shadow(
         async with conn.execute(
             """
             SELECT id, side, entry_price, shares
-              FROM btc_model_shadow_positions
+              FROM model_shadow_positions
              WHERE window_slug = ? AND state = 'open'
             """,
             (window_slug,),
@@ -117,7 +117,7 @@ async def settle_open_shadow(
             )
             await conn.execute(
                 """
-                UPDATE btc_model_shadow_positions
+                UPDATE model_shadow_positions
                    SET state = 'settled',
                        outcome = ?,
                        settlement_price = ?,

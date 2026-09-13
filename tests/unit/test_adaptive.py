@@ -29,7 +29,7 @@ async def _add(db, *, pnl, notional=5.0, edge=0.06, entry=0.55, style="settle",
                quote="clob", state="closed", opened_at="t"):
     async with db.connect() as conn:
         await conn.execute(
-            "INSERT INTO btc_paper_positions(opened_at, window_slug, side, state,"
+            "INSERT INTO paper_positions(opened_at, window_slug, side, state,"
             " entry_price, notional_usd, shares, edge, realized_pnl_usd,"
             " quote_source, strategy_style)"
             " VALUES (?,'w','Up',?,?,?,1,?,?,?,?)",
@@ -86,11 +86,11 @@ async def test_rolling_excludes_other_style_and_nonclob(test_db):
 
 @pytest.mark.asyncio
 async def test_evaluate_trips_and_is_sticky(test_db, monkeypatch):
-    monkeypatch.setattr(_config, "BTC_AUTO_PAUSE_ENABLED", True)
-    monkeypatch.setattr(_config, "BTC_AUTO_PAUSE_WINDOW", 20)
-    monkeypatch.setattr(_config, "BTC_AUTO_PAUSE_MIN_TRADES", 10)
-    monkeypatch.setattr(_config, "BTC_AUTO_PAUSE_MIN_ROI", -0.15)
-    monkeypatch.setattr(_config, "BTC_EXIT_STYLE", "settle")
+    monkeypatch.setattr(_config, "AUTO_PAUSE_ENABLED", True)
+    monkeypatch.setattr(_config, "AUTO_PAUSE_WINDOW", 20)
+    monkeypatch.setattr(_config, "AUTO_PAUSE_MIN_TRADES", 10)
+    monkeypatch.setattr(_config, "AUTO_PAUSE_MIN_ROI", -0.15)
+    monkeypatch.setattr(_config, "EXIT_STYLE", "settle")
     for _ in range(12):
         await _add(test_db, pnl=-5.0)  # all losses -> ROI -100%
     paused, reason = await evaluate_and_maybe_pause()
@@ -115,11 +115,11 @@ async def test_clear_records_cleared_at(test_db):
 async def test_clear_prevents_immediate_repause(test_db, monkeypatch):
     # The operator's "resume" must actually stick: trades that predate the clear
     # are excluded from the edge window, so it doesn't re-pause on the next tick.
-    monkeypatch.setattr(_config, "BTC_AUTO_PAUSE_ENABLED", True)
-    monkeypatch.setattr(_config, "BTC_AUTO_PAUSE_WINDOW", 20)
-    monkeypatch.setattr(_config, "BTC_AUTO_PAUSE_MIN_TRADES", 10)
-    monkeypatch.setattr(_config, "BTC_AUTO_PAUSE_MIN_ROI", -0.15)
-    monkeypatch.setattr(_config, "BTC_EXIT_STYLE", "settle")
+    monkeypatch.setattr(_config, "AUTO_PAUSE_ENABLED", True)
+    monkeypatch.setattr(_config, "AUTO_PAUSE_WINDOW", 20)
+    monkeypatch.setattr(_config, "AUTO_PAUSE_MIN_TRADES", 10)
+    monkeypatch.setattr(_config, "AUTO_PAUSE_MIN_ROI", -0.15)
+    monkeypatch.setattr(_config, "EXIT_STYLE", "settle")
     await _db.set_config("polymarket_bot.session_start", "2020-01-01T00:00:00+00:00")
     for _ in range(12):
         await _add(test_db, pnl=-5.0, opened_at="2020-01-02T00:00:00+00:00")
@@ -135,11 +135,11 @@ async def test_clear_prevents_immediate_repause(test_db, monkeypatch):
 @pytest.mark.asyncio
 async def test_repauses_on_fresh_losses_after_clear(test_db, monkeypatch):
     # The adaptive guard still re-protects: losses booked AFTER the clear count.
-    monkeypatch.setattr(_config, "BTC_AUTO_PAUSE_ENABLED", True)
-    monkeypatch.setattr(_config, "BTC_AUTO_PAUSE_WINDOW", 20)
-    monkeypatch.setattr(_config, "BTC_AUTO_PAUSE_MIN_TRADES", 10)
-    monkeypatch.setattr(_config, "BTC_AUTO_PAUSE_MIN_ROI", -0.15)
-    monkeypatch.setattr(_config, "BTC_EXIT_STYLE", "settle")
+    monkeypatch.setattr(_config, "AUTO_PAUSE_ENABLED", True)
+    monkeypatch.setattr(_config, "AUTO_PAUSE_WINDOW", 20)
+    monkeypatch.setattr(_config, "AUTO_PAUSE_MIN_TRADES", 10)
+    monkeypatch.setattr(_config, "AUTO_PAUSE_MIN_ROI", -0.15)
+    monkeypatch.setattr(_config, "EXIT_STYLE", "settle")
     await _db.set_config("polymarket_bot.session_start", "2020-01-01T00:00:00+00:00")
     await clear_auto_pause()  # cleared_at = now
     # 12 fresh losses dated in the future, after the clear timestamp.
@@ -151,9 +151,9 @@ async def test_repauses_on_fresh_losses_after_clear(test_db, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_evaluate_warmup_does_not_pause(test_db, monkeypatch):
-    monkeypatch.setattr(_config, "BTC_AUTO_PAUSE_ENABLED", True)
-    monkeypatch.setattr(_config, "BTC_AUTO_PAUSE_MIN_TRADES", 10)
-    monkeypatch.setattr(_config, "BTC_EXIT_STYLE", "settle")
+    monkeypatch.setattr(_config, "AUTO_PAUSE_ENABLED", True)
+    monkeypatch.setattr(_config, "AUTO_PAUSE_MIN_TRADES", 10)
+    monkeypatch.setattr(_config, "EXIT_STYLE", "settle")
     for _ in range(5):
         await _add(test_db, pnl=-5.0)
     paused, _ = await evaluate_and_maybe_pause()
@@ -165,7 +165,7 @@ async def test_since_scopes_to_session(test_db, monkeypatch):
     # Old losing trades before the session start must be excluded.
     async with test_db.connect() as conn:
         await conn.execute(
-            "INSERT INTO btc_paper_positions(opened_at, window_slug, side, state,"
+            "INSERT INTO paper_positions(opened_at, window_slug, side, state,"
             " entry_price, notional_usd, shares, edge, realized_pnl_usd,"
             " quote_source, strategy_style)"
             " VALUES ('2026-06-13T00:00:00+00:00','w','Up','closed',0.55,5,1,0.06,-5,'clob','settle')",
@@ -179,8 +179,8 @@ async def test_since_scopes_to_session(test_db, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_disabled_never_pauses(test_db, monkeypatch):
-    monkeypatch.setattr(_config, "BTC_AUTO_PAUSE_ENABLED", False)
-    monkeypatch.setattr(_config, "BTC_EXIT_STYLE", "settle")
+    monkeypatch.setattr(_config, "AUTO_PAUSE_ENABLED", False)
+    monkeypatch.setattr(_config, "EXIT_STYLE", "settle")
     for _ in range(20):
         await _add(test_db, pnl=-5.0)
     paused, _ = await evaluate_and_maybe_pause()

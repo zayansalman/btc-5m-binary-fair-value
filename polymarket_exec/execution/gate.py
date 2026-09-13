@@ -11,9 +11,13 @@ live closes feed them — so every gate that consults a counter (the daily
 realized-loss halt, the optional bankroll cap) advances identically in both
 modes.
 
-State lives under the ``btc_risk.*`` config keys. Legacy ``btc_live.*`` keys
-written before issue #64 are read once at boot and migrated in place; after
-the first persist they are no longer referenced.
+State lives under the ``risk.*`` config keys (renamed from the legacy
+``btc_risk.*`` namespace under issue #185; existing rows are migrated by
+``db.init_db()``). Legacy ``btc_live.*`` keys written before issue #64 are
+read once at boot and migrated in place; after the first persist they are no
+longer referenced. Those three keys keep their original literal names — they
+point at historical data, not branding, so they are not part of the #185
+rename.
 """
 
 from __future__ import annotations
@@ -30,52 +34,58 @@ from db import get_config, set_config  # type: ignore[import-untyped]
 # ---------------------------------------------------------------------------
 
 # Current keys (issue #64). Generic — fed by paper closes and live closes.
-_RISK_DATE_KEY = "btc_risk.date"
-_RISK_NOTIONAL_KEY = "btc_risk.daily_buy_notional"
+_RISK_DATE_KEY = "risk.date"
+_RISK_NOTIONAL_KEY = "risk.daily_buy_notional"
 # Split counters (issue #67; halt scope changed in #76). Live and paper
 # realized PnL are tracked separately. The halt now fires on the MODE'S OWN
 # leg — live halts on real-money PnL, paper on study PnL — so paper-study
 # losses no longer halt live trading. ``daily_realized_pnl`` keeps the combined
 # sum as a reporting/back-compat surface only.
-_RISK_LIVE_PNL_KEY = "btc_risk.live_realized_pnl"
-_RISK_PAPER_PNL_KEY = "btc_risk.paper_realized_pnl"
+_RISK_LIVE_PNL_KEY = "risk.live_realized_pnl"
+_RISK_PAPER_PNL_KEY = "risk.paper_realized_pnl"
 # Session high-water marks (issue #112). The loss halt trails the session PEAK
 # realized PnL — floor = peak - daily_loss_halt_usd — so banked profit can't be
 # bled back beyond the limit. Peaks ratchet up only and reset with the PnL
 # counters at the UTC day boundary. Absent (pre-#112 state) → derived on load as
 # max(0, leg_pnl), which keeps a never-profitable session identical to the old
 # fixed -limit floor.
-_RISK_LIVE_PEAK_KEY = "btc_risk.live_peak_pnl"
-_RISK_PAPER_PEAK_KEY = "btc_risk.paper_peak_pnl"
+_RISK_LIVE_PEAK_KEY = "risk.live_peak_pnl"
+_RISK_PAPER_PEAK_KEY = "risk.paper_peak_pnl"
 # Pre-split combined key (issue #64). Read once on migration into the live
 # bucket — by far the most common pre-split scenario was a live-only counter.
-_RISK_COMBINED_PNL_KEY = "btc_risk.daily_realized_pnl"
+_RISK_COMBINED_PNL_KEY = "risk.daily_realized_pnl"
 
 # Operator loss-halt bypass (#65, generalised #76). Originally paper-only; now
 # an operator runtime knob honoured in BOTH modes — the old "live can never
 # disable a hard money limit from the UI" invariant was removed at the
 # operator's explicit request. Re-read every tick via ``refresh_overrides``.
-# The persisted key name is kept as-is to avoid migrating stored state.
-_BYPASS_LOSS_HALT_KEY = "btc_risk.paper_bypass_loss_halt"
+# Renamed from ``btc_risk.paper_bypass_loss_halt`` under issue #185 — the
+# rebrand's DB migration (``db.init_db()``) carries the persisted value
+# forward, so this is not the silent reset the old comment here warned about.
+_BYPASS_LOSS_HALT_KEY = "risk.paper_bypass_loss_halt"
 # One-shot migration sentinel (#76): set once the stale paper-era bypass flag
 # has been cleared so live starts halt-ON; presence of the sentinel guarantees
 # a later deliberate bypass is never wiped.
-_BYPASS_MIGRATED_KEY = "btc_risk.bypass_migrated_v76"
+_BYPASS_MIGRATED_KEY = "risk.bypass_migrated_v76"
 
 # Operator runtime risk knobs (#50). Unlike the paper-only bypass above, these
 # are tuning controls that apply in BOTH modes (the operator wants to resize
 # the clip mid-session without a restart). Persisted in the config table and
 # re-read every tick via ``refresh_runtime_limits``. Unset → fall back to the
 # env/config default, so absence is fully backward-compatible.
-_RUNTIME_MAX_TRADE_KEY = "btc_runtime.max_trade_usd"
+_RUNTIME_MAX_TRADE_KEY = "runtime.max_trade_usd"
 # Operator runtime trade size in SHARES (#89). When set it takes precedence over
 # the dollar cap above: the bot sizes each clip to this many shares and the
 # per-trade dollar cap derives from it (N shares cost ≤ ~$N since prices < 1).
-_RUNTIME_TRADE_SHARES_KEY = "btc_runtime.trade_shares"
+_RUNTIME_TRADE_SHARES_KEY = "runtime.trade_shares"
 
 # Legacy keys, written by the live-only counter before issue #64. Read once at
 # boot if the new keys are absent, then never touched again — the next persist
-# writes the new keys exclusively.
+# writes the new keys exclusively. These 3 literal names are NOT part of the
+# #185 rebrand rename: they must keep pointing at whatever a pre-#64 database
+# actually wrote under the old ``btc_live.*`` prefix, so renaming the string
+# here (rather than migrating the historical data) would just break the
+# fallback they exist for.
 _LEGACY_DATE_KEY = "btc_live.risk_date"
 _LEGACY_PNL_KEY = "btc_live.daily_realized_pnl"
 _LEGACY_NOTIONAL_KEY = "btc_live.daily_buy_notional"
@@ -122,7 +132,7 @@ class RiskGate:
     """Pre-trade gate + persisted daily counters, shared by paper and live.
 
     All gate logic lives here so paper and live cannot diverge by accident.
-    Counters are persisted to SQLite (``btc_risk.*``) and rebuilt at boot so
+    Counters are persisted to SQLite (``risk.*``) and rebuilt at boot so
     Stop/Start or a process restart never resets the daily-loss halt or
     silently grants a fresh bankroll when the cap is enabled.
     """
@@ -182,9 +192,9 @@ class RiskGate:
     async def load(self) -> None:
         """Rebuild counters from SQLite.
 
-        Reads the split ``btc_risk.{live,paper}_realized_pnl`` keys first.
+        Reads the split ``risk.{live,paper}_realized_pnl`` keys first.
         If either is absent, falls back through:
-          1. The pre-split combined ``btc_risk.daily_realized_pnl`` (issue #64)
+          1. The pre-split combined ``risk.daily_realized_pnl`` (issue #64)
              — its value is migrated INTO the live bucket on the assumption
              that pre-split state was almost always live-only PnL.
           2. The legacy ``btc_live.*`` keys (pre-#64).
@@ -455,10 +465,10 @@ def build_gate_from_config(*, is_live: bool = False) -> RiskGate:
     import config as _config  # type: ignore[import-untyped]
 
     cfg = GateConfig(
-        max_trade_usd=_config.BTC_TRADE_MAX_USD,
-        daily_loss_halt_usd=_config.BTC_TRADE_DAILY_LOSS_HALT_USD,
-        bankroll_cap_usd=_config.BTC_TRADE_BANKROLL_CAP_USD,
-        max_entry_slippage=_config.BTC_TRADE_MAX_ENTRY_SLIPPAGE,
+        max_trade_usd=_config.TRADE_MAX_USD,
+        daily_loss_halt_usd=_config.TRADE_DAILY_LOSS_HALT_USD,
+        bankroll_cap_usd=_config.TRADE_BANKROLL_CAP_USD,
+        max_entry_slippage=_config.TRADE_MAX_ENTRY_SLIPPAGE,
         kill_switch_path=Path(_config.KILL_SWITCH_PATH),
     )
     return RiskGate(cfg, is_live=is_live)

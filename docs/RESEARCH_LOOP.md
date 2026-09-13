@@ -8,7 +8,7 @@ inside a closed, human-gated loop.
 ## The loop
 
 1. **Mine** — on a schedule (e.g. nightly), an agent reads the trade journal
-   (`btc_paper_positions`, `btc_paper_ticks`, `btc_live_orders`) and the
+   (`paper_positions`, `paper_ticks`, `live_orders`) and the
    recorded book/Chainlink archive, and finds where PnL concentrates:
    by hour-of-day, volatility regime, entry-price band, claimed-edge band,
    side (Up/Down), time-to-roll at entry, fill quality (live vs paper).
@@ -28,7 +28,7 @@ inside a closed, human-gated loop.
    per-half stability). Everything else is logged and dropped.
 
 5. **Approve** — the operator decides. Approved changes update config
-   (e.g. `BTC_PAPER_ENTRY_EDGE_MAX`); nothing auto-applies to live.
+   (e.g. `PAPER_ENTRY_EDGE_MAX`); nothing auto-applies to live.
 
 **AI proposes, human disposes.** The loop never changes a live setting on its
 own — that is the line between adaptive research and curve-fitting yourself

@@ -1,6 +1,6 @@
 """Per-model performance comparison for the shadow forward-tester.
 
-Reads SETTLED rows from ``btc_model_shadow_positions`` and prints one row per
+Reads SETTLED rows from ``model_shadow_positions`` and prints one row per
 ``model_id``: trade count, win%, average entry price (a price-implied
 breakeven win-rate), gross and net-of-fee ROI, average net PnL per share, a
 Wilson 95% confidence interval on the realized win-rate, and a one-sided
@@ -249,7 +249,7 @@ def load_settled_rows(db_path: Path) -> list[sqlite3.Row]:
             """
             SELECT model_id, side, entry_price, notional_usd, shares,
                    outcome, realized_pnl_usd
-              FROM btc_model_shadow_positions
+              FROM model_shadow_positions
              WHERE state = 'settled'
             """
         )

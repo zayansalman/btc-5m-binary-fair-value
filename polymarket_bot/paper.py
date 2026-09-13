@@ -5,9 +5,9 @@ SETTLEMENT feed (Polymarket's Chainlink BTC/USD stream — reference open via
 the crypto-price REST API, live spot + sigma via the ws-live-data WebSocket,
 issue #21), quotes the EXECUTABLE market from the CLOB order book for both
 outcome tokens (issue #22), and records entries/exits in SQLite. In paper
-mode (the default) no real orders are ever placed. When ``BTC_BOT_MODE=live``
+mode (the default) no real orders are ever placed. When ``BOT_MODE=live``
 AND the live boot gate passes (private key +
-``BTC_LIVE_CONFIRM=YES_I_UNDERSTAND``), entries/exits are ALSO routed through
+``LIVE_CONFIRM=YES_I_UNDERSTAND``), entries/exits are ALSO routed through
 :class:`polymarket_exec.execution.live.LiveExecutor`, which places real risk-gated
 orders on the Polymarket CLOB.
 
@@ -38,21 +38,21 @@ import httpx
 
 from config import (
     BINANCE_API_BASE,
-    BTC_EXIT_STYLE,
-    BTC_MARKET_TIMEFRAME_MINUTES,
-    BTC_PAPER_ENTRY_EDGE_MIN,
-    BTC_PAPER_MAX_TRADE_USD,
-    BTC_PAPER_MIN_TRADE_USD,
-    BTC_PAPER_STOP_RETURN,
-    BTC_PAPER_TARGET_RETURN,
-    BTC_PAPER_TICK_SECONDS,
-    BTC_PAPER_TIME_EXIT_SECONDS,
+    EXIT_STYLE,
+    MARKET_TIMEFRAME_MINUTES,
+    PAPER_ENTRY_EDGE_MIN,
+    PAPER_MAX_TRADE_USD,
+    PAPER_MIN_TRADE_USD,
+    PAPER_STOP_RETURN,
+    PAPER_TARGET_RETURN,
+    PAPER_TICK_SECONDS,
+    PAPER_TIME_EXIT_SECONDS,
     POLYMARKET_CLOB_API,
     POLYMARKET_CRYPTO_PRICE_API,
     POLYMARKET_GAMMA_API,
     POLYMARKET_LIVE_DATA_WS,
-    BTC_CHAINLINK_STALE_SECONDS,
-    BTC_PRINT_GRANULARITY_USD,
+    CHAINLINK_STALE_SECONDS,
+    PRINT_GRANULARITY_USD,
 )
 import config as _config
 from db import connect, get_config, journal_live_order, notify, set_config
@@ -86,7 +86,7 @@ from polymarket_bot.strategy import (
     signal_from_executable_edges,
 )
 
-log = get_logger("btc_paper")
+log = get_logger("paper")
 
 # Live executor for the current run loop. None means pure paper mode.
 _live_executor: LiveExecutor | None = None
@@ -160,7 +160,7 @@ async def _resolve_active_model() -> str:
     if active_model not in _unknown_model_notified:
         _unknown_model_notified.add(active_model)
         await notify(
-            "btc_model_fallback",
+            "model_fallback",
             f"Active model '{active_model}' is retired from the roster; "
             f"trading the {shadow_runner.DEFAULT_MODEL} native path instead. "
             "Pick a current model in the dashboard.",
@@ -191,7 +191,7 @@ def reload_calibrator() -> None:
 _MIN_CHAINLINK_SIGMA_POINTS = 30
 
 BINANCE_API = BINANCE_API_BASE
-FIVE_MINUTES = BTC_MARKET_TIMEFRAME_MINUTES * 60
+FIVE_MINUTES = MARKET_TIMEFRAME_MINUTES * 60
 
 
 def _strategy_params() -> StrategyParams:
@@ -207,9 +207,9 @@ def _strategy_params() -> StrategyParams:
     # so the clip actually changes without a restart. Unset → env default, i.e.
     # fully backward-compatible. The gate refreshed this value earlier this tick.
     override = _risk_gate.runtime_max_trade_usd if _risk_gate is not None else None
-    max_trade_usd = override if override is not None else BTC_PAPER_MAX_TRADE_USD
+    max_trade_usd = override if override is not None else PAPER_MAX_TRADE_USD
     return StrategyParams(
-        min_trade_usd=BTC_PAPER_MIN_TRADE_USD,
+        min_trade_usd=PAPER_MIN_TRADE_USD,
         max_trade_usd=max_trade_usd,
         entry_edge_min=a.entry_edge_min,
         min_confidence=a.min_confidence,
@@ -410,7 +410,7 @@ async def _notify_paper_halt_pause(gate: Any, mode: str) -> None:
         return
     _paper_halt_pause_notified = True
     await notify(
-        "btc_paper_halt_pause",
+        "paper_halt_pause",
         f"Paper loss halt hit (realized {gate.halt_pnl:+.2f} at/below trailing "
         f"floor {gate.loss_halt_floor:+.2f}): paper entries paused until the "
         "daily window rolls or the halt is reset — the loop keeps running and "
@@ -427,7 +427,7 @@ async def _notify_paper_halt_pause(gate: Any, mode: str) -> None:
 async def run_paper_loop(stop_event: threading.Event) -> None:
     """Run until Stop is pressed or the process exits.
 
-    Mode comes from ``BTC_BOT_MODE``: ``paper`` (default) journals simulated
+    Mode comes from ``BOT_MODE``: ``paper`` (default) journals simulated
     trades only; ``live`` ALSO routes entries/exits through the risk-gated
     LiveExecutor. Live boot refusal stops the loop — it never silently falls
     back to paper.
@@ -439,8 +439,8 @@ async def run_paper_loop(stop_event: threading.Event) -> None:
     my_generation = _loop_generation
     _beat()
     # Runtime mode selector (dashboard) overrides the env default; live still
-    # passes the same boot gate. Falls back to BTC_BOT_MODE when unset.
-    mode = await get_config("polymarket_bot.requested_mode", _config.BTC_BOT_MODE) or "paper"
+    # passes the same boot gate. Falls back to BOT_MODE when unset.
+    mode = await get_config("polymarket_bot.requested_mode", _config.BOT_MODE) or "paper"
     if mode == "live":
         try:
             executor = build_live_executor()
@@ -453,7 +453,7 @@ async def run_paper_loop(stop_event: threading.Event) -> None:
                 f"LIVE mode refused to start: {error} "
                 "The bot did NOT fall back to paper mode and is not running."
             )
-            await notify("btc_live_boot_refused", f"Live mode boot refused: {error}")
+            await notify("live_boot_refused", f"Live mode boot refused: {error}")
             log.error("live_loop.boot_refused", error=error)
             return
         _live_executor = executor
@@ -472,7 +472,7 @@ async def run_paper_loop(stop_event: threading.Event) -> None:
     # "settlement feed degraded" and open no entries — by design.
     feed = ChainlinkWsFeed(
         url=POLYMARKET_LIVE_DATA_WS,
-        stale_after_s=BTC_CHAINLINK_STALE_SECONDS,
+        stale_after_s=CHAINLINK_STALE_SECONDS,
     )
     feed_task = asyncio.create_task(feed.run())
     _chainlink_feed = feed
@@ -489,10 +489,10 @@ async def run_paper_loop(stop_event: threading.Event) -> None:
             "BTC LIVE loop running — orders are REAL. "
             f"Kill switch: touch {_config.KILL_SWITCH_PATH} to halt and cancel."
         )
-        await notify("btc_live_started", "BTC LIVE bot started — orders are real")
+        await notify("live_started", "BTC LIVE bot started — orders are real")
     else:
         await _set_detail("BTC paper loop running. No real orders will be placed.")
-        await notify("btc_paper_started", "BTC paper bot started")
+        await notify("paper_started", "BTC paper bot started")
     log.info("paper_loop.started", mode=mode)
 
     # Set when the daily loss halt trips (#76): the loop stops the bot and the
@@ -513,13 +513,13 @@ async def run_paper_loop(stop_event: threading.Event) -> None:
             stop_detail = _loss_halt_stop_detail(_risk_gate, mode)
             if stop_detail is not None:
                 log.warning("paper_loop.loss_halt_stop", detail=stop_detail)
-                await notify("btc_loss_halt_stop", stop_detail)
+                await notify("loss_halt_stop", stop_detail)
                 break
             # Paper breach (#146): entries pause, the loop and the shadow
             # race keep running — notify once per episode.
             await _notify_paper_halt_pause(_risk_gate, mode)
             _beat()  # #147: iteration completed (even a failed tick beats)
-            await _sleep_interruptible(stop_event, float(BTC_PAPER_TICK_SECONDS))
+            await _sleep_interruptible(stop_event, float(PAPER_TICK_SECONDS))
     finally:
         if not _is_current_generation(my_generation):
             # A watchdog respawn superseded this loop while it was wedged
@@ -558,7 +558,7 @@ async def run_paper_loop(stop_event: threading.Event) -> None:
             stop_detail
             or f"BTC {mode} loop stopped. No new entries will be opened."
         )
-        await notify("btc_paper_stopped", f"BTC {mode} bot stopped")
+        await notify("paper_stopped", f"BTC {mode} bot stopped")
         log.info("paper_loop.stopped", mode=mode)
 
 
@@ -608,7 +608,7 @@ async def force_close_open_positions(exit_reason: str = "STOP_REQUEST") -> int:
     """
     async with connect() as db:
         async with db.execute(
-            "SELECT * FROM btc_paper_positions WHERE state = 'open' ORDER BY opened_at"
+            "SELECT * FROM paper_positions WHERE state = 'open' ORDER BY opened_at"
         ) as cur:
             positions = [dict(r) for r in await cur.fetchall()]
     if not positions:
@@ -631,7 +631,7 @@ async def count_open_positions() -> int:
     """Number of open rows in the position ledger."""
     async with connect() as db:
         async with db.execute(
-            "SELECT COUNT(*) AS n FROM btc_paper_positions WHERE state = 'open'"
+            "SELECT COUNT(*) AS n FROM paper_positions WHERE state = 'open'"
         ) as cur:
             return int((await cur.fetchone())["n"])
 
@@ -640,12 +640,12 @@ async def load_paper_summary() -> PaperSummary:
     """Dashboard summary from the SQLite paper ledger."""
     async with connect() as db:
         async with db.execute(
-            "SELECT * FROM btc_paper_ticks ORDER BY created_at DESC LIMIT 1"
+            "SELECT * FROM paper_ticks ORDER BY created_at DESC LIMIT 1"
         ) as cur:
             tick = await cur.fetchone()
         async with db.execute(
             "SELECT COUNT(*) AS n, COALESCE(SUM(notional_usd), 0) AS exposure "
-            "FROM btc_paper_positions WHERE state = 'open'"
+            "FROM paper_positions WHERE state = 'open'"
         ) as cur:
             open_row = await cur.fetchone()
         async with db.execute(
@@ -656,13 +656,13 @@ async def load_paper_summary() -> PaperSummary:
             "SUM(CASE WHEN realized_pnl_usd > 0 THEN 1 ELSE 0 END) AS wins, "
             "AVG(realized_pnl_usd) AS avg_pnl, "
             "AVG(strftime('%s', closed_at) - strftime('%s', opened_at)) AS avg_hold "
-            "FROM btc_paper_positions WHERE state = 'closed' "
+            "FROM paper_positions WHERE state = 'closed' "
             "AND quote_source = 'clob' AND strategy_style = ?",
-            (BTC_EXIT_STYLE,),
+            (EXIT_STYLE,),
         ) as cur:
             closed = await cur.fetchone()
         async with db.execute(
-            "SELECT * FROM btc_paper_positions ORDER BY opened_at DESC LIMIT 10"
+            "SELECT * FROM paper_positions ORDER BY opened_at DESC LIMIT 10"
         ) as cur:
             recent = [dict(r) for r in await cur.fetchall()]
         # Per-mode aggregates: same KPI rules as the combined view (honest
@@ -674,7 +674,7 @@ async def load_paper_summary() -> PaperSummary:
         # journal is the operator's clearest signal that the bot stopped
         # actually placing orders, even when ticks keep flowing.
         async with db.execute(
-            "SELECT MAX(created_at) AS last_at FROM btc_live_orders"
+            "SELECT MAX(created_at) AS last_at FROM live_orders"
         ) as cur:
             last_live_row = await cur.fetchone()
         last_live_order_at = last_live_row["last_at"] if last_live_row else None
@@ -725,7 +725,7 @@ async def _mode_stats(db: Any, mode: str) -> ModeStats:
     """KPI aggregate for one execution mode — same exclusions as the combined view."""
     async with db.execute(
         "SELECT COUNT(*) AS n, COALESCE(SUM(notional_usd), 0) AS exposure "
-        "FROM btc_paper_positions WHERE state = 'open' AND mode = ?",
+        "FROM paper_positions WHERE state = 'open' AND mode = ?",
         (mode,),
     ) as cur:
         open_row = await cur.fetchone()
@@ -735,9 +735,9 @@ async def _mode_stats(db: Any, mode: str) -> ModeStats:
         "SUM(CASE WHEN realized_pnl_usd > 0 THEN 1 ELSE 0 END) AS wins, "
         "AVG(realized_pnl_usd) AS avg_pnl, "
         "AVG(strftime('%s', closed_at) - strftime('%s', opened_at)) AS avg_hold "
-        "FROM btc_paper_positions WHERE state = 'closed' "
+        "FROM paper_positions WHERE state = 'closed' "
         "AND quote_source = 'clob' AND strategy_style = ? AND mode = ?",
-        (BTC_EXIT_STYLE, mode),
+        (EXIT_STYLE, mode),
     ) as cur:
         closed = await cur.fetchone()
     closed_count = int(closed["n"] if closed else 0)
@@ -767,7 +767,7 @@ def _connectivity_from_tick(
     source so a degraded sub-feed shows up here even when the loop keeps
     journaling ticks.
     """
-    stale_after = int(max(BTC_PAPER_TICK_SECONDS * 3, 20))
+    stale_after = int(max(PAPER_TICK_SECONDS * 3, 20))
     if tick is None:
         return ConnectivityStatus(
             tick_age_seconds=None,
@@ -834,7 +834,7 @@ def _risk_state(open_positions: int, last_tick_at: str | None) -> str:
     except ValueError:
         return "UNKNOWN: bad tick timestamp"
     age = (datetime.now(UTC) - ts).total_seconds()
-    if age > max(BTC_PAPER_TICK_SECONDS * 3, 20):
+    if age > max(PAPER_TICK_SECONDS * 3, 20):
         return f"STALE: last tick {int(age)}s ago"
     return "OK"
 
@@ -911,7 +911,7 @@ async def _build_snapshot(client: httpx.AsyncClient) -> PaperSnapshot:
 
     if degraded_reason is None:
         fair_up_raw = fair_up_probability(
-            spot, reference, sigma, remaining, print_granularity=BTC_PRINT_GRANULARITY_USD
+            spot, reference, sigma, remaining, print_granularity=PRINT_GRANULARITY_USD
         )
     else:
         fair_up_raw = 0.5
@@ -1255,7 +1255,7 @@ async def _log_tick(snapshot: PaperSnapshot) -> None:
     async with connect() as db:
         await db.execute(
             """
-            INSERT INTO btc_paper_ticks(
+            INSERT INTO paper_ticks(
               created_at, window_slug, market_question, remaining_seconds,
               spot_price, reference_price, sigma_per_second, market_up_price,
               market_down_price, fair_up_prob, edge, signal_side, confidence,
@@ -1314,16 +1314,16 @@ async def _maybe_open_position(snapshot: PaperSnapshot) -> None:
         return
     async with connect() as db:
         async with db.execute(
-            "SELECT COUNT(*) AS n FROM btc_paper_positions WHERE state = 'open'"
+            "SELECT COUNT(*) AS n FROM paper_positions WHERE state = 'open'"
         ) as cur:
             if (await cur.fetchone())["n"]:
                 return
-        if BTC_EXIT_STYLE == "settle":
+        if EXIT_STYLE == "settle":
             # One entry per window, ever (issue #28): re-entering the same
             # window after an exit pays the spread again for the same signal
             # — the churn that lost the scalp-style soak.
             async with db.execute(
-                "SELECT COUNT(*) AS n FROM btc_paper_positions WHERE window_slug = ?",
+                "SELECT COUNT(*) AS n FROM paper_positions WHERE window_slug = ?",
                 (snapshot.window_slug,),
             ) as cur:
                 if (await cur.fetchone())["n"]:
@@ -1395,7 +1395,7 @@ async def _maybe_open_position(snapshot: PaperSnapshot) -> None:
             window_slug=snapshot.window_slug,
         )
         if not result.ok:
-            # Blocked/error — journaled in btc_live_orders. Remove the
+            # Blocked/error — journaled in live_orders. Remove the
             # provisional row so the ledger mirrors live intent.
             await _delete_position_row(position_id)
             return
@@ -1407,7 +1407,7 @@ async def _maybe_open_position(snapshot: PaperSnapshot) -> None:
         # Paper mode: route the entry through the SAME RiskGate live uses
         # (issue #64). A paper trade that paper opens is one live would have
         # opened too; a paper trade live would have blocked is recorded in
-        # btc_live_orders with mode='paper' instead.
+        # live_orders with mode='paper' instead.
         gate = _risk_gate
         if gate is not None:
             blocked = gate.block_reason(
@@ -1442,7 +1442,7 @@ async def _maybe_open_position(snapshot: PaperSnapshot) -> None:
             await gate.record_buy_notional(round(entry_price * shares, 4))
     label = "LIVE" if executor is not None else "Paper"
     await notify(
-        "btc_live_entry" if executor is not None else "btc_paper_entry",
+        "live_entry" if executor is not None else "paper_entry",
         f"{label} BUY {snapshot.signal_side} ${notional:.2f} @ {entry_price:.3f}",
         {"window_slug": snapshot.window_slug, "confidence": snapshot.confidence},
     )
@@ -1463,7 +1463,7 @@ async def _insert_position_row(
     async with connect() as db:
         cur = await db.execute(
             """
-            INSERT INTO btc_paper_positions(
+            INSERT INTO paper_positions(
               opened_at, window_slug, market_question, side, state, entry_price,
               notional_usd, shares, opened_spot, confidence, edge, entry_reason,
               feed_source, quote_source, strategy_style, mode
@@ -1483,7 +1483,7 @@ async def _insert_position_row(
                 snapshot.reason,
                 snapshot.feed_source,
                 snapshot.quote_source,
-                BTC_EXIT_STYLE,
+                EXIT_STYLE,
                 mode,
             ),
         )
@@ -1495,7 +1495,7 @@ async def _insert_position_row(
 async def _delete_position_row(position_id: int) -> None:
     async with connect() as db:
         await db.execute(
-            "DELETE FROM btc_paper_positions WHERE position_id = ?", (position_id,)
+            "DELETE FROM paper_positions WHERE position_id = ?", (position_id,)
         )
         await db.commit()
 
@@ -1506,7 +1506,7 @@ async def _update_position_terms(
     """Overwrite a provisional row with the terms the executor actually used."""
     async with connect() as db:
         await db.execute(
-            "UPDATE btc_paper_positions SET entry_price = ?, notional_usd = ?, "
+            "UPDATE paper_positions SET entry_price = ?, notional_usd = ?, "
             "shares = ? WHERE position_id = ?",
             (entry_price, notional, shares, position_id),
         )
@@ -1518,7 +1518,7 @@ async def _close_due_positions(
 ) -> None:
     async with connect() as db:
         async with db.execute(
-            "SELECT * FROM btc_paper_positions WHERE state = 'open' ORDER BY opened_at"
+            "SELECT * FROM paper_positions WHERE state = 'open' ORDER BY opened_at"
         ) as cur:
             positions = [dict(r) for r in await cur.fetchall()]
 
@@ -1558,7 +1558,7 @@ async def _close_rolled_position(
     (pricing the OLD position off the NEW window's quote) was fiction.
     While settlement is not yet readable the row is held and retried.
     """
-    if _live_executor is not None and BTC_EXIT_STYLE != "settle":
+    if _live_executor is not None and EXIT_STYLE != "settle":
         advisory = _current_price_for_side(snapshot, pos["side"])
         if advisory is None:
             advisory = float(pos["entry_price"])
@@ -1638,7 +1638,7 @@ async def _settle_due_shadows(
     """
     async with connect() as db:
         async with db.execute(
-            "SELECT DISTINCT window_slug FROM btc_model_shadow_positions "
+            "SELECT DISTINCT window_slug FROM model_shadow_positions "
             "WHERE state = 'open'"
         ) as cur:
             slugs = [str(row["window_slug"]) for row in await cur.fetchall()]
@@ -1670,7 +1670,7 @@ async def _record_and_settle_shadow(
     """Run the shadow forward-tester, fully isolated so it can never break the
     live trading loop. Records each candidate's would-be trade for this window
     and settles any now-resolvable shadow windows."""
-    if _config.BTC_SHADOW_ENABLED != "on":
+    if _config.SHADOW_ENABLED != "on":
         return
     try:
         params = _strategy_params()
@@ -1726,7 +1726,7 @@ async def _close_position(
                 prior_pnl += tranche_size * (tranche_price - entry_price)
                 async with connect() as db:
                     await db.execute(
-                        "UPDATE btc_paper_positions SET realized_pnl_usd = ? "
+                        "UPDATE paper_positions SET realized_pnl_usd = ? "
                         "WHERE position_id = ?",
                         (prior_pnl, pos["position_id"]),
                     )
@@ -1775,7 +1775,7 @@ async def _close_position(
     async with connect() as db:
         await db.execute(
             """
-            UPDATE btc_paper_positions
+            UPDATE paper_positions
             SET state = 'closed', closed_at = ?, exit_price = ?,
                 closed_spot = ?, exit_reason = ?, realized_pnl_usd = ?
             WHERE position_id = ?
@@ -1791,7 +1791,7 @@ async def _close_position(
         )
         await db.commit()
     await notify(
-        "btc_live_exit" if executor is not None else "btc_paper_exit",
+        "live_exit" if executor is not None else "paper_exit",
         f"{'LIVE' if executor is not None else 'Paper'} EXIT {pos['side']} ${pnl:+.2f} ({reason})",
         {"window_slug": pos["window_slug"], "position_id": pos["position_id"]},
     )
@@ -1818,7 +1818,7 @@ def _current_price_for_side(snapshot: PaperSnapshot, side: str) -> float | None:
 
 
 def _exit_reason(snapshot: PaperSnapshot, pos: dict[str, Any], exit_price: float) -> str | None:
-    if BTC_EXIT_STYLE == "settle":
+    if EXIT_STYLE == "settle":
         # Hold to resolution: the only exits are WINDOW_ROLL settlement
         # (handled in _close_rolled_position) and operator stop. Intra-window
         # marks against the bid are noise, not realized outcomes.
@@ -1829,11 +1829,11 @@ def _exit_reason(snapshot: PaperSnapshot, pos: dict[str, Any], exit_price: float
     notional = float(pos["notional_usd"])
     shares = float(pos["shares"])
     pnl = shares * (exit_price - entry_price)
-    if snapshot.remaining_seconds <= BTC_PAPER_TIME_EXIT_SECONDS:
+    if snapshot.remaining_seconds <= PAPER_TIME_EXIT_SECONDS:
         return "TIME"
-    if pnl >= notional * BTC_PAPER_TARGET_RETURN:
+    if pnl >= notional * PAPER_TARGET_RETURN:
         return "TARGET"
-    if pnl <= notional * BTC_PAPER_STOP_RETURN:
+    if pnl <= notional * PAPER_STOP_RETURN:
         return "STOP"
     # Pricing-model-based exit only when the pricing model is trustworthy this tick:
     # a degraded settlement feed or an unquotable book pins edge near zero,
@@ -1841,7 +1841,7 @@ def _exit_reason(snapshot: PaperSnapshot, pos: dict[str, Any], exit_price: float
     if (
         not snapshot.feed_degraded
         and snapshot.has_executable_quote
-        and abs(snapshot.edge) < BTC_PAPER_ENTRY_EDGE_MIN / 2
+        and abs(snapshot.edge) < PAPER_ENTRY_EDGE_MIN / 2
     ):
         return "BAND_REENTRY"
     return None
@@ -1934,7 +1934,7 @@ def _gate_preview_line(snapshot: PaperSnapshot) -> str:
     """Live-equivalent verdict for the next entry, surfaced on every tick.
 
     Same RiskGate decides paper and live, so this line is the operator's
-    single source of truth: paper-side BLOCKED rows in btc_live_orders carry
+    single source of truth: paper-side BLOCKED rows in live_orders carry
     the same reason, and live-mode behaviour is identical.
     """
     gate = _risk_gate

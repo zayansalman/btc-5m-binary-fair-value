@@ -60,7 +60,7 @@ async def rolling_performance(
     """
     sql = (
         "SELECT realized_pnl_usd, notional_usd, edge, entry_price "
-        "FROM btc_paper_positions "
+        "FROM paper_positions "
         "WHERE state='closed' AND quote_source='clob' AND strategy_style=?"
     )
     params: list[Any] = [style]
@@ -122,22 +122,22 @@ async def evaluate_and_maybe_pause() -> tuple[bool, str]:
     paused, reason = await is_paused()
     if paused:
         return True, reason
-    if not _config.BTC_AUTO_PAUSE_ENABLED:
+    if not _config.AUTO_PAUSE_ENABLED:
         return False, "auto-pause disabled"
 
     since = await _edge_window_since()
     perf = await rolling_performance(
-        _config.BTC_AUTO_PAUSE_WINDOW, _config.BTC_EXIT_STYLE, since=since
+        _config.AUTO_PAUSE_WINDOW, _config.EXIT_STYLE, since=since
     )
     pause, reason = should_pause(
-        perf, _config.BTC_AUTO_PAUSE_MIN_TRADES, _config.BTC_AUTO_PAUSE_MIN_ROI
+        perf, _config.AUTO_PAUSE_MIN_TRADES, _config.AUTO_PAUSE_MIN_ROI
     )
     if pause:
         await set_config(_PAUSE_KEY, "1")
         await set_config(_PAUSE_REASON_KEY, reason)
         log.warning("adaptive.auto_paused", reason=reason)
         await notify(
-            "btc_auto_paused",
+            "auto_paused",
             f"Auto-paused: {reason}. Review and clear to resume.",
             {"brier": perf.get("brier"), "win_rate": perf.get("win_rate")},
         )
@@ -156,4 +156,4 @@ async def clear_auto_pause() -> None:
     await set_config(_PAUSE_REASON_KEY, "")
     await set_config(_CLEARED_AT_KEY, datetime.now(UTC).isoformat(timespec="seconds"))
     log.info("adaptive.auto_pause_cleared")
-    await notify("btc_auto_pause_cleared", "Auto-pause cleared; entries resume.")
+    await notify("auto_pause_cleared", "Auto-pause cleared; entries resume.")

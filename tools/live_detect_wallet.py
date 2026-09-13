@@ -125,18 +125,18 @@ def main() -> int:
     print(f"  balance = ${bal:.2f}")
 
     _write_env_secure({
-        "BTC_BOT_MODE": "live",
+        "BOT_MODE": "live",
         "POLYMARKET_PRIVATE_KEY": key,
         "POLYMARKET_FUNDER": funder,
         "POLYMARKET_SIGNATURE_TYPE": str(sig_type),
-        "BTC_LIVE_MAX_TRADE_USD": "5",
-        "BTC_PAPER_MIN_TRADE_USD": "5",
-        "BTC_PAPER_MAX_TRADE_USD": "5",
+        "TRADE_MAX_USD": "5",
+        "PAPER_MIN_TRADE_USD": "5",
+        "PAPER_MAX_TRADE_USD": "5",
     })
     print("\n.env updated (funder + signature type written; key untouched; 0600).")
     print("\nNEXT:")
     print("  1. Add this line to .env yourself (the conscious go-live step):")
-    print("        BTC_LIVE_CONFIRM=YES_I_UNDERSTAND")
+    print("        LIVE_CONFIRM=YES_I_UNDERSTAND")
     print("  2. Verify: .venv/bin/python tools/live_preflight.py")
     return 0
 

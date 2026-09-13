@@ -215,10 +215,12 @@ def entrypoint_ok(root: Path) -> bool:
 
 
 def collect_env_knobs(root: Path):
-    """Parse config.py for BTC_* knob names + their deprecated aliases.
+    """Parse config.py for * knob names + their deprecated aliases.
 
     Returns sorted list of (canonical, default, deprecated_alias|''). Best-effort:
-    reads the literal os.environ.get / _trade_knob string args via AST.
+    reads the literal os.environ.get / _env_* string args via AST. A knob name
+    is an ALL_CAPS, multi-word (underscore-joined) constant — this excludes
+    bare single-word env vars like ``PATH`` that aren't project knobs.
     """
     cfg = _read_text(root / "config.py")
     tree = ast.parse(cfg)
@@ -226,7 +228,7 @@ def collect_env_knobs(root: Path):
     for node in ast.walk(tree):
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             v = node.value
-            if v.startswith("BTC_") and v.isupper():
+            if "_" in v and v.isupper():
                 knobs.setdefault(v, "")
     return sorted(knobs)
 
