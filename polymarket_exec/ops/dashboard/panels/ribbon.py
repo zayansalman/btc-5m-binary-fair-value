@@ -29,6 +29,7 @@ def render(
     halt = _config.TRADE_DAILY_LOSS_HALT_USD
     headroom = halt + min(0.0, day_pnl)  # remaining loss budget
     kill_armed = Path(str(_config.KILL_SWITCH_PATH)).exists()
+    mode_pnl = live_pnl if is_live else paper_pnl
     session_pnl = sum(c["realized_pnl_usd"] or 0.0 for c in closed_session)
 
     mode_pill = (
@@ -94,12 +95,11 @@ def render(
 
     return (
         "<div class='ribbon'>"
-        f"<div class='ribbon-id'>BTC·5M PRICING <b>EMS</b>"
+        f"<div class='ribbon-id'>POLYMARKET <b>EMS</b>"
         f"{mode_pill}{run_pill}{pause_chip}{kill_chip}</div>"
         "<div class='ribbon-stats'>"
-        f"{s.stat('Equity Δ (session)', s.money(session_pnl, True) if closed_session else '—', s.cls(session_pnl))}"
-        f"{s.stat('Live P&L (today)', s.money(live_pnl, True), s.cls(live_pnl), 'real money')}"
-        f"{s.stat('Paper P&L (today)', s.money(paper_pnl, True), s.cls(paper_pnl), 'study')}"
+        f"{s.stat('Equity Δ (session)', s.money(session_pnl, True) if closed_session else '—', s.cls(session_pnl), flash='pnl')}"
+        f"{s.stat('P&L (today)', s.money(mode_pnl, True), s.cls(mode_pnl), 'real money' if is_live else 'paper', flash='pnl')}"
         f"{s.stat('Open Risk', s.money(sum(p['notional_usd'] or 0 for p in open_pos)), '', f'{len(open_pos)} pos')}"
         f"{s.stat('Halt Headroom', s.money(headroom), 'down' if headroom < halt * 0.4 else '')}"
         f"<div class='feeds'>{feeds}</div>"
