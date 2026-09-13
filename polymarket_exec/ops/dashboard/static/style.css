@@ -1,4 +1,4 @@
-/* Pricing EMS — trading-terminal theme (#37) */
+/* Polymarket EMS — institutional OMS/EMS theme (#206) */
 :root {
   /* Institutional OMS/EMS: light theme, hairline grids, color reserved for signal */
   --bg: #ffffff;
@@ -223,7 +223,7 @@ body {
 .gr-btn:hover { filter: brightness(1.15); }
 .gr-btn:disabled { opacity: .45; cursor: not-allowed; filter: none; }
 .gr-btn.btn-warn { border-color: var(--warn, #c98a3a); color: var(--warn, #c98a3a); }
-.gr-btn.btn-ok { border-color: var(--up, #6ad07b); color: var(--up, #6ad07b); }
+.gr-btn.btn-ok { border-color: var(--pos); color: var(--pos); }
 .gr-toggle-hint {
   font-family: var(--font-mono); font-size: 9.5px; color: var(--label);
   font-style: italic;
@@ -245,7 +245,7 @@ body {
 .share-pips { display: flex; gap: 3px; }
 .shp {
   width: 9px; height: 14px; border-radius: 0;
-  background: var(--up, #6ad07b); opacity: 0.8;
+  background: var(--pos); opacity: 0.8;
 }
 .share-min-lbl { font-family: var(--font-mono); font-size: 10px; color: var(--label); }
 @media (max-width: 1100px) {
@@ -326,7 +326,7 @@ body {
 /* Reconciled vs Polymarket footer (#102) — real account truth under the perf cards */
 .perf-recon{display:flex;flex-wrap:wrap;gap:10px;align-items:baseline;margin-top:10px;
   padding-top:8px;border-top:1px dashed var(--border,#2a2a2a);font-size:11px;color:var(--muted)}
-.perf-recon-h{font-weight:600;color:var(--fg,#ccc);letter-spacing:.02em}
+.perf-recon-h{font-weight:600;color:var(--text);letter-spacing:.02em}
 .perf-recon b{font-variant-numeric:tabular-nums}
 .perf-recon-asof{margin-left:auto;color:var(--muted)}
 .perf-fresh{margin-left:8px;font-size:9px}

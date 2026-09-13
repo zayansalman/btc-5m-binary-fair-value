@@ -82,7 +82,7 @@ class TestStaticFiles:
 
     def test_css_has_theme_variables(self, client: TestClient):
         css = client.get("/static/style.css").text
-        for var in ("--accent:", "--green:", "--red:", "--bg:", "--mono:"):
+        for var in ("--bg:", "--pos:", "--neg:", "--font-mono:"):
             assert var in css, f"missing var {var}"
 
     def test_css_has_ems_components(self, client: TestClient):
