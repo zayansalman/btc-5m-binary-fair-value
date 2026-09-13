@@ -95,7 +95,7 @@ def render(
 
     return (
         "<div class='ribbon'>"
-        f"<div class='ribbon-id'>POLYMARKET <b>EMS</b>"
+        f"<div class='ribbon-id'>POLYMARKET CRYPTO <b>EMS</b>"
         f"{mode_pill}{run_pill}{pause_chip}{kill_chip}</div>"
         "<div class='ribbon-stats'>"
         f"{s.stat('Equity Δ (session)', s.money(session_pnl, True) if closed_session else '—', s.cls(session_pnl), flash='pnl')}"
