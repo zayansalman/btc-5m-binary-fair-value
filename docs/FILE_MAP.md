@@ -70,7 +70,7 @@ _Status: `WIRED` = has non-test importers; `DEAD?` = no importers found (investi
 | `polymarket_exec/ops/controller.py` | DEAD? | 0 | Unified bot controller — tick loop using execution manager + risk service. |
 | `polymarket_exec/ops/dashboard/__init__.py` | pkg | 0 | FastAPI dashboard for BTC 5m Binary Pricing Model trading system. |
 | `polymarket_exec/ops/dashboard/app.py` | WIRED | 2 | FastAPI dashboard for the local Polymarket crypto trading lab. |
-| `polymarket_exec/ops/dashboard/ems.py` | WIRED | 1 | EMS view orchestrator (#37). |
+| `polymarket_exec/ops/dashboard/execution_view.py` | WIRED | 1 | Execution view orchestrator (#37). |
 | `polymarket_exec/ops/dashboard/panels/__init__.py` | pkg | 1 | Dashboard panels. |
 | `polymarket_exec/ops/dashboard/panels/_data.py` | WIRED | 1 | Read-only SQLite loaders for dashboard panels. |
 | `polymarket_exec/ops/dashboard/panels/_shared.py` | DEAD? | 0 | Shared rendering primitives for dashboard panels. |
