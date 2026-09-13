@@ -1,4 +1,4 @@
-"""EMS view orchestrator (#37).
+"""Execution view orchestrator (#37).
 
 Loads journal data once and dispatches to the panel renderers in
 ``polymarket_exec/ops/dashboard/panels/``. Each panel is a pure (data, context) →
@@ -27,7 +27,7 @@ from polymarket_exec.ops.dashboard.panels import (
 )
 
 
-async def ems_html() -> str:
+async def execution_view_html() -> str:
     """Render the full EMS view as one HTML string.
 
     Same public signature and output contract as before the panel split —

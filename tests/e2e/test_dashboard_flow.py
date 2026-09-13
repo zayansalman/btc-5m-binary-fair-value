@@ -85,7 +85,7 @@ class TestApiRoundTrip:
         client.post("/api/start")
         client.post("/api/stop")
         data = client.get("/api/data").json()
-        assert "ems" in data
+        assert "execution_view" in data
         assert "activity" in data
         assert "backtest" in data
 

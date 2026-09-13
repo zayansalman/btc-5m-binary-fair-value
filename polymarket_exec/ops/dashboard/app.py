@@ -64,7 +64,7 @@ from config import (  # type: ignore[import-untyped]
 )
 from db import connect, init_db  # type: ignore[import-untyped]
 from logging_setup import get_logger  # type: ignore[import-untyped]
-from polymarket_exec.ops.dashboard.ems import ems_html  # type: ignore[import-untyped]
+from polymarket_exec.ops.dashboard.execution_view import execution_view_html  # type: ignore[import-untyped]
 
 log = get_logger("dashboard")
 
@@ -538,13 +538,13 @@ async def _get_paper_data() -> dict[str, str]:
     return {"html": await _paper_html()}
 
 
-async def _ems_safe() -> str:
-    """Render the EMS view; never let a dashboard error touch the trading loop."""
+async def _execution_view_safe() -> str:
+    """Render the execution view; never let a dashboard error touch the trading loop."""
     try:
-        return await ems_html()
+        return await execution_view_html()
     except Exception as e:  # noqa: BLE001
-        log.warning("ems_render_failed", error=str(e))
-        return f"<div class='ems'><div class='card'>EMS view error: {escape(str(e))}</div></div>"
+        log.warning("execution_view_render_failed", error=str(e))
+        return f"<div class='ems'><div class='card'>Execution view error: {escape(str(e))}</div></div>"
 
 
 async def _get_activity_data() -> str:
@@ -576,7 +576,7 @@ async def dashboard(request: Request) -> Any:
         request,
         "dashboard.html",
         {
-            "ems": await _ems_safe(),
+            "execution_view": await _execution_view_safe(),
             "activity": await _get_activity_data(),
             "backtest": _get_backtest_data(),
             "mode": mode,
@@ -822,7 +822,7 @@ async def _runtime_state() -> dict[str, str]:
 async def api_data() -> dict[str, Any]:
     """Get current dashboard data as JSON."""
     return {
-        "ems": await _ems_safe(),
+        "execution_view": await _execution_view_safe(),
         "activity": await _get_activity_data(),
         "backtest": _get_backtest_data(),
         "runtime": await _runtime_state(),
@@ -838,7 +838,7 @@ async def api_stream(request: Request) -> StreamingResponse:
                 break
             try:
                 data = {
-                    "ems": await _ems_safe(),
+                    "execution_view": await _execution_view_safe(),
                     "activity": await _get_activity_data(),
                     "backtest": _get_backtest_data(),
                     "runtime": await _runtime_state(),

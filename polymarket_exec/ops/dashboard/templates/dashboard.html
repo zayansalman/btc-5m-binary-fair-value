@@ -2,9 +2,9 @@
 
 {% block content %}
 
-{# ───────── EMS main view (status ribbon + strategy/market/perf/TCA/blotter) ───────── #}
-<div id="ems-content">
-  {{ ems | safe }}
+{# ───────── Execution view (status ribbon + strategy/market/perf/TCA/blotter) ───────── #}
+<div id="execution-content">
+  {{ execution_view | safe }}
 </div>
 
 {# ───────── Secondary: live activity + backtest ───────── #}

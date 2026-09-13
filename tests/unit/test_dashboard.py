@@ -121,14 +121,14 @@ class TestApiData:
 
     def test_api_data_has_expected_keys(self, client: TestClient):
         data = client.get("/api/data").json()
-        assert "ems" in data
+        assert "execution_view" in data
         assert "activity" in data
         assert "backtest" in data
 
-    def test_api_data_ems_is_rendered_html(self, client: TestClient):
-        ems = client.get("/api/data").json()["ems"]
-        assert isinstance(ems, str) and len(ems) > 200
-        assert "ribbon" in ems
+    def test_api_data_execution_view_is_rendered_html(self, client: TestClient):
+        execution_view = client.get("/api/data").json()["execution_view"]
+        assert isinstance(execution_view, str) and len(execution_view) > 200
+        assert "ribbon" in execution_view
 
 
 class TestApiStart:
