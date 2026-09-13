@@ -417,3 +417,11 @@ class TestModelSelector:
         )
         assert r.status_code == 200
         assert r.json()["status"] == "error"
+
+
+def test_stat_helper_emits_data_flash_attribute():
+    from polymarket_exec.ops.dashboard.panels._shared import stat
+    html_with_flash = stat("Session P&L", "+$1,284.50", flash="pnl")
+    assert "data-flash='pnl'" in html_with_flash
+    html_without_flash = stat("Win rate", "61.0%")
+    assert "data-flash" not in html_without_flash
