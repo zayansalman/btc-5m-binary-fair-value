@@ -1,6 +1,6 @@
 """Live market panel: probability gauge, UP/DOWN book, basis.
 
-Renders as a full-width (``card wide``) card on purpose. The EMS grid has an
+Renders as a full-width (``card wide``) card on purpose. The execution grid has an
 odd number of single-width cards; left half-width, this card orphaned the
 neighbouring grid cell (an empty band under STRATEGY, right of LIVE MARKET).
 Spanning both columns fixes the parity — do not revert to a bare ``card``.
